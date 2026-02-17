@@ -134,7 +134,7 @@ if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'
     }
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    editText($message_id,'🔘|لطفا پیامت رو بفرست');
+    editText($message_id,'🔘|لطفاً پیامت رو بفرست');
     setUser($data);
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -234,7 +234,7 @@ if(preg_match('/^changePaymentKeys(\w+)/',$data,$match) && ($from_id == $admin |
             $gate = "آدرس والت ترون";
             break;
     }
-    sendMessage("🔘|لطفا $gate را وارد کنید", $cancelKey);
+    sendMessage("🔘|لطفاً $gate را وارد کنید", $cancelKey);
     setUser($data);
 }
 if(preg_match('/^changePaymentKeys(\w+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -329,7 +329,7 @@ if(preg_match('/^addDiscount(Server|Plan)Agent(\d+)/',$data,$match) && ($from_id
             $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "agentPercentDetails" . $match[2]]];
             $keys = json_encode(['inline_keyboard'=>$keys]);
             
-            editText($message_id,"لطفا سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
+            editText($message_id,"لطفاً سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
         }else alert("سروری باقی نمانده است");
     }else{
         $condition = array_values(array_keys(json_decode($info['discount_percent'],true)['servers']??array()));
@@ -348,7 +348,7 @@ if(preg_match('/^addDiscount(Server|Plan)Agent(\d+)/',$data,$match) && ($from_id
             $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "agentPercentDetails" . $match[2]]];
             $keys = json_encode(['inline_keyboard'=>$keys]);
             
-            editText($message_id,"لطفا سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
+            editText($message_id,"لطفاً سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
         }else alert("سروری باقی نمانده است");
     }
 }
@@ -400,7 +400,7 @@ if(preg_match('/^nextAgentDiscountPlan(?<agentId>\d+)_(?<offset>\d+)/',$data,$ma
         $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "agentPercentDetails" . $match['agentId']]];
         $keys = json_encode(['inline_keyboard'=>$keys]);
         
-        editText($message_id,"لطفا سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
+        editText($message_id,"لطفاً سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
     }else alert("سروری باقی نمانده است");
 }
 if(preg_match('/^removePercentOfAgent(?<type>Server|Plan)(?<agentId>\d+)_(?<serverId>\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -454,12 +454,12 @@ if(preg_match('/^editAgentDiscount(Server|Plan|Normal)(\d+)_(.*)/',$userInfo['st
 }
 if($data=="editRewardTime" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🙃 | لطفا زمان تأخیر در ارسال گزارش رو به ساعت وارد کن\n\nنکته: هر n ساعت گزارش به ربات ارسال میشه! ",$cancelKey);
+    sendMessage("🙃 | لطفاً زمان تأخیر در ارسال گزارش رو به ساعت وارد کن\n\nنکته: هر n ساعت گزارش به ربات ارسال میشه! ",$cancelKey);
     setUser($data);
 }
 if($data=="userReports" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🙃 | لطفا آیدی عددی کاربر رو وارد کن",$cancelKey);
+    sendMessage("🙃 | لطفاً آیدی عددی کاربر رو وارد کن",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "userReports" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -471,7 +471,7 @@ if($userInfo['step'] == "userReports" && $text != $buttonValues['cancel'] && ($f
             setUser();
         }else sendMessage("کاربری با این آیدی یافت نشد");
     }else{
-        sendMessage("😡|لطفا فقط عدد ارسال کن");
+        sendMessage("😡|لطفاً فقط عدد ارسال کن");
     }
 }
 if($data=="inviteSetting" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -512,14 +512,14 @@ if($data=="inviteBanner" && ($from_id == $admin || $userInfo['isAdmin'] == true)
         delMessage();
         $res = sendPhoto($inviteText['file_id'], $inviteText['caption'], $keys,null);
         if(!$res->ok){
-            sendMessage("تصویر فعلی یافت نشد، لطفا اقدام به ویرایش بنر کنید",$keys);
+            sendMessage("تصویر فعلی یافت نشد، لطفاً اقدام به ویرایش بنر کنید",$keys);
         }
     }
     setUser();
 }
 if($data=="editInviteBannerText" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🤖 | لطفا بنر جدید را بفرستید از متن  LINK برای نمایش لینک دعوت استفاده کنید)",$cancelKey);
+    sendMessage("🤖 | لطفاً بنر جدید را بفرستید از متن  LINK برای نمایش لینک دعوت استفاده کنید)",$cancelKey);
     setUser($data);
 }
 if($userInfo['step']=="editInviteBannerText" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -570,7 +570,7 @@ if($userInfo['step']=="editInviteBannerText" && ($from_id == $admin || $userInfo
 }
 if($data=="editInviteAmount" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("لطفا مبلغ پورسانت رو به تومان وارد کن",$cancelKey);
+    sendMessage("لطفاً مبلغ پورسانت رو به تومان وارد کن",$cancelKey);
     setUser($data);
 } 
 if($userInfo['step'] == "editInviteAmount" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -611,7 +611,7 @@ if($userInfo['step'] == "editInviteAmount" && ($from_id == $admin || $userInfo['
 }
 if($userInfo['step'] == "editRewardTime" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     if(!is_numeric($text)){
-        sendMessage("لطفا عدد بفرستید");
+        sendMessage("لطفاً عدد بفرستید");
         exit();
     }
     elseif($text <0 ){
@@ -688,7 +688,7 @@ if($data=="myInfo"){
 if($data=="transferMyWallet"){
     if($userInfo['wallet'] > 0 ){
         delMessage();
-        sendMessage("لطفا آیدی عددی کاربر مورد نظر رو وارد کن",$cancelKey);
+        sendMessage("لطفاً آیدی عددی کاربر مورد نظر رو وارد کن",$cancelKey);
         setUser($data);
     }else alert("موجودی حساب شما کم است");
 }
@@ -703,7 +703,7 @@ if($userInfo['step'] =="transferMyWallet" && $text != $buttonValues['cancel']){
             
             if($checkExist->num_rows > 0){
                 setUser("tranfserUserAmount" . $text);
-                sendMessage("لطفا مبلغ مورد نظر رو وارد کن");
+                sendMessage("لطفاً مبلغ مورد نظر رو وارد کن");
             }else sendMessage("کاربری با این آیدی یافت نشد");
         }else sendMessage("میخای به خودت انتقال بدی ؟؟");
     }else sendMessage($mainValues['send_only_number']);
@@ -725,9 +725,9 @@ if(preg_match('/^tranfserUserAmount(\d+)/',$userInfo['step'],$match) && $text !=
                 sendMessage("✅|مبلغ " . number_format($text) . " تومان به کیف پول شما توسط کاربر $from_id انتقال یافت",null,null,$match[1]);
                 setUser();
                 sendMessage("✅|مبلغ " . number_format($text) . " تومان به کیف پول کاربر مورد نظر شما انتقال یافت",$removeKeyboard);
-                sendMessage("لطفا یکی از کلید های زیر را انتخاب کنید",getMainKeys());
+                sendMessage("لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
             }else sendMessage("موجودی حساب شما کم است");
-        }else sendMessage("لطفا عددی بزرگتر از صفر وارد کنید");
+        }else sendMessage("لطفاً عددی بزرگتر از صفر وارد کنید");
     }else sendMessage($mainValues['send_only_number']);
 }
 if($data=="increaseMyWallet"){
@@ -741,10 +741,10 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
         exit();
     }
     elseif($text < 5000){
-        sendMessage("لطفا مقداری بیشتر از 5000 وارد کن");
+        sendMessage("لطفاً مقداری بیشتر از 5000 وارد کن");
         exit();
     }
-    sendMessage("🪄 لطفا صبور باشید ...",$removeKeyboard);
+    sendMessage("🪄 لطفاً صبور باشید ...",$removeKeyboard);
     $hash_id = RandomString();
     $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'INCREASE_WALLET' AND `state` = 'pending'");
     $stmt->bind_param("i", $from_id);
@@ -771,7 +771,7 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
 
     
 	$keys = json_encode(['inline_keyboard'=>$keyboard]);
-    sendMessage("اطلاعات شارژ:\nمبلغ ". number_format($text) . " تومان\n\nلطفا روش پرداخت را انتخاب کنید",$keys);
+    sendMessage("اطلاعات شارژ:\nمبلغ ". number_format($text) . " تومان\n\nلطفاً روش پرداخت را انتخاب کنید",$keys);
     setUser();
 }
 if(preg_match('/increaseWalletWithCartToCart/',$data)) {
@@ -862,7 +862,7 @@ if(preg_match('/^decPayment(.*)/',$data,$match) && ($from_id == $admin || $userI
     $markup[] = [['text' => '❌', 'callback_data' => "dontsendanymore"]];
     $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
     file_put_contents("temp" . $from_id . ".txt", $keys);
-    sendMessage("لطفا دلیل عدم تأیید افزایش موجودی را وارد کنید",$cancelKey);
+    sendMessage("لطفاً دلیل عدم تأیید افزایش موجودی را وارد کنید",$cancelKey);
     setUser("decPayment" . $message_id . "_" . $match[1]);
 }
 if(preg_match('/^decPayment(\d+)_(.*)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -970,7 +970,7 @@ if(preg_match('/^decreaseWalletUser(\d+)/',$userInfo['step'], $match) && $text !
 }
 if($data=="editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🤗|لطفا ربات رو در کانال ادمین کن و آیدی کانال رو بفرست",$cancelKey);
+    sendMessage("🤗|لطفاً ربات رو در کانال ادمین کن و آیدی کانال رو بفرست",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -988,7 +988,7 @@ if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo[
 }
 if($data=="editLockChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🤗|لطفا ربات رو در کانال ادمین کن و آیدی کانال رو بفرست",$cancelKey);
+    sendMessage("🤗|لطفاً ربات رو در کانال ادمین کن و آیدی کانال رو بفرست",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "editLockChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -1116,7 +1116,7 @@ if(preg_match('/createAccCategory(\d+)_(\d+)/',$data,$match) && ($from_id == $ad
 }
 if(preg_match('/^createAccPlan(\d+)/',$data,$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("❗️لطفا مدت زمان اکانت را به ( روز ) وارد کن:",$cancelKey);
+    sendMessage("❗️لطفاً مدت زمان اکانت را به ( روز ) وارد کن:",$cancelKey);
     setUser('createAccDate' . $match[1]);
 }
 if(preg_match('/^createAccDate(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -1282,7 +1282,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         }
         
         if(is_null($response)){
-            sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+            sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
             break;
         }
     	if($response == "inbound not Found"){
@@ -1290,7 +1290,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
             break;
     	}
     	if(!$response->success){
-            sendMessage('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+            sendMessage('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
             sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
             break;
         }
@@ -1549,9 +1549,9 @@ sendMessage("
         if($pay->statusCode == 400){
             sendMessage("مقدار انتخاب شده کمتر از حد مجاز است");
         }else{
-            sendMessage("مشکلی رخ داده است، لطفا به پشتیبانی اطلاع بدهید");
+            sendMessage("مشکلی رخ داده است، لطفاً به پشتیبانی اطلاع بدهید");
         }
-        sendMessage("لطفا یکی از کلید های زیر را انتخاب کنید",getMainKeys());
+        sendMessage("لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
     }
 }
 if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
@@ -1713,7 +1713,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
         }
         
         if(is_null($response)){
-            sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+            sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
             exit;
         }
         if($response == "inbound not Found"){
@@ -1721,7 +1721,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
         	exit;
         }
         if(!$response->success){
-            sendMessage('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+            sendMessage('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
             sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
             exit;
         }
@@ -1868,7 +1868,7 @@ elseif($payType == "RENEW_ACCOUNT"){
     }
     
     if(is_null($response)){
-    	alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+    	alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
     	exit;
     }
     $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
@@ -1968,7 +1968,7 @@ sendMessage("
 
     exit;
 }else {
-    alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفا به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید", true);
+    alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفاً به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید", true);
     exit;
 }
 }
@@ -2037,7 +2037,7 @@ sendMessage("
     
 
 }else {
-    alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفا به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید",true);
+    alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفاً به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید",true);
     exit;
 }
 }
@@ -2074,7 +2074,7 @@ elseif($payType == "RENEW_SCONFIG"){
     }
     
 	if(is_null($response)){
-		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
 		exit;
 	}
 	$stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
@@ -2106,7 +2106,7 @@ elseif($payType == "RENEW_SCONFIG"){
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
         $stmt->close();
-        alert("شما هزینه کمتری پرداخت کردید، لطفا به پشتیبانی پیام بدهید");
+        alert("شما هزینه کمتری پرداخت کردید، لطفاً به پشتیبانی پیام بدهید");
     }else{
         alert("پرداخت مورد نظر هنوز تکمیل نشده!");
     }
@@ -2138,7 +2138,7 @@ if($userInfo['step'] == "messageToSpeceficUser" && $text != $buttonValues['cance
 }
 
 if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    // بررسی صف ارسال پیام/فوروارد همگانی (به جز صف آپدیت کانفیگ‌ها)
+    // بررسی صف ارسال پیام/فوروارد همگانی (به جز عملیات به‌روزرسانی کانفیگ‌ها)
     $stmt = $connection->prepare("SELECT * FROM `send_list` WHERE `state` = 1 AND `type` != 'updateConfigs' LIMIT 1");
     $stmt->execute();
     $info = $stmt->get_result();
@@ -2159,7 +2159,7 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
 
         if($type == "forwardall"){
             sendMessage("
-            ❗️ یک فروارد همگانی در صف انتشار می باشد لطفا صبور باشید ...
+            ❗️ یک فروارد همگانی در صف انتشار می باشد لطفاً صبور باشید ...
 
             🔰 تعداد کاربران : $usersCount
             ☑️ فروارد شده : $offset
@@ -2168,7 +2168,7 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
             ");
         }else{
             sendMessage("
-            ❗️ یک پیام همگانی در صف انتشار می باشد لطفا صبور باشید ...
+            ❗️ یک پیام همگانی در صف انتشار می باشد لطفاً صبور باشید ...
 
             🔰 تعداد کاربران : $usersCount
             ☑️ ارسال شده : $offset
@@ -2182,121 +2182,260 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
     // شروع ارسال پیام همگانی
     delMessage();
     setUser('s2a');
-    sendMessage("لطفا پیامت رو بنویس ، میخوام برا همه بفرستمش: 🙂",$cancelKey);
+    sendMessage("لطفاً پیامت رو بنویس ، میخوام برا همه بفرستمش: 🙂",$cancelKey);
     exit();
 }
 
 /* ======================================================================
-   ♻️ پنل اختصاصی «آپدیت و ارسال کانفیگ‌ها» (Admin Only)
+   ♻️ پنل اختصاصی «به‌روزرسانی و ارسال کانفیگ‌ها» (Admin Only)
    - جدا شده از بخش پیام همگانی طبق درخواست شما
-   - شامل گزینه‌های حرفه‌ای: آپدیت همه کانفیگ‌های فعال / یک کاربر / یک کانفیگ خاص / وضعیت / توقف / اجرای Batch
+   - شامل: به‌روزرسانی همه / یک کاربر / یک کانفیگ / بر اساس دامنه / تنظیم پیام پس از به‌روزرسانی
+   - + پاکسازی کانفیگ‌های قدیمی (با پیش‌نمایش قبل از حذف)
    ====================================================================== */
 
 if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    // پاک‌کردن استپ‌های قبلی تا ادمین داخل مرحله‌ی دیگری گیر نکند
+    // خروج از هر استپ قبلی برای جلوگیری از گیر کردن داخل حالت‌های متنی
     setUser();
 
     $job = farid_getUpdateConfigsJob();
-    $jobState = intval($job['state']??0);
 
-    $extra = "";
-    if($jobState == 1){
+    $stateTxt = (intval($job['state'] ?? 0) == 1) ? "فعال ✅" : "غیرفعال ⛔️";
+    $mode = $job['mode'] ?? '';
+
+    // عنوان مود
+    $modeTitle = "—";
+    if($mode == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
+    elseif($mode == "user")   $modeTitle = "کانفیگ‌های کاربر: " . intval($job['userid'] ?? 0);
+    elseif($mode == "ids")    $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
+    else $modeTitle = "—";
+
+    $total = 0;
+    $offset = intval($job['offset'] ?? 0);
+    if(intval($job['state'] ?? 0) == 1){
         $total = farid_getUpdateConfigsTotal($job);
-        $offset = intval($job['offset']??0);
-        $left = max(0, $total - $offset);
-
-        $modeTitle = "نامشخص";
-        if(($job['mode']??'') == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
-        elseif(($job['mode']??'') == "user") $modeTitle = "کانفیگ‌های کاربر: " . ($job['userid']??'-');
-
-        $extra = "\n\n✅ صف فعال است\n🎯 نوع: $modeTitle\n🔰 کل: $total\n☑️ انجام‌شده: $offset\n📣 باقی‌مانده: $left";
-    }else{
-        $extra = "\n\n⛔️ در حال حاضر صف فعالی وجود ندارد.";
     }
+    $left = max(0, $total - $offset);
+
+    // پیام پس از به‌روزرسانی
+    $afterMsg = farid_getUpdateAfterMessage();
+    $afterMsgState = (strlen(trim($afterMsg)) > 0) ? "فعال ✅" : "خاموش 🚫";
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"♻️ آپدیت و ارسال همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive"]],
-        [['text'=>"👤 آپدیت کانفیگ‌های یک کاربر",'callback_data'=>"updateConfigsUser"]],
-        [['text'=>"🔎 آپدیت یک کانفیگ خاص",'callback_data'=>"updateConfigsOne"]],
-        [['text'=>"▶️ اجرای Batch / ادامه",'callback_data'=>"updateConfigsRun"]],
-        [['text'=>"📊 وضعیت صف",'callback_data'=>"updateConfigsStatus"], ['text'=>"⛔️ توقف صف",'callback_data'=>"updateConfigsStop"]],
+        [['text'=>"♻️ به‌روزرسانی همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive"]],
+        [['text'=>"👤 به‌روزرسانی کانفیگ‌های یک کاربر",'callback_data'=>"updateConfigsUser"]],
+        [['text'=>"🧩 به‌روزرسانی یک کانفیگ",'callback_data'=>"updateConfigsOne"]],
+        [['text'=>"🌐 به‌روزرسانی بر اساس دامنه/آدرس",'callback_data'=>"updateConfigsByDomain"]],
+        [['text'=>"🗑 پاکسازی کانفیگ‌های قدیمی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"✉️ تنظیم پیام پس از به‌روزرسانی",'callback_data'=>"updateConfigsAfterMessage"]],
+        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+        [['text'=>"📊 مشاهده وضعیت",'callback_data'=>"updateConfigsStatus"], ['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
         [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]],
     ]], JSON_UNESCAPED_UNICODE);
 
-    $res = editText($message_id, "♻️ پنل آپدیت و ارسال کانفیگ‌ها" . $extra, $keys);
-    if(!$res->ok){
-        delMessage();
-        sendMessage("♻️ پنل آپدیت و ارسال کانفیگ‌ها" . $extra, $keys);
-    }
+    $txt = "♻️ پنل مدیریت به‌روزرسانی و ارسال کانفیگ‌ها\n\n".
+           "🔰 وضعیت عملیات: $stateTxt\n".
+           "🎯 نوع عملیات: $modeTitle\n".
+           (intval($job['state'] ?? 0) == 1 ? ("📦 کل: $total\n☑️ انجام‌شده: $offset\n📣 باقی‌مانده: $left\n") : "").
+           "\n✉️ پیام پس از به‌روزرسانی: $afterMsgState";
+
+    editText($message_id, $txt, $keys);
     exit();
 }
 
+// شروع صف: همه کانفیگ‌های فعال
 if($data == "updateConfigsAllActive" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $job = farid_getUpdateConfigsJob();
-    if(intval($job['state']??0) == 1){
-        alert("⛔️ یک صف آپدیت فعال است. یا «توقف صف» بزن، یا «ادامه» بده.");
+    if(intval($job['state'] ?? 0) == 1){
+        alert("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.");
         exit();
     }
+
     $job = [
         'state' => 1,
         'mode'  => 'all_active',
         'userid'=> 0,
         'offset'=> 0,
-        'batch' => 5,
-        'created_at' => time()
+        'batch' => 10,
+        'created_at' => time(),
+        'requested_by' => $from_id,
+        'filter_title' => 'همه کانفیگ‌های فعال',
+        'stats' => ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0],
+        'links_count' => 0,
+        'status_chat_id' => 0,
+        'status_message_id' => 0,
+        'auto_running' => 0,
+        'auto_last_ts' => 0,
+        'stopped_at' => 0,
+        'stopped_by' => 0,
+        'report_sent' => 0
     ];
     farid_setUpdateConfigsJob($job);
-    alert("✅ صف آپدیت همه کانفیگ‌های فعال ساخته شد. حالا روی «اجرای Batch / ادامه» بزن.");
+
+    $total = farid_getUpdateConfigsTotal($job);
+
+    editText($message_id, "✅ فهرست به‌روزرسانی «همه کانفیگ‌های فعال» ایجاد شد.\n📌 تعداد کل موارد: $total\n\nبرای آغاز عملیات، روی «🚀 شروع اجرای خودکار» کلیک کنید.", json_encode(['inline_keyboard'=>[
+        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+        [['text'=>"📊 مشاهده وضعیت",'callback_data'=>"updateConfigsStatus"]],
+        [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
     exit();
 }
 
+// شروع صف: کاربر مشخص
 if($data == "updateConfigsUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    delMessage();
-    sendMessage("🆔 آیدی عددی کاربر رو بفرست تا همه کانفیگ‌های فعالش آپدیت و در پیام جدید براش ارسال بشه:", $cancelKey);
+    $job = farid_getUpdateConfigsJob();
+    if(intval($job['state'] ?? 0) == 1){
+        alert("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.");
+        exit();
+    }
+    sendMessage("👤 لطفاً شناسه کاربری (UserID) را ارسال کنید تا فقط کانفیگ‌های فعال همان کاربر به‌روزرسانی و ارسال شود:", $cancelKey);
     setUser("updateConfigsUser");
     exit();
 }
 if($userInfo['step'] == "updateConfigsUser" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     if(!is_numeric($text)){
-        sendMessage($mainValues['send_only_number']);
+        sendMessage("⛔️ فقط عدد بفرست (User ID).");
         exit();
     }
-    $targetUser = intval($text);
 
-    // چک وجود کاربر
-    $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `users` WHERE `userid` = ?");
-    $stmt->bind_param("i", $targetUser);
-    $stmt->execute();
-    $exists = intval($stmt->get_result()->fetch_assoc()['cnt']??0);
-    $stmt->close();
-    if($exists == 0){
-        sendMessage($mainValues['user_not_found']);
+    $uid = intval($text);
+    if($uid <= 0){
+        sendMessage("⛔️ User ID نامعتبر است.");
         exit();
     }
 
     $job = farid_getUpdateConfigsJob();
-    if(intval($job['state']??0) == 1){
-        sendMessage("⛔️ یک صف آپدیت فعال است. اول «توقف صف» رو بزن بعد دوباره تلاش کن.");
+    if(intval($job['state'] ?? 0) == 1){
+        sendMessage("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.", $removeKeyboard);
+        setUser();
         exit();
     }
 
     $job = [
         'state' => 1,
         'mode'  => 'user',
-        'userid'=> $targetUser,
+        'userid'=> $uid,
         'offset'=> 0,
-        'batch' => 5,
-        'created_at' => time()
+        'batch' => 10,
+        'created_at' => time(),
+        'requested_by' => $from_id,
+        'filter_title' => "کاربر: $uid",
+        'stats' => ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0],
+        'links_count' => 0,
+        'status_chat_id' => 0,
+        'status_message_id' => 0,
+        'auto_running' => 0,
+        'auto_last_ts' => 0,
+        'stopped_at' => 0,
+        'stopped_by' => 0,
+        'report_sent' => 0
     ];
     farid_setUpdateConfigsJob($job);
+
+    $total = farid_getUpdateConfigsTotal($job);
+
+    sendMessage("✅ فهرست به‌روزرسانی برای کاربر $uid ایجاد شد.\n📌 تعداد کانفیگ‌های فعال: $total\n\nبرای آغاز عملیات، روی «🚀 شروع اجرای خودکار» کلیک کنید.", json_encode(['inline_keyboard'=>[
+        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+        [['text'=>"📊 مشاهده وضعیت",'callback_data'=>"updateConfigsStatus"]],
+        [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
     setUser();
-    sendMessage("✅ صف آپدیت کانفیگ‌های کاربر $targetUser ساخته شد.\nحالا از پنل «اجرای Batch / ادامه» رو بزن.", $removeKeyboard);
     exit();
 }
 
+// شروع صف: بر اساس دامنه/آدرس (هاست)
+if($data == "updateConfigsByDomain" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $job = farid_getUpdateConfigsJob();
+    if(intval($job['state'] ?? 0) == 1){
+        alert("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.");
+        exit();
+    }
+    sendMessage("🌐 لطفاً دامنه یا آدرس موردنظر را ارسال کنید (مثال: example.com یا 1.2.3.4)\n\nربات صرفاً کانفیگ‌هایی را انتخاب می‌کند که «دامنه/آدرس» آن‌ها با مقدار واردشده مطابقت داشته باشد و سپس آن‌ها را به‌روزرسانی و ارسال می‌کند.", $cancelKey);
+    setUser("updateConfigsByDomain");
+    exit();
+}
+if($userInfo['step'] == "updateConfigsByDomain" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $domainRaw = trim($text);
+    if(strlen($domainRaw) < 3){
+        sendMessage("⛔️ دامنه/آدرس واردشده معتبر نیست. لطفاً یک مقدار صحیح ارسال کنید.");
+        exit();
+    }
+
+    $job = farid_getUpdateConfigsJob();
+    if(intval($job['state'] ?? 0) == 1){
+        sendMessage("⛔️ در حال حاضر یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.", $removeKeyboard);
+        setUser();
+        exit();
+    }
+
+    sendMessage("⏳ در حال بررسی کانفیگ‌های ثبت‌شده در پایگاه داده... لطفاً چند لحظه صبر کنید.", $removeKeyboard);
+
+    $found = farid_findLinkItemsByDomain($domainRaw);
+
+    $items = [];
+    $ordersCount = 0;
+    $linksCount  = 0;
+
+    if(is_array($found) && isset($found['items'])){
+        $items = is_array($found['items']) ? $found['items'] : [];
+        $ordersCount = intval($found['orders_count'] ?? 0);
+        $linksCount  = intval($found['links_count'] ?? count($items));
+    }
+
+    if(!is_array($items) || count($items) == 0){
+        sendMessage("❌ هیچ کانفیگی با این دامنه/آدرس در دیتابیس پیدا نشد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        setUser();
+        exit();
+    }
+
+    $job = [
+        'state' => 1,
+        'mode'  => 'links',
+        'userid'=> 0,
+        'ids'   => [],
+        'items' => array_values($items),
+        'orders_count' => intval($ordersCount),
+        'links_count'  => intval($linksCount),
+        'offset'=> 0,
+        'batch' => 10,
+        'created_at' => time(),
+        'requested_by' => $from_id,
+        'filter_title' => "دامنه/آدرس: " . farid_normalizeDomainInput($domainRaw),
+        'stats' => ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0],
+        'status_chat_id' => 0,
+        'status_message_id' => 0,
+        'auto_running' => 0,
+        'auto_last_ts' => 0,
+        'stopped_at' => 0,
+        'stopped_by' => 0,
+        'report_sent' => 0
+    ];
+    farid_setUpdateConfigsJob($job);
+
+    $total = farid_getUpdateConfigsTotal($job);
+
+    sendMessage("✅ فهرست به‌روزرسانی بر اساس دامنه/آدرس ایجاد شد.\n🎯 فیلتر: " . farid_normalizeDomainInput($domainRaw) . "\n\n🔗 تعداد کانفیگ‌های منطبق (بر اساس لینک): $total\n📌 تعداد سفارش‌های درگیر (یکتا): $ordersCount\n\nبرای آغاز عملیات، روی «🚀 شروع اجرای خودکار» کلیک کنید.", json_encode(['inline_keyboard'=>[
+        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+        [['text'=>"📊 مشاهده وضعیت",'callback_data'=>"updateConfigsStatus"]],
+        [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    setUser();
+    exit();
+}
+
+// به‌روزرسانی و ارسال یک کانفیگ مشخص (Order ID یا remark)
 if($data == "updateConfigsOne" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    delMessage();
-    sendMessage("🔎 شماره سفارش (Order ID) یا ریمارک کانفیگ رو بفرست تا فقط همون مورد آپدیت و در پیام جدید برای کاربر ارسال بشه:", $cancelKey);
+    $job = farid_getUpdateConfigsJob();
+    if(intval($job['state'] ?? 0) == 1){
+        alert("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.");
+        exit();
+    }
+    sendMessage("🧩 لطفاً شناسه سفارش (OrderID) یا بخشی از Remark کانفیگ را ارسال کنید.\n(در صورت ارسال متن، حداکثر ۲۰ نتیجه نمایش داده می‌شود):", $cancelKey);
     setUser("updateConfigsOne");
     exit();
 }
@@ -2305,8 +2444,12 @@ if($userInfo['step'] == "updateConfigsOne" && ($from_id == $admin || $userInfo['
     if(is_numeric($text)){
         $oid = intval($text);
         $done = farid_updateAndSendOneOrder($oid, $from_id);
-        if($done) sendMessage("✅ انجام شد.", $removeKeyboard);
-        else sendMessage("⛔️ سفارشی با این مشخصات پیدا نشد یا خطا در آپدیت.", $removeKeyboard);
+        if($done) sendMessage("✅ انجام شد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        else sendMessage("⛔️ سفارشی با این مشخصات پیدا نشد یا خطا در به‌روزرسانی.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
         setUser();
         exit();
     }
@@ -2325,7 +2468,9 @@ if($userInfo['step'] == "updateConfigsOne" && ($from_id == $admin || $userInfo['
     $stmt->close();
 
     if($res->num_rows == 0){
-        sendMessage("موردی پیدا نشد.", $removeKeyboard);
+        sendMessage("موردی پیدا نشد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
         setUser();
         exit();
     }
@@ -2348,11 +2493,259 @@ if(preg_match('/^updateConfigsOneSelect(\d+)/',$data,$match) && ($from_id == $ad
     $oid = intval($match[1]);
     $done = farid_updateAndSendOneOrder($oid, $from_id);
     if($done) alert("✅ انجام شد.");
-    else alert("⛔️ خطا در آپدیت.");
+    else alert("⛔️ خطا در به‌روزرسانی.");
     setUser();
     exit();
 }
 
+// تنظیم پیام پس از به‌روزرسانی
+if($data == "updateConfigsAfterMessage" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+
+
+    $current = farid_getUpdateAfterMessage();
+    $currentPreview = (strlen(trim($current)) > 0) ? $current : "— خاموش —";
+
+    sendMessage("✉️ پیام پس از به‌روزرسانی کانفیگ\n\nپیام فعلی:\n$currentPreview\n\nلطفاً متن جدید را ارسال کنید.\nبرای غیرفعال‌سازی: /none\nبرای بازگشت به متن پیش‌فرض: /default", $cancelKey);
+    setUser("updateConfigsAfterMessage");
+    exit();
+}
+if($userInfo['step'] == "updateConfigsAfterMessage" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $t = trim($text);
+
+    if($t == "/none"){
+        farid_setUpdateAfterMessage("");
+        sendMessage("✅ پیام پس از به‌روزرسانی غیرفعال شد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+    }elseif($t == "/default"){
+        farid_setUpdateAfterMessage(farid_defaultUpdateAfterMessage());
+        sendMessage("✅ پیام پیش‌فرض ثبت شد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+    }else{
+        farid_setUpdateAfterMessage($t);
+        sendMessage("✅ پیام جدید ذخیره شد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+    }
+
+    setUser();
+    exit();
+}
+
+// 🗑 پاکسازی کانفیگ‌های قدیمی (با پیش‌نمایش)
+if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+
+    $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
+    if($days <= 0) $days = 10;
+
+    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date"; // expire_date | date
+    if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
+
+    $auto = farid_getSettingValue("CLEAN_OLD_CONFIGS_AUTO") ?? "off"; // on/off
+    if($auto != "on") $auto = "off";
+
+    $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
+    $autoTitle = ($auto == "on") ? "روشن ✅" : "خاموش 🚫";
+
+    $txt = "🗑 پاکسازی کانفیگ‌های قدیمی\n\n".
+           "🔧 تنظیمات فعلی:\n".
+           "⏱ بازه: بیشتر از $days روز\n".
+           "📅 معیار: $basisTitle\n".
+           "🚫 حذف خودکار: $autoTitle\n\n".
+           "برای دیدن تعداد و نمونه‌ها، «پیش‌نمایش» رو بزن.";
+
+    $keys = json_encode(['inline_keyboard'=>[
+        [['text'=>"🔍 پیش‌نمایش",'callback_data'=>"cleanOldConfigsPreview"]],
+        [['text'=>"⏱ تغییر تعداد روز",'callback_data'=>"cleanOldConfigsSetDays"]],
+        [['text'=>"📅 تغییر معیار",'callback_data'=>"cleanOldConfigsToggleBasis"]],
+        [['text'=>"🚫 حذف خودکار: $autoTitle",'callback_data'=>"cleanOldConfigsToggleAuto"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE);
+
+    editText($message_id, $txt, $keys);
+    exit();
+}
+
+if($data == "cleanOldConfigsToggleAuto" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $auto = farid_getSettingValue("CLEAN_OLD_CONFIGS_AUTO") ?? "off";
+    $auto = ($auto == "on") ? "off" : "on";
+    farid_setSettingValue("CLEAN_OLD_CONFIGS_AUTO", $auto);
+    alert("✅ انجام شد");
+    // بازگشت به منو
+    sendMessage("برای ادامه:", json_encode(['inline_keyboard'=>[
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsToggleBasis" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
+    $basis = ($basis == "date") ? "expire_date" : "date";
+    farid_setSettingValue("CLEAN_OLD_CONFIGS_BASIS", $basis);
+    alert("✅ معیار تغییر کرد");
+    sendMessage("برای ادامه:", json_encode(['inline_keyboard'=>[
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("⏱ تعداد روز رو بفرست (مثلا 10).\n\nنکته: فقط کانفیگ‌های منقضی‌شده‌ای حذف میشن که از معیار انتخابی، بیشتر از این تعداد روز گذشته باشه.", $cancelKey);
+    setUser("cleanOldConfigsSetDays");
+    exit();
+}
+if($userInfo['step'] == "cleanOldConfigsSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    if(!is_numeric($text)){
+        sendMessage("⛔️ فقط عدد بفرست.");
+        exit();
+    }
+    $days = intval($text);
+    if($days < 1) $days = 1;
+    if($days > 3650) $days = 3650;
+
+    farid_setSettingValue("CLEAN_OLD_CONFIGS_DAYS", strval($days));
+    setUser();
+
+    sendMessage("✅ بازه پاکسازی روی $days روز تنظیم شد.", json_encode(['inline_keyboard'=>[
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    global $connection;
+
+    $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
+    if($days <= 0) $days = 10;
+
+    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
+    if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
+
+    $now = time();
+    $threshold = $now - ($days * 86400);
+
+    // فقط کانفیگ‌های منقضی شده
+    if($basis == "date"){
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `expire_date` < ? AND `date` < ?");
+        $stmt->bind_param("ii", $now, $threshold);
+    }else{
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `expire_date` < ?");
+        $stmt->bind_param("i", $threshold);
+    }
+    $stmt->execute();
+    $total = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+
+    if($total <= 0){
+        editText($message_id, "✅ موردی برای حذف پیدا نشد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        exit();
+    }
+
+    // نمونه‌ها
+    if($basis == "date"){
+        $stmt = $connection->prepare("SELECT `id`,`userid`,`remark`,`date`,`expire_date` FROM `orders_list` WHERE `expire_date` < ? AND `date` < ? ORDER BY `id` ASC LIMIT 15");
+        $stmt->bind_param("ii", $now, $threshold);
+    }else{
+        $stmt = $connection->prepare("SELECT `id`,`userid`,`remark`,`date`,`expire_date` FROM `orders_list` WHERE `expire_date` < ? ORDER BY `id` ASC LIMIT 15");
+        $stmt->bind_param("i", $threshold);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    $lines = [];
+    while($row = $res->fetch_assoc()){
+        $oid = intval($row['id']);
+        $uid = intval($row['userid']);
+        $rm  = $row['remark'] ?? '-';
+        $cd  = jdate("Y-m-d", intval($row['date'] ?? 0));
+        $ed  = jdate("Y-m-d", intval($row['expire_date'] ?? 0));
+        $lines[] = "#$oid | $uid | $rm | ایجاد:$cd | انقضا:$ed";
+    }
+
+    $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
+
+    $msg = "🔍 پیش‌نمایش پاکسازی\n\n".
+           "📌 معیار: $basisTitle\n".
+           "⏱ بازه: بیشتر از $days روز\n".
+           "🔢 تعداد کل موارد قابل حذف: $total\n\n".
+           "نمونه (حداکثر 15 مورد):\n" . implode("\n", $lines) . "\n\n".
+           "⚠️ اگر مطمئن هستی «حذف کن» رو بزن.";
+
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>"🗑 حذف کن",'callback_data'=>"cleanOldConfigsDoDelete"]],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    global $connection;
+
+    $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
+    if($days <= 0) $days = 10;
+
+    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
+    if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
+
+    $now = time();
+    $threshold = $now - ($days * 86400);
+
+    // شمارش قبل حذف
+    if($basis == "date"){
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `expire_date` < ? AND `date` < ?");
+        $stmt->bind_param("ii", $now, $threshold);
+    }else{
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `expire_date` < ?");
+        $stmt->bind_param("i", $threshold);
+    }
+    $stmt->execute();
+    $total = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+
+    if($total <= 0){
+        editText($message_id, "✅ موردی برای حذف پیدا نشد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        exit();
+    }
+
+    // حذف
+    if($basis == "date"){
+        $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `expire_date` < ? AND `date` < ?");
+        $stmt->bind_param("ii", $now, $threshold);
+    }else{
+        $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `expire_date` < ?");
+        $stmt->bind_param("i", $threshold);
+    }
+    $stmt->execute();
+    $deleted = $stmt->affected_rows;
+    $stmt->close();
+
+    $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
+
+    $report = "🗑 گزارش پاکسازی\n\n".
+              "📌 معیار: $basisTitle\n".
+              "⏱ بازه: بیشتر از $days روز\n".
+              "🧾 تعداد قبل حذف: $total\n".
+              "✅ حذف‌شده: $deleted\n".
+              "🕒 زمان: " . jdate("Y-m-d H:i", time());
+
+    editText($message_id, $report, json_encode(['inline_keyboard'=>[
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+// وضعیت عملیات
 if($data == "updateConfigsStatus" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $job = farid_getUpdateConfigsJob();
     if(intval($job['state']??0) != 1){
@@ -2367,62 +2760,125 @@ if($data == "updateConfigsStatus" && ($from_id == $admin || $userInfo['isAdmin']
     $modeTitle = "نامشخص";
     if(($job['mode']??'') == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
     elseif(($job['mode']??'') == "user") $modeTitle = "کانفیگ‌های کاربر: " . ($job['userid']??'-');
+    elseif(($job['mode']??'') == "ids" || ($job['mode']??'') == "links") $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
 
-    sendMessage("📊 وضعیت صف آپدیت کانفیگ‌ها\n\n🎯 نوع: $modeTitle\n🔰 کل: $total\n☑️ انجام‌شده: $offset\n📣 باقی‌مانده: $left", json_encode(['inline_keyboard'=>[
-        [['text'=>"▶️ اجرای Batch / ادامه",'callback_data'=>"updateConfigsRun"]],
-        [['text'=>"⛔️ توقف صف",'callback_data'=>"updateConfigsStop"]],
+    $stats = $job['stats'] ?? [];
+    $updated = intval($stats['updated'] ?? 0);
+    $failed  = intval($stats['failed'] ?? 0);
+
+    sendMessage("📊 وضعیت عملیات به‌روزرسانی کانفیگ‌ها\n\n🎯 نوع: $modeTitle\n📌 کل: $total\n✅ انجام‌شده: $offset\n⏳ باقی‌مانده: $left\n\n✅ موفق: $updated\n⛔️ ناموفق: $failed", json_encode(['inline_keyboard'=>[
+        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+        [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
         [['text'=>$buttonValues['back_button'],'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE));
     exit();
 }
 
+// توقف عملیات
 if($data == "updateConfigsStop" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $job = farid_getUpdateConfigsJob();
-    if(intval($job['state']??0) != 1){
-        alert("⛔️ صف فعالی برای توقف وجود ندارد.");
+    if(intval($job['state'] ?? 0) != 1){
+        alert("⛔️ عملیات فعالی برای توقف وجود ندارد.");
         exit();
     }
+
     $job['state'] = 0;
+    $job['stopped_at'] = time();
+    $job['stopped_by'] = $from_id;
+    $job['auto_running'] = 0;
+    $job['auto_last_ts'] = time();
+
     farid_setUpdateConfigsJob($job);
-    alert("✅ صف آپدیت متوقف شد.");
+    farid_editUpdateConfigsProgressMessage($job, true);
+
+
+    alert("✅ عملیات متوقف شد.");
     exit();
 }
+
 
 if($data == "updateConfigsRun" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $job = farid_getUpdateConfigsJob();
-    if(intval($job['state']??0) != 1){
-        alert("⛔️ صف فعالی وجود ندارد. از «آپدیت همه» یا «آپدیت کاربر» شروع کن.");
+
+    if(intval($job['state'] ?? 0) != 1){
+        alert("⛔️ عملیات فعالی یافت نشد. لطفاً ابتدا از منو یک عملیات به‌روزرسانی ایجاد کنید.");
         exit();
     }
 
-    $batch = intval($job['batch']??5);
-    if($batch < 1) $batch = 5;
-    if($batch > 25) $batch = 25; // محدودیت برای جلوگیری از تایم‌اوت
-
-    $result = farid_runUpdateConfigsBatch($job, $batch);
-
-    // نمایش نتیجه
-    $job = farid_getUpdateConfigsJob(); // دوباره بخونیم که آفست جدید ثبت شده باشه
-
-    if(intval($job['state']??0) != 1){
-        sendMessage("✅ صف تمام شد و همه موارد ارسال شد.", json_encode(['inline_keyboard'=>[
-            [['text'=>$buttonValues['back_button'],'callback_data'=>"updateConfigsMenu"]],
-        ]], JSON_UNESCAPED_UNICODE));
+    // جلوگیری از اجرای هم‌زمان چندباره
+    if(intval($job['auto_running'] ?? 0) == 1){
+        alert("ℹ️ عملیات در حال اجراست. برای توقف، روی «توقف عملیات» کلیک کنید.");
         exit();
     }
 
-    $total = farid_getUpdateConfigsTotal($job);
-    $offset = intval($job['offset']??0);
-    $left = max(0, $total - $offset);
+    // Batch ثابت ۱۰تایی (طبق درخواست)
+    $job['batch'] = 10;
 
-    sendMessage("⏳ Batch انجام شد.\n\n🔰 کل: $total\n☑️ انجام‌شده: $offset\n📣 باقی‌مانده: $left", json_encode(['inline_keyboard'=>[
-        [['text'=>"▶️ اجرای Batch بعدی",'callback_data'=>"updateConfigsRun"]],
-        [['text'=>"📊 وضعیت",'callback_data'=>"updateConfigsStatus"]],
-        [['text'=>"⛔️ توقف صف",'callback_data'=>"updateConfigsStop"]],
-        [['text'=>$buttonValues['back_button'],'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    // ذخیره پیام وضعیت برای ویرایش لحظه‌ای
+    $job['status_chat_id'] = intval($chat_id ?? 0);
+    $job['status_message_id'] = intval($message_id ?? 0);
+    $job['auto_running'] = 1;
+    $job['auto_last_ts'] = time();
+
+    farid_setUpdateConfigsJob($job);
+    alert("✅ عملیات آغاز شد.");
+
+
+    // یک بار پیام را به حالت «در حال اجرا» تبدیل می‌کنیم
+    farid_editUpdateConfigsProgressMessage($job);
+
+    // پاسخ وبهوک را سریع تمام می‌کنیم تا تلگرام مجدداً درخواست را تکرار نکند
+    farid_finishWebhookResponse();
+
+    // اجرای خودکار تا پایان (یا تا زمانی که ادمین توقف بزند)
+    while(true){
+        $job = farid_getUpdateConfigsJob();
+
+        // اگر توسط ادمین متوقف شده باشد یا تمام شده باشد
+        if(intval($job['state'] ?? 0) != 1){
+            break;
+        }
+
+        // اجرای خودکار - بدون بازنویسی وضعیت در DB (برای جلوگیری از تداخل با دکمه توقف)
+
+        $batch = intval($job['batch'] ?? 10);
+        if($batch < 1) $batch = 10;
+        if($batch > 25) $batch = 25;
+
+        // اجرای یک مرحله
+        farid_runUpdateConfigsBatch($job, $batch);
+
+        // به‌روزرسانی پیام وضعیت
+        $job = farid_getUpdateConfigsJob();
+        farid_editUpdateConfigsProgressMessage($job);
+
+        // اگر تمام شد
+        if(intval($job['state'] ?? 0) != 1){
+            break;
+        }
+
+        // کمی مکث برای جلوگیری از محدودیت ویرایش پیام
+        usleep(250000);
+    }
+
+    // پایان عملیات (تکمیل یا توقف)
+    $job = farid_getUpdateConfigsJob();
+    $job['auto_running'] = 0;
+    $job['auto_last_ts'] = time();
+    farid_setUpdateConfigsJob($job);
+
+    // ارسال گزارش پایان کار (فقط یک بار)
+    farid_sendUpdateConfigsFinalReportIfNeeded($job);
+
+    // به‌روزرسانی پیام وضعیت نهایی
+    farid_editUpdateConfigsProgressMessage($job, true);
+
     exit();
 }
+
+
+
+
 if($userInfo['step'] == 's2a' and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser();
 
@@ -2479,7 +2935,7 @@ if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)
         
         if($type == "forwardall"){
             sendMessage("
-            ❗️ یک فروارد همگانی در صف انتشار می باشد لطفا صبور باشید ...
+            ❗️ یک فروارد همگانی در صف انتشار می باشد لطفاً صبور باشید ...
             
             🔰 تعداد کاربران : $usersCount
             ☑️ فروارد شده : $offset
@@ -2488,7 +2944,7 @@ if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)
             ");
         }else{
             sendMessage("
-            ❗️ یک پیام همگانی در صف انتشار می باشد لطفا صبور باشید ...
+            ❗️ یک پیام همگانی در صف انتشار می باشد لطفاً صبور باشید ...
             
             🔰 تعداد کاربران : $usersCount
             ☑️ ارسال شده : $offset
@@ -2625,11 +3081,11 @@ if(preg_match('/selectCustomePlan(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\w
 }
 if(preg_match('/selectCustomPlanGB(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\w+)/',$userInfo['step'], $match) && ($botState['sellState']=="on" ||$from_id == $admin) && $text != $buttonValues['cancel']){
     if(!is_numeric($text)){
-        sendMessage("😡|لطفا فقط عدد ارسال کن");
+        sendMessage("😡|لطفاً فقط عدد ارسال کن");
         exit();
     }
     elseif($text <1){
-        sendMessage("لطفا عددی بزرگتر از 0 وارد کن");
+        sendMessage("لطفاً عددی بزرگتر از 0 وارد کن");
         exit();
     }
     elseif(strstr($text,".")){
@@ -2661,11 +3117,11 @@ if(preg_match('/selectCustomPlanGB(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\
 }
 if((preg_match('/selectCustomPlanDay(?<planId>\d+)_(?<categoryId>\d+)_(?<accountCount>\d+)_(?<buyType>\w+)/',$userInfo['step'], $match)) && ($botState['sellState']=="on" ||$from_id == $admin) && $text != $buttonValues['cancel']){
     if(!is_numeric($text)){
-        sendMessage("😡|لطفا فقط عدد ارسال کن");
+        sendMessage("😡|لطفاً فقط عدد ارسال کن");
         exit();
     }
     elseif($text <1){
-        sendMessage("لطفا عددی بزرگتر از 0 وارد کن");
+        sendMessage("لطفاً عددی بزرگتر از 0 وارد کن");
         exit();
     }
     elseif(strstr($text,".")){
@@ -2871,7 +3327,7 @@ if($data=="getTestAccount"){
 
         }
     	$keyboard[] = [['text' => $buttonValues['back_to_main'], 'callback_data' => "mainMenu"]];
-        editText($message_id,"لطفا یکی از کلید های زیر را انتخاب کنید", json_encode(['inline_keyboard'=>$keyboard]), "HTML");
+        editText($message_id,"لطفاً یکی از کلید های زیر را انتخاب کنید", json_encode(['inline_keyboard'=>$keyboard]), "HTML");
     }else alert("این بخش موقتا غیر فعال است");
 }
 if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match) || 
@@ -3194,7 +3650,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     }
     
     if(is_null($response)){
-        alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+        alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
         exit;
     }
 	if($response == "inbound not Found"){
@@ -3202,7 +3658,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 		exit;
 	}
 	if(!$response->success){
-        alert('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+        alert('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
         sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
         exit;
     }
@@ -3605,7 +4061,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     }
     
     if(is_null($response)){
-        alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+        alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
         exit;
     }
 	if($response == "inbound not Found"){
@@ -3613,7 +4069,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 		exit;
 	}
 	if(!$response->success){
-        alert('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+        alert('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
         sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
         exit;
     }
@@ -3814,7 +4270,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         }
         
     	if(is_null($response)){
-    		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+    		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
     		exit;
     	}
     	$stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
@@ -3929,7 +4385,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 } 
             }
             if(is_null($response)){
-                sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+                sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
                 exit;
             }
         	if($response == "inbound not Found"){
@@ -3937,7 +4393,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         		exit;
         	}
         	if(!$response->success){
-                sendMessage('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+                sendMessage('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
                 sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
                 exit;
             }
@@ -4263,7 +4719,7 @@ if($data=="requestAgency"){
         setUser(2, 'is_agent');
         alert($mainValues['agency_request_sent']);
     }elseif($userInfo['is_agent'] == -1) alert($mainValues['agency_request_declined']);
-    elseif($userInfo['is_agent'] == 1) editText($message_id,"لطفا یکی از کلید های زیر را انتخاب کنید",getMainKeys());
+    elseif($userInfo['is_agent'] == 1) editText($message_id,"لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
 }
 if(preg_match('/^agencyDecline(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editKeys(json_encode(['inline_keyboard'=>[
@@ -4355,7 +4811,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
         }
         
     	if(is_null($response)){
-    		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+    		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
     		exit;
     	}
     	$stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
@@ -4461,7 +4917,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 } 
             }
             if(is_null($response)){
-                sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+                sendMessage('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
                 exit;
             }
         	if($response == "inbound not Found"){
@@ -4469,7 +4925,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
         		exit;
         	}
         	if(!$response->success){
-                sendMessage('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+                sendMessage('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
                 sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
                 exit;
             }
@@ -4613,7 +5069,7 @@ if(preg_match('/decline(\d+)_(\d+)/',$userInfo['step'],$match) && ($from_id == $
     sendMessage($text, null, null, $uid);
 }
 if($data=="supportSection"){
-    editText($message_id,"به بخش پشتیبانی خوش اومدی🛂\nلطفا، یکی از دکمه های زیر را انتخاب نمایید.",
+    editText($message_id,"به بخش پشتیبانی خوش اومدی🛂\nلطفاً، یکی از دکمه های زیر را انتخاب نمایید.",
         json_encode(['inline_keyboard'=>[
         [['text'=>"✉️ ثبت تیکت",'callback_data'=>"usersNewTicket"]],
         [['text'=>"تیکت های باز 📨",'callback_data'=>"usersOpenTickets"],['text'=>"📮 لیست تیکت ها", 'callback_data'=>"userAllTickets"]],
@@ -4646,7 +5102,7 @@ if($data== "usersNewTicket"){
         }
         $temp[] = ['text'=>$buttonValues['back_button'],'callback_data'=>"mainMenu"];
         array_push($keys,$temp);
-        editText($message_id,"💠لطفا واحد مورد نظر خود را انتخاب نمایید!",json_encode(['inline_keyboard'=>$keys]));
+        editText($message_id,"💠لطفاً واحد مورد نظر خود را انتخاب نمایید!",json_encode(['inline_keyboard'=>$keys]));
     }else{
         alert("ای وای، ببخشید الان نیستم");
     }
@@ -5090,7 +5546,7 @@ if(preg_match('/^sendTicket_(.*)/',$userInfo['step'],$match)  and $text!=$button
         $stmt->close();
         
         sendMessage("پیام شما با موفقیت ثبت شد",$removeKeyboard,"HTML");
-        sendMessage("لطفا یکی از کلید های زیر را انتخاب کنید",getMainKeys());
+        sendMessage("لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
             
         setUser(NULL,'temp');
     	setUser("none");
@@ -5236,7 +5692,7 @@ if(preg_match('/^closeTicket_(\d+)/',$data,$match) and  $from_id != $admin){
 }
 if(preg_match('/^replySupport_(.*)/',$data,$match)){
     delMessage();
-    sendMessage("💠لطفا متن پیام خود را بصورت ساده و مختصر ارسال کنید!",$cancelKey);
+    sendMessage("💠لطفاً متن پیام خود را بصورت ساده و مختصر ارسال کنید!",$cancelKey);
 	setUser("sendMsg_" . $match[1]);
 }
 if(preg_match('/^sendMsg_(.*)/',$userInfo['step'],$match)  and $text!=$buttonValues['cancel']){
@@ -5360,7 +5816,7 @@ if($data=='ticketsCategory' and ($from_id == $admin || $userInfo['isAdmin'] == t
 }
 if($data=="addTicketCategory" and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser('addTicketCategory');
-    editText($message_id,"لطفا اسم دسته بندی را وارد کنید");
+    editText($message_id,"لطفاً اسم دسته بندی را وارد کنید");
 }
 if ($userInfo['step']=="addTicketCategory" and ($from_id == $admin || $userInfo['isAdmin'] == true)){
 	$stmt = $connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES ('TICKETS_CATEGORY', ?)");	
@@ -5686,20 +6142,20 @@ if(preg_match('/^delMainButton(\d+)/',$data,$match) && ($from_id == $admin || $u
 }
 if($data == "addNewMainButton" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("لطفا اسم دکمه را وارد کنید",$cancelKey);
+    sendMessage("لطفاً اسم دکمه را وارد کنید",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "addNewMainButton" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(!isset($update->message->text)){
-        sendMessage("لطفا فقط متن بفرستید");
+        sendMessage("لطفاً فقط متن بفرستید");
         exit();
     }
-    sendMessage("لطفا پاسخ دکمه را وارد کنید");
+    sendMessage("لطفاً پاسخ دکمه را وارد کنید");
     setUser("setMainButtonAnswer" . $text);
 }
 if(preg_match('/^setMainButtonAnswer(.*)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(!isset($update->message->text)){
-        sendMessage("لطفا فقط متن بفرستید");
+        sendMessage("لطفاً فقط متن بفرستید");
         exit();
     }
     setUser();
@@ -5741,7 +6197,7 @@ if($userInfo['step'] == "unbanUser" && ($from_id == $admin || $userInfo['isAdmin
 }
 if(preg_match("/^reply_(.*)/",$data,$match) and  ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser("answer_" . $match[1]);
-    sendMessage("لطفا پیام خود را ارسال کنید",$cancelKey);
+    sendMessage("لطفاً پیام خود را ارسال کنید",$cancelKey);
 }
 if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin  and $text!=$buttonValues['cancel']){
     $chatRowId = $match[1];
@@ -5925,7 +6381,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }
     }
     if(is_null($response)){
-        alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفا مدیر رو در جریان بزار ...');
+        alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
         exit;
     }
 	if($response == "inbound not Found"){
@@ -5933,7 +6389,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 		exit;
 	}
 	if(!$response->success){
-        alert('❌ | 😮 وای خطا داد لطفا سریع به مدیر بگو ...');
+        alert('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
         sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
         exit;
     }
@@ -6035,7 +6491,7 @@ if(preg_match('/^marzbanHostSettings(\d+)/',$data,$match) && ($from_id == $admin
     }
     $networkType[] = [['text'=>$buttonValues['cancel'], 'callback_data'=>"planDetails" . $match[1]]];
     $networkType = json_encode(['inline_keyboard'=>$networkType]);
-    editText($message_id, "لطفا نوع شبکه های این پلن را انتخاب کنید",$networkType);
+    editText($message_id, "لطفاً نوع شبکه های این پلن را انتخاب کنید",$networkType);
 }
 if(preg_match('/^selectHost(?<planId>\d+)\*_\*(?<protocol>.+)\*_\*(?<tag>.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $saveBtn = "ذخیره ✅";
@@ -6209,7 +6665,7 @@ if($userInfo['step'] == "showAccount" and $text != $buttonValues['cancel']){
                         }
                         $clientsSettings = json_decode($list[$keys]->settings,true)['clients'];
                         if(!is_array($clientsSettings)){
-                            sendMessage("با عرض پوزش، متأسفانه مشکلی رخ داده است، لطفا مجدد اقدام کنید");
+                            sendMessage("با عرض پوزش، متأسفانه مشکلی رخ داده است، لطفاً مجدد اقدام کنید");
                             exit();
                         }
                         $settingsId = array_column($clientsSettings,'id');
@@ -6641,7 +7097,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     $step = checkStep('server_plans');
 
     if($step==1 and $text!=$buttonValues['cancel']){
-        $msg = '🔰 لطفا قیمت پلن رو به تومان وارد کنید!';
+        $msg = '🔰 لطفاً قیمت پلن رو به تومان وارد کنید!';
         if(strlen($text)>1){
             $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=?,`step`=2 WHERE `active`=0 and `step`=1");
             $stmt->bind_param("s", $text);
@@ -6651,7 +7107,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         }
     } 
     if($step==2 and $text!=$buttonValues['cancel']){
-        $msg = '🔰لطفا یه دسته از لیست زیر برا پلن انتخاب کن ';
+        $msg = '🔰لطفاً یه دسته از لیست زیر برا پلن انتخاب کن ';
         if(is_numeric($text)){
             $stmt = $connection->prepare("UPDATE `server_plans` SET `price`=?,`step`=3 WHERE `active`=0");
             $stmt->bind_param("s", $text);
@@ -6659,7 +7115,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             $stmt->close();
             sendMessage($msg,json_encode(['keyboard'=>$catkey,'resize_keyboard'=>true]));
         }else{
-            $msg = '‼️ لطفا یک مقدار عددی وارد کنید';
+            $msg = '‼️ لطفاً یک مقدار عددی وارد کنید';
             sendMessage($msg,$cancelKey);
         }
     } 
@@ -6690,7 +7146,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             $srvkey[] = ['text' => "$title", 'callback_data' => "selectNewPlanServer$id"];
         }
         $srvkey = array_chunk($srvkey,2);
-        sendMessage("لطفا یکی از سرورها رو انتخاب کن 👇 ", json_encode([
+        sendMessage("لطفاً یکی از سرورها رو انتخاب کن 👇 ", json_encode([
                 'inline_keyboard' => $srvkey]), "HTML");
         $inarr = 0;
         foreach ($catkey as $op) {
@@ -6708,7 +7164,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
 
             sendMessage($msg,$cancelKey);
         }else{
-            $msg = '‼️ لطفا فقط یکی از گزینه های پیشنهادی زیر را انتخاب کنید';
+            $msg = '‼️ لطفاً فقط یکی از گزینه های پیشنهادی زیر را انتخاب کنید';
             sendMessage($msg,$catkey);
         }
     } 
@@ -6724,12 +7180,12 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             [['text'=>"🎖پورت اختصاصی",'callback_data'=>"withSpecificPort"]],
             [['text'=>"🎗پورت اشتراکی",'callback_data'=>"withSharedPort"]]
             ]]);
-        if($userInfo['step'] != "addNewMarzbanPlan") editText($message_id, "لطفا نوعیت پورت پنل رو انتخاب کنید", $keys);
-        else editText($message_id, "📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
+        if($userInfo['step'] != "addNewMarzbanPlan") editText($message_id, "لطفاً نوعیت پورت پنل رو انتخاب کنید", $keys);
+        else editText($message_id, "📅 | لطفاً تعداد روز های اعتبار این پلن را وارد کنید:");
     }
     if($step==51 and $text!=$buttonValues['cancel'] and preg_match('/^with(Specific|Shared)Port/',$data,$match)){
-        if($userInfo['step'] == "addNewRahgozarPlan") $msg =  "📡 | لطفا پروتکل پلن مورد نظر را وارد کنید (vless | vmess)";
-        else $msg =  "📡 | لطفا پروتکل پلن مورد نظر را وارد کنید (vless | vmess | trojan)";
+        if($userInfo['step'] == "addNewRahgozarPlan") $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess)";
+        else $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess | trojan)";
         editText($message_id,$msg);
         if($match[1] == "Shared"){
             $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0");
@@ -6744,11 +7200,11 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     }
     if($step==60 and $text!=$buttonValues['cancel']){
         if($text != "vless" && $text != "vmess" && $text != "trojan" && $userInfo['step'] == "addNewPlan"){
-            sendMessage("لطفا فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
+            sendMessage("لطفاً فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
             exit();
         }
         elseif($text != "vless" && $text != "vmess" && $userInfo['step'] == "addNewRahgozarPlan"){
-            sendMessage("لطفا فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
+            sendMessage("لطفاً فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
             exit();
         }
         
@@ -6756,7 +7212,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
-        sendMessage("📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
+        sendMessage("📅 | لطفاً تعداد روز های اعتبار این پلن را وارد کنید:");
     }
     if($step==61 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6769,7 +7225,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->execute();
         $stmt->close();
 
-        sendMessage("🔋 | لطفا مقدار حجم به GB این پلن را وارد کنید:");
+        sendMessage("🔋 | لطفاً مقدار حجم به GB این پلن را وارد کنید:");
     }
     if($step==62 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6781,7 +7237,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->bind_param("d", $text);
         $stmt->execute();
         $stmt->close();
-        sendMessage("🛡 | لطفا آیدی سطر کانکشن در پنل را وارد کنید:");
+        sendMessage("🛡 | لطفاً آیدی سطر کانکشن در پنل را وارد کنید:");
     }
     if($step==63 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6811,7 +7267,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->execute();
         $stmt->close();
 
-        sendMessage("لطفا ظرفیت تعداد اکانت رو پورت مورد نظر را وارد کنید");
+        sendMessage("لطفاً ظرفیت تعداد اکانت رو پورت مورد نظر را وارد کنید");
     }
     if($step==64 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6824,7 +7280,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->execute();
         $stmt->close();
 
-        sendMessage("🧲 | لطفا تعداد چند کاربره این پلن را وارد کنید ( 0 نامحدود است )");
+        sendMessage("🧲 | لطفاً تعداد چند کاربره این پلن را وارد کنید ( 0 نامحدود است )");
     }
     if($step==65 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6841,10 +7297,10 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     }
     if($step==52 and $text!=$buttonValues['cancel']){
         if($userInfo['step'] == "addNewPlan" && $text != "vless" && $text != "vmess" && $text != "trojan"){
-            sendMessage("لطفا فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
+            sendMessage("لطفاً فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
             exit();
         }elseif($userInfo['step'] == "addNewRahgozarPlan" && $text != "vless" && $text != "vmess"){
-            sendMessage("لطفا فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
+            sendMessage("لطفاً فقط پروتکل های vless و vmess را وارد کنید",$cancelKey);
             exit();
         }
         
@@ -6853,7 +7309,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->execute();
         $stmt->close();
 
-        sendMessage("📅 | لطفا تعداد روز های اعتبار این پلن را وارد کنید:");
+        sendMessage("📅 | لطفاً تعداد روز های اعتبار این پلن را وارد کنید:");
     }
     if($step==53 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6866,7 +7322,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         $stmt->execute();
         $stmt->close();
 
-        sendMessage("🔋 | لطفا مقدار حجم به GB این پلن را وارد کنید:");
+        sendMessage("🔋 | لطفاً مقدار حجم به GB این پلن را وارد کنید:");
     }
     if($step==54 and $text!=$buttonValues['cancel']){
         if(!is_numeric($text)){
@@ -6876,7 +7332,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         
         if($userInfo['step'] == "addNewPlan"){
             $sql = ("UPDATE `server_plans` SET `volume`=?,`step`=55 WHERE `active`=0");
-            $msg = "🔉 | لطفا نوع شبکه این پلن را در انتخاب کنید  (ws | tcp | grpc) :";
+            $msg = "🔉 | لطفاً نوع شبکه این پلن را در انتخاب کنید  (ws | tcp | grpc) :";
         }elseif($userInfo['step'] == "addNewRahgozarPlan" || $userInfo['step'] == "addNewMarzbanPlan"){
             $sql = ("UPDATE `server_plans` SET `volume`=?, `type`='ws', `step`=4 WHERE `active`=0");
             $msg = '🔻یه توضیح برای پلن مورد نظرت بنویس:';
@@ -6890,7 +7346,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     }
     if($step==55 and $text!=$buttonValues['cancel']){
         if($text != "tcp" && $text != "ws" && $text != "grpc"){
-            sendMessage("لطفا فقط نوع (ws | tcp | grpc) را وارد کنید");
+            sendMessage("لطفاً فقط نوع (ws | tcp | grpc) را وارد کنید");
             exit();
         }
         $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?,`step`=4 WHERE `active`=0");
@@ -6919,7 +7375,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             $networkType = json_encode(['inline_keyboard'=>$networkType]);
 
             $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `step` = 5 WHERE `step` = 4");
-            sendMessage("لطفا نوع شبکه های این پلن را انتخاب کنید",$networkType);
+            sendMessage("لطفاً نوع شبکه های این پلن را انتخاب کنید",$networkType);
         }
         else{
             $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `active`=1,`step`=10 WHERE `step`=4");
@@ -7054,7 +7510,7 @@ if(($data=="editCustomPlan" || preg_match('/^editCustom(gbPrice|dayPrice)/',$use
 if(preg_match('/^editCustom(gbPrice|dayPrice)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
     $title = $match[1] == "dayPrice"?"هر روز":"هر گیگ";
-    sendMessage("لطفا هزینه " . $title . " را به تومان وارد کنید",$cancelKey);
+    sendMessage("لطفاً هزینه " . $title . " را به تومان وارد کنید",$cancelKey);
     setUser($data);
 }
 if(preg_match('/plansList(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -7131,7 +7587,7 @@ if(preg_match('/^wizwizplandelete(\d+)/',$data,$match) and ($from_id == $admin |
     $stmt->close();
     alert("پلن رو برات حذفش کردم ☹️☑️");
     
-    editText($message_id,"لطفا یکی از کلید های زیر را انتخاب کنید",getMainKeys());
+    editText($message_id,"لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
 }
 if(preg_match('/^wizwizplanname(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
@@ -7304,7 +7760,7 @@ if(preg_match('/^editFlow(\d+)/',$data, $match) and ($from_id == $admin || $user
         [['text'=>"None", 'callback_data'=>"editPFlow" . $match[1] . "_None"]],
         [['text'=>"xtls-rprx-vision", 'callback_data'=>"editPFlow" . $match[1] . "_xtls-rprx-vision"]],
         ]]);
-    sendMessage("🎯 لطفا یکی از موارد زیر رو انتخاب کن",$keys);exit;
+    sendMessage("🎯 لطفاً یکی از موارد زیر رو انتخاب کن",$keys);exit;
 }
 if(preg_match('/^editPFlow(\d+)_(.*)/',$data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $stmt = $connection->prepare("UPDATE `server_plans` SET `flow`=? WHERE `id`=?");
@@ -7411,7 +7867,10 @@ if(($userInfo['step'] == "searchAgentConfig" || $userInfo['step'] == "searchMyCo
     $stmt->close();
     
     $keys = getOrderDetailKeys($from_id, $orderId);
-    if($keys != null) $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $orderId);
+    if($keys != null){
+        $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $orderId);
+        $keys['keyboard'] = farid_attachUpdateAllMyConfigsButton($keys['keyboard']);
+    }
     if($keys == null) sendMessage($mainValues['no_order_found']); 
     else {
         sendMessage($keys['msg'], $keys['keyboard'], "HTML");
@@ -7435,10 +7894,17 @@ if(($userInfo['step'] == "searchUsersConfig" && $text != $buttonValues['cancel']
 
     if($orderInfo->num_rows == 0) sendMessage($mainValues['no_order_found']); 
     else {
-        $orderId = $orderInfo->fetch_assoc()['id'];
+        $row = $orderInfo->fetch_assoc();
+        $orderId = intval($row['id']);
+        $ownerUid = intval($row['userid'] ?? 0);
+
         $keys = getUserOrderDetailKeys($orderId, isset($data)?$match[2]:0);
         if($keys == null) sendMessage($mainValues['no_order_found']); 
         else{
+            // ✅ دکمه‌های به‌روزرسانی (تکی + همه کانفیگ‌های کاربر)
+            $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $orderId);
+            if($ownerUid > 0) $keys['keyboard'] = farid_attachUpdateAllUserConfigsButton($keys['keyboard'], $ownerUid);
+
             if(!isset($data)) sendMessage($keys['msg'], $keys['keyboard'], "HTML");
             else editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
             setUser();
@@ -7447,7 +7913,10 @@ if(($userInfo['step'] == "searchUsersConfig" && $text != $buttonValues['cancel']
 }
 if(preg_match('/^orderDetails(\d+)(_|)(?<offset>\d+|)/', $data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true))){
     $keys = getOrderDetailKeys($from_id, $match[1], !empty($match['offset'])?$match['offset']:0);
-    if($keys != null) $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $match[1]);
+    if($keys != null){
+        $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $match[1]);
+        $keys['keyboard'] = farid_attachUpdateAllMyConfigsButton($keys['keyboard']);
+    }
     if($keys == null){
         alert($mainValues['no_order_found']);exit;
     }else editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
@@ -7458,7 +7927,7 @@ if($data=="cantEditGrpc"){
 }
 if(preg_match('/^changeCustomPort(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("لطفا پورت مورد نظر خود را وارد کنید\nبرای حذف پورت دلخواه عدد 0 را وارد کنید", $cancelKey);
+    sendMessage("لطفاً پورت مورد نظر خود را وارد کنید\nبرای حذف پورت دلخواه عدد 0 را وارد کنید", $cancelKey);
     setUser($data);
 }
 if(preg_match('/^changeCustomPort(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -7475,7 +7944,7 @@ if(preg_match('/^changeCustomPort(\d+)/',$userInfo['step'],$match) && ($from_id 
 }
 if(preg_match('/^changeCustomSni(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("لطفا sni مورد نظر خود را وارد کنید\nبرای حذف متن /empty را وارد کنید", $cancelKey);
+    sendMessage("لطفاً sni مورد نظر خود را وارد کنید\nبرای حذف متن /empty را وارد کنید", $cancelKey);
     setUser($data);
 }
 if(preg_match('/^changeCustomSni(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -7595,7 +8064,7 @@ if(preg_match('/updateConfigConnectionLink(\d+)/', $data,$match)){
 
     $ownerId = intval($order['userid'] ?? 0);
 
-    // امنیت: فقط مالک کانفیگ یا ادمین اجازه آپدیت دارد
+    // امنیت: فقط مالک کانفیگ یا ادمین اجازه به‌روزرسانی دارد
     if($ownerId != $from_id && !($from_id == $admin || $userInfo['isAdmin'] == true)){
         alert("⛔️ شما به این کانفیگ دسترسی ندارید");
         exit();
@@ -7621,17 +8090,219 @@ if(preg_match('/updateConfigConnectionLink(\d+)/', $data,$match)){
         farid_sendUpdatedConfigToUser($ownerId, $remark, $vraylink);
     }
 
-    // آپدیت پیام جزئیات (برای همان کسی که دکمه را زده)
+    // به‌روزرسانی پیام جزئیات (برای همان کسی که دکمه را زده)
     if($ownerId == $from_id){
         $keys = getOrderDetailKeys($from_id, $oid);
-        if($keys != null) $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
+        if($keys != null){
+            $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
+            $keys['keyboard'] = farid_attachUpdateAllMyConfigsButton($keys['keyboard']);
+        }
     }else{
         $keys = getUserOrderDetailKeys($oid);
+        if($keys != null){
+            $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
+            if($ownerId > 0) $keys['keyboard'] = farid_attachUpdateAllUserConfigsButton($keys['keyboard'], $ownerId);
+        }
     }
 
     if($keys != null){
         editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
     }
+
+
+// ♻️ به‌روزرسانی و ارسال «همه کانفیگ‌های کاربر» درجا (برای کاربر)
+if(preg_match('/^updateAllMyConfigs_(\d+)/', $data, $match)){
+    alert($mainValues['please_wait_message']);
+
+    $offset = intval($match[1]);
+    if($offset < 0) $offset = 0;
+
+    $uid = $from_id;
+    $batch = 5; // تعداد آیتم در هر مرحله
+
+    // تعداد کل کانفیگ‌های فعال
+    $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `orders_list` WHERE `status` = 1 AND `userid` = ?");
+    $stmt->bind_param("i", $uid);
+    $stmt->execute();
+    $total = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+
+    if($total <= 0){
+        alert("⛔️ کانفیگ فعالی برای به‌روزرسانی پیدا نشد.");
+        exit();
+    }
+
+    // خواندن batch
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `userid` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?");
+    $stmt->bind_param("iii", $uid, $batch, $offset);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    $processed = 0;
+    $updated = 0;
+    $failed = 0;
+
+    while($order = $res->fetch_assoc()){
+        $processed++;
+        $links = farid_generateUpdatedVrayLinks($order);
+        if($links == null){
+            $failed++;
+            continue;
+        }
+
+        $oid = intval($order['id']);
+        $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
+
+        $stmt = $connection->prepare("UPDATE `orders_list` SET `link` = ? WHERE `id` = ?");
+        $stmt->bind_param("si", $linkJson, $oid);
+        $stmt->execute();
+        $stmt->close();
+
+        $remark = $order['remark'] ?? "-";
+        // ارسال بدون پیام اضافه (پیام اضافه فقط در پایان ارسال می‌شود)
+        farid_sendUpdatedConfigToUser($uid, $remark, $links, "");
+        $updated++;
+    }
+
+    $newOffset = $offset + $processed;
+    $left = max(0, $total - $newOffset);
+
+    if($newOffset >= $total){
+        // پیام پیش‌فرض/تنظیمی بعد از به‌روزرسانی (یک‌بار در پایان)
+        $after = farid_getUpdateAfterMessage();
+        if(strlen(trim($after)) > 0){
+            sendMessage($after, null, "HTML", $uid);
+        }
+
+        $msg = "✅ به‌روزرسانی همه کانفیگ‌های شما انجام شد.\\n\\n".
+               "🔰 کل: $total\\n".
+               "✅ موفق: $updated\\n".
+               "⛔️ ناموفق: $failed\\n".
+               "🕒 " . jdate("Y-m-d H:i", time());
+
+        editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+            [['text'=>"📦 کانفیگ‌های من",'callback_data'=>"mySubscriptions"]],
+            [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        exit();
+    }
+
+    $msg = "⏳ به‌روزرسانی کانفیگ‌ها در حال انجام است...\\n\\n".
+           "🔰 کل: $total\\n".
+           "☑️ انجام‌شده: $newOffset\\n".
+           "📣 باقی‌مانده: $left\\n\\n".
+           "✅ موفق: $updated\\n".
+           "⛔️ ناموفق: $failed\\n\\n".
+           "برای ادامه روی «ادامه» بزن.";
+
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>"▶️ ادامه",'callback_data'=>"updateAllMyConfigs_" . $newOffset]],
+        [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+// ♻️ به‌روزرسانی و ارسال «همه کانفیگ‌های یک کاربر» درجا (برای ادمین)
+if(preg_match('/^updateAllUserConfigs(\d+)_(\d+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    alert($mainValues['please_wait_message']);
+
+    $targetUid = intval($match[1]);
+    $offset = intval($match[2]);
+    if($offset < 0) $offset = 0;
+
+    if($targetUid <= 0){
+        alert("⛔️ User ID نامعتبر");
+        exit();
+    }
+
+    $batch = 5;
+
+    // تعداد کل کانفیگ‌های فعال کاربر
+    $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `orders_list` WHERE `status` = 1 AND `userid` = ?");
+    $stmt->bind_param("i", $targetUid);
+    $stmt->execute();
+    $total = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+
+    if($total <= 0){
+        alert("⛔️ کانفیگ فعالی برای این کاربر پیدا نشد.");
+        exit();
+    }
+
+    // خواندن batch
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `userid` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?");
+    $stmt->bind_param("iii", $targetUid, $batch, $offset);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    $processed = 0;
+    $updated = 0;
+    $failed = 0;
+
+    while($order = $res->fetch_assoc()){
+        $processed++;
+        $links = farid_generateUpdatedVrayLinks($order);
+        if($links == null){
+            $failed++;
+            continue;
+        }
+
+        $oid = intval($order['id']);
+        $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
+
+        $stmt = $connection->prepare("UPDATE `orders_list` SET `link` = ? WHERE `id` = ?");
+        $stmt->bind_param("si", $linkJson, $oid);
+        $stmt->execute();
+        $stmt->close();
+
+        $remark = $order['remark'] ?? "-";
+        // ارسال بدون پیام اضافه (پیام اضافه فقط در پایان ارسال می‌شود)
+        farid_sendUpdatedConfigToUser($targetUid, $remark, $links, "");
+        $updated++;
+    }
+
+    $newOffset = $offset + $processed;
+    $left = max(0, $total - $newOffset);
+
+    if($newOffset >= $total){
+        // پیام پیش‌فرض/تنظیمی بعد از به‌روزرسانی (یک‌بار در پایان)
+        $after = farid_getUpdateAfterMessage();
+        if(strlen(trim($after)) > 0){
+            sendMessage($after, null, "HTML", $targetUid);
+        }
+
+        $msg = "✅ به‌روزرسانی همه کانفیگ‌های کاربر انجام شد.\\n\\n".
+               "👤 UserID: $targetUid\\n".
+               "🔰 کل: $total\\n".
+               "✅ موفق: $updated\\n".
+               "⛔️ ناموفق: $failed\\n".
+               "🕒 " . jdate("Y-m-d H:i", time());
+
+        editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+            [['text'=>"🔎 جستجو کانفیگ کاربر",'callback_data'=>"searchUsersConfig"]],
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        exit();
+    }
+
+    $msg = "⏳ به‌روزرسانی کانفیگ‌های کاربر در حال انجام است...\\n\\n".
+           "👤 UserID: $targetUid\\n".
+           "🔰 کل: $total\\n".
+           "☑️ انجام‌شده: $newOffset\\n".
+           "📣 باقی‌مانده: $left\\n\\n".
+           "✅ موفق: $updated\\n".
+           "⛔️ ناموفق: $failed\\n\\n".
+           "برای ادامه روی «ادامه» بزن.";
+
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>"▶️ ادامه",'callback_data'=>"updateAllUserConfigs" . $targetUid . "_" . $newOffset]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
 } 
 if(preg_match('/changAccountConnectionLink(\d+)/', $data,$match)){
     alert($mainValues['please_wait_message']);
@@ -7967,7 +8638,7 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
 
 
 
-    sendMessage("لطفا با یکی از روش های زیر اکانت خود را تمدید کنید :",json_encode([
+    sendMessage("لطفاً با یکی از روش های زیر اکانت خود را تمدید کنید :",json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
@@ -8120,7 +8791,7 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
     }
     
 	if(is_null($response)){
-		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
@@ -8229,7 +8900,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
 
     if($userwallet < $price) {
         $needamount = $price - $userwallet;
-        alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفا به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
+        alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
         exit;
     }
 
@@ -8251,7 +8922,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
     }
 
 	if(is_null($response)){
-		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
 		exit;
 	}
 	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
@@ -8285,7 +8956,7 @@ if(preg_match('/switchLocation(.+)_(.+)_(.+)_(.+)/', $data,$match)){
     $leftgp = $match[3];
     $expire = $match[4]; 
     if($expire < time() or $leftgp <= 0) {
-        alert("سرویس شما غیرفعال است.لطفا ابتدا آن را تمدید کنید",true);exit;
+        alert("سرویس شما غیرفعال است.لطفاً ابتدا آن را تمدید کنید",true);exit;
     }
     $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `active` = 1 and `state` = 1 and ucount > 0 AND `id` != ?");
     $stmt->bind_param("i", $server_id);
@@ -8304,7 +8975,7 @@ if(preg_match('/switchLocation(.+)_(.+)_(.+)_(.+)/', $data,$match)){
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "mainMenu"]];
-    editText($message_id, ' 📍 لطفا برای تغییر لوکیشن سرویس فعلی, یکی از سرورها را انتخاب کنید👇',json_encode([
+    editText($message_id, ' 📍 لطفاً برای تغییر لوکیشن سرویس فعلی, یکی از سرورها را انتخاب کنید👇',json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
@@ -8325,19 +8996,19 @@ if($data=="giftVolumeAndDay" && ($from_id == $admin || $userInfo['isAdmin'] == t
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
-    editText($message_id, ' 📍 لطفا برای هدیه دادن, یکی از سرورها را انتخاب کنید👇',json_encode([
+    editText($message_id, ' 📍 لطفاً برای هدیه دادن, یکی از سرورها را انتخاب کنید👇',json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
 if(preg_match('/^giftToServer(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("لطفا مدت زمان هدیه را به روز وارد کنید\nبرای اضافه نشدن زمان 0 را وارد کنید", $cancelKey);
+    sendMessage("لطفاً مدت زمان هدیه را به روز وارد کنید\nبرای اضافه نشدن زمان 0 را وارد کنید", $cancelKey);
     setUser('giftServerDay' . $match[1]);
 }
 if(preg_match('/^giftServerDay(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     if(is_numeric($text)){
         if($text >= 0){
-            sendMessage("لطفا حجم هدیه را به مگابایت وارد کنید\nبرای اضافه نشدن حجم 0 را وارد کنید");
+            sendMessage("لطفاً حجم هدیه را به مگابایت وارد کنید\nبرای اضافه نشدن حجم 0 را وارد کنید");
             setUser('giftServerVolume' . $match[1] . "_" . $text);
         }else sendMessage("عددی بزرگتر و یا مساوی به 0 واردکنید");
     }else sendMessage($mainValues['send_only_number']);
@@ -8363,7 +9034,7 @@ if(preg_match('/switchLocation(.+)_(.+)_(.+)_(.+)/', $data,$match)){
     $leftgp = $match[3];
     $expire = $match[4]; 
     if($expire < time() or $leftgp <= 0) {
-        alert("سرویس شما غیرفعال است.لطفا ابتدا آن را تمدید کنید",true);exit;
+        alert("سرویس شما غیرفعال است.لطفاً ابتدا آن را تمدید کنید",true);exit;
     }
     $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `active` = 1 and `state` = 1 and ucount > 0 AND `id` != ?");
     $stmt->bind_param("i", $server_id);
@@ -8382,7 +9053,7 @@ if(preg_match('/switchLocation(.+)_(.+)_(.+)_(.+)/', $data,$match)){
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "mainMenu"]];
-    editText($message_id, ' 📍 لطفا برای تغییر لوکیشن سرویس فعلی, یکی از سرورها را انتخاب کنید👇',json_encode([
+    editText($message_id, ' 📍 لطفاً برای تغییر لوکیشن سرویس فعلی, یکی از سرورها را انتخاب کنید👇',json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
@@ -8451,7 +9122,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     if($inbound_id > 0) {
         $remove_response = deleteClient($server_id, $inbound_id, $uuid);
 		if(is_null($remove_response)){
-			alert('🔻اتصال به سرور برقرار نیست. لطفا به مدیریت اطلاع بدید',true);
+			alert('🔻اتصال به سرور برقرار نیست. لطفاً به مدیریت اطلاع بدید',true);
 			exit;
 		}
         if($remove_response){
@@ -8495,15 +9166,15 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
             
             $response = addInboundAccount($sid, '', $inbound_id, 1, $newRemark, 0, 1, $newArr); 
             if(is_null($response)){
-                alert('🔻اتصال به سرور برقرار نیست. لطفا به مدیریت اطلاع بدید',true);
+                alert('🔻اتصال به سرور برقرار نیست. لطفاً به مدیریت اطلاع بدید',true);
                 exit;
             }
 			if($response == "inbound not Found"){
-                alert("🔻سطر (inbound) با آیدی $inbound_id در این سرور یافت نشد. لطفا به مدیریت اطلاع بدید",true);
+                alert("🔻سطر (inbound) با آیدی $inbound_id در این سرور یافت نشد. لطفاً به مدیریت اطلاع بدید",true);
                 exit;
             }
 			if(!$response->success){
-				alert('🔻خطا در ساخت کانفیگ. لطفا به مدیریت اطلاع بدید',true);
+				alert('🔻خطا در ساخت کانفیگ. لطفاً به مدیریت اطلاع بدید',true);
 				exit;
 			}
 			$vray_link = getConnectionLink($sid, $uniqid, $protocol, $newRemark, $port, $netType, $inbound_id);
@@ -8512,7 +9183,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     }else{
         $response = deleteInbound($server_id, $uuid);
 		if(is_null($response)){
-			alert('🔻اتصال به سرور برقرار نیست. لطفا به مدیریت اطلاع بدید',true);
+			alert('🔻اتصال به سرور برقرار نیست. لطفاً به مدیریت اطلاع بدید',true);
 			exit;
 		}
         if($response){
@@ -8576,7 +9247,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]];
-    $msg = " 📍لوکیشن سرویس $remark به $server_title با ریمارک $newRemark تغییر یافت.\n لطفا برای مشاهده مشخصات, روی آن بزنید👇";
+    $msg = " 📍لوکیشن سرویس $remark به $server_title با ریمارک $newRemark تغییر یافت.\n لطفاً برای مشاهده مشخصات, روی آن بزنید👇";
     
     editText($message_id, $msg,json_encode([
             'inline_keyboard' => $keyboard
@@ -8785,7 +9456,7 @@ if(preg_match('/increaseADay(.*)/', $data, $match)){
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text' => $buttonValues['back_to_main'], 'callback_data' => "mainMenu"]];
-    editText($message_id, "لطفا یکی از پلن های افزایشی را انتخاب کنید :", json_encode([
+    editText($message_id, "لطفاً یکی از پلن های افزایشی را انتخاب کنید :", json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
@@ -8840,7 +9511,7 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     if($botState['tronWallet'] == "on") $keyboard[] = [['text' => $buttonValues['tron_gateway'],  'callback_data' => "payWithTronWallet" . $hash_id]];
 
     $keyboard[] = [['text'=>$buttonValues['cancel'], 'callback_data'=> "mainMenu"]];
-    editText($message_id, "لطفا با یکی از روش های زیر پرداخت خود را تکمیل کنید :",json_encode(['inline_keyboard' => $keyboard]));
+    editText($message_id, "لطفاً با یکی از روش های زیر پرداخت خود را تکمیل کنید :",json_encode(['inline_keyboard' => $keyboard]));
 }
 if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$data,$match)) {
     delMessage();
@@ -8993,7 +9664,7 @@ if(preg_match('/approveIncreaseDay(.*)/',$data,$match) && ($from_id == $admin ||
         editKeys($keys);
         sendMessage("✅$volume روز به مدت زمان سرویس شما اضافه شد",null,null,$uid);
     }else {
-        alert("مشکل فنی در ارتباط با سرور. لطفا سلامت سرور را بررسی کنید",true);
+        alert("مشکل فنی در ارتباط با سرور. لطفاً سلامت سرور را بررسی کنید",true);
         exit;
     }
 }
@@ -9048,7 +9719,7 @@ if(preg_match('/payIncraseDayWithWallet(.*)/', $data,$match)){
 
     if($userwallet < $price) {
         $needamount = $price - $userwallet;
-        alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفا به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
+        alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
         exit;
     }
 
@@ -9101,7 +9772,7 @@ if(preg_match('/payIncraseDayWithWallet(.*)/', $data,$match)){
 
         exit;
     }else {
-        alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفا به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید", true);
+        alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفاً به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید", true);
         exit;
     }
 }
@@ -9140,7 +9811,7 @@ if(preg_match('/^increaseAVolume(.*)/', $data, $match)){
     }
     $keyboard = array_chunk($keyboard,2);
     $keyboard[] = [['text'=>"صفحه ی اصلی 🏘",'callback_data'=>"mainMenu"]];
-    $res = editText($message_id, "لطفا یکی از پلن های حجمی را انتخاب کنید :",json_encode([
+    $res = editText($message_id, "لطفاً یکی از پلن های حجمی را انتخاب کنید :",json_encode([
             'inline_keyboard' => $keyboard
         ]));
 }
@@ -9198,7 +9869,7 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
     if($botState['tronWallet'] == "on") $keyboard[] = [['text' => $buttonValues['tron_gateway'],  'callback_data' => "payWithTronWallet" . $hash_id]];
 
     $keyboard[] = [['text'=>$buttonValues['cancel'], 'callback_data'=> "mainMenu"]];
-    editText($message_id, "لطفا با یکی از روش های زیر پرداخت خود را تکمیل کنید :",json_encode(['inline_keyboard' => $keyboard]));
+    editText($message_id, "لطفاً با یکی از روش های زیر پرداخت خود را تکمیل کنید :",json_encode(['inline_keyboard' => $keyboard]));
 }
 if(preg_match('/payIncreaseWithCartToCart(.*)/',$data)) {
     setUser($data);
@@ -9337,7 +10008,7 @@ if(preg_match('/approveIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin
         editKeys($keys);
         sendMessage("✅$volume گیگ به حجم سرویس شما اضافه شد",null,null,$uid);
     }else {
-        alert("مشکل فنی در ارتباط با سرور. لطفا سلامت سرور را بررسی کنید",true);
+        alert("مشکل فنی در ارتباط با سرور. لطفاً سلامت سرور را بررسی کنید",true);
         exit;
     }
 }
@@ -9472,7 +10143,7 @@ if(preg_match('/payIncraseWithWallet(.*)/', $data,$match)){
 
     if($userwallet < $price) {
         $needamount = $price - $userwallet;
-        alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفا به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
+        alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
         exit;
     }
     
@@ -9521,7 +10192,7 @@ if(preg_match('/payIncraseWithWallet(.*)/', $data,$match)){
         
 
     }else {
-        alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفا به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید",true);
+        alert("به دلیل مشکل فنی امکان افزایش حجم نیست. لطفاً به مدیریت اطلاع بدید یا 5دقیقه دیگر دوباره تست کنید",true);
         exit;
     }
 }
@@ -9630,7 +10301,7 @@ if(preg_match('/^changesServerIp(\d+)/',$data,$match) && ($from_id == $admin || 
     $stmt->close();
     
     delMessage();
-    sendMessage("لیست آیپی های فعلی: \n$serverIp\nلطفا آیپی های جدید را در خط های جدا بفرستید\n\nبرای خالی کردن متن /empty را وارد کنید",$cancelKey,null,null,null);
+    sendMessage("لیست آیپی های فعلی: \n$serverIp\nلطفاً آیپی های جدید را در خط های جدا بفرستید\n\nبرای خالی کردن متن /empty را وارد کنید",$cancelKey,null,null,null);
     setUser($data);
     exit();
 }
@@ -9673,12 +10344,12 @@ if(preg_match('/^changeRealityState(\d+)/',$data,$match) && ($from_id == $admin 
 if(preg_match('/^changeServerType(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id,"
     
-🔰 نکته مهم: ( پنل x-ui خود را به آخرین نسخه آپدیت کنید ) 
+🔰 نکته مهم: ( پنل x-ui خود را به آخرین نسخه به‌روزرسانی کنید ) 
 
-❤️ اگر از پنل سنایی استفاده میکنید لطفا نوع پنل را ( سنایی ) انتخاب کنید
-🧡 اگر از پنل علیرضا استفاده میکنید لطفا نوع پنل را ( علیرضا ) انتخاب کنید
-💚 اگر از پنل نیدوکا استفاده میکنید لطفا نوع پنل را ( ساده ) انتخاب کنید 
-💙 اگر از پنل چینی استفاده میکنید لطفا نوع پنل را ( ساده ) انتخاب کنید 
+❤️ اگر از پنل سنایی استفاده میکنید لطفاً نوع پنل را ( سنایی ) انتخاب کنید
+🧡 اگر از پنل علیرضا استفاده میکنید لطفاً نوع پنل را ( علیرضا ) انتخاب کنید
+💚 اگر از پنل نیدوکا استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
+💙 اگر از پنل چینی استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
 ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
 📣 حتما نوع پنل را انتخاب کنید وگرنه براتون مشکل ساز میشه !
 ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
@@ -9731,7 +10402,7 @@ if(preg_match('/^addServerRemark(.*)/',$userInfo['step'], $match) and $text != $
     $data['remark'] = $text;
 
     sendMessage("مرحله چهارم:
-▪️لطفا یه ( ایموجی پرچم 🇮🇷 ) برا سرورت انتخاب کن:");
+▪️لطفاً یه ( ایموجی پرچم 🇮🇷 ) برا سرورت انتخاب کن:");
     setUser('addServerFlag' . json_encode($data,JSON_UNESCAPED_UNICODE));
     exit();
 }
@@ -9740,7 +10411,7 @@ if(preg_match('/^addServerFlag(.*)/',$userInfo['step'], $match) and $text != $bu
     $data['flag'] = $text;
     sendMessage("مرحله پنجم:
 
-▪️لطفا آدرس پنل x-ui رو به صورت مثال زیر وارد کن:
+▪️لطفاً آدرس پنل x-ui رو به صورت مثال زیر وارد کن:
 
 ❕https://yourdomain.com:54321
 ❕https://yourdomain.com:54321/path
@@ -9768,12 +10439,12 @@ if(preg_match('/^addServerPanelUrl(.*)/',$userInfo['step'],$match) and $text != 
         
         setUser('addServerPanelUser' . json_encode($data, JSON_UNESCAPED_UNICODE));
         sendMessage( "مرحله ششم: 
-    ▪️لطفا یوزر پنل را وارد کنید:");
+    ▪️لطفاً یوزر پنل را وارد کنید:");
     
         exit();
     }else{
         setUser('addServerIp' . json_encode($data,JSON_UNESCAPED_UNICODE));
-        sendMessage( "🔅 لطفا ip یا دامنه تانل شده پنل را وارد کنید:
+        sendMessage( "🔅 لطفاً ip یا دامنه تانل شده پنل را وارد کنید:
     
     نمونه: 
     91.257.142.14
@@ -9787,37 +10458,37 @@ if(preg_match('/^addServerIp(.*)/',$userInfo['step'],$match) and $text != $butto
     $data = json_decode($match[1],true);
     $data['panel_ip'] = $text;
     setUser('addServerSni' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "🔅 لطفا sni پنل را وارد کنید\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
+    sendMessage( "🔅 لطفاً sni پنل را وارد کنید\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
     exit();
 }
 if(preg_match('/^addServerSni(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['sni'] = $text;
     setUser('addServerHeaderType' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "🔅 اگر  از header type استفاده میکنید لطفا http را تایپ کنید:\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
+    sendMessage( "🔅 اگر  از header type استفاده میکنید لطفاً http را تایپ کنید:\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
     exit();
 }
 if(preg_match('/^addServerHeaderType(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['header_type'] = $text;
     setUser('addServerRequestHeader' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "🔅اگر از هدر استفاده میکنید لطفا آدرس رو به این صورت Host:test.com وارد کنید و به جای test.com آدرس دلخواه بزنید:\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
+    sendMessage( "🔅اگر از هدر استفاده میکنید لطفاً آدرس رو به این صورت Host:test.com وارد کنید و به جای test.com آدرس دلخواه بزنید:\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
     exit();
 }
 if(preg_match('/^addServerRequestHeader(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['request_header'] = $text;
     setUser('addServerResponseHeader' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "🔅 لطفا response header پنل را وارد کنید\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
+    sendMessage( "🔅 لطفاً response header پنل را وارد کنید\n\n🔻برای خالی گذاشتن متن /empty را وارد کنید");
     exit();
 }
 if(preg_match('/^addServerResponseHeader(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['response_header'] = $text;
     setUser('addServerSecurity' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "🔅 لطفا security پنل را وارد کنید
+    sendMessage( "🔅 لطفاً security پنل را وارد کنید
 
-⚠️ توجه: برای استفاده از tls یا xtls لطفا کلمه tls یا xtls رو تایپ کنید در غیر این صورت 👇
+⚠️ توجه: برای استفاده از tls یا xtls لطفاً کلمه tls یا xtls رو تایپ کنید در غیر این صورت 👇
 \n🔻برای خالی گذاشتن متن /empty را وارد کنید");
 exit();
 }
@@ -9826,9 +10497,9 @@ if(preg_match('/^addServerSecurity(.*)/',$userInfo['step'],$match) and $text != 
     $data['security'] = $text;
     setUser('addServerTlsSetting' . json_encode($data, JSON_UNESCAPED_UNICODE));
     sendMessage("
-    🔅 لطفا tls|xtls setting پنل را وارد کنید🔻برای خالی گذاشتن متن /empty را وارد کنید 
+    🔅 لطفاً tls|xtls setting پنل را وارد کنید🔻برای خالی گذاشتن متن /empty را وارد کنید 
 
-⚠️ لطفا تنظیمات سرتیفیکیت رو با دقت انجام بدید مثال:
+⚠️ لطفاً تنظیمات سرتیفیکیت رو با دقت انجام بدید مثال:
 ▫️serverName: yourdomain
 ▫️certificateFile: /root/cert.crt
 ▫️keyFile: /root/private.key
@@ -9844,7 +10515,7 @@ if(preg_match('/^addServerTlsSetting(.*)/',$userInfo['step'],$match) and $text !
     $data['tls_setting'] = $text;
     setUser('addServerPanelUser' . json_encode($data, JSON_UNESCAPED_UNICODE));
     sendMessage( "مرحله ششم: 
-▪️لطفا یوزر پنل را وارد کنید:");
+▪️لطفاً یوزر پنل را وارد کنید:");
 
     exit();
 }
@@ -9853,7 +10524,7 @@ if(preg_match('/^addServerPanelUser(.*)/',$userInfo['step'],$match) and $text !=
     $data['panel_user'] = $text;
     setUser('addServerPanePassword' . json_encode($data, JSON_UNESCAPED_UNICODE));
     sendMessage( "مرحله هفتم: 
-▪️لطفا پسورد پنل را وارد کنید:");
+▪️لطفاً پسورد پنل را وارد کنید:");
 exit();
 }
 if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -9964,12 +10635,12 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
     }else{
         sendMessage("
     
-🔰 نکته مهم: ( پنل x-ui خود را به آخرین نسخه آپدیت کنید ) 
+🔰 نکته مهم: ( پنل x-ui خود را به آخرین نسخه به‌روزرسانی کنید ) 
 
-❤️ اگر از پنل سنایی استفاده میکنید لطفا نوع پنل را ( سنایی ) انتخاب کنید
-🧡 اگر از پنل علیرضا استفاده میکنید لطفا نوع پنل را ( علیرضا ) انتخاب کنید
-💚 اگر از پنل نیدوکا استفاده میکنید لطفا نوع پنل را ( ساده ) انتخاب کنید 
-💙 اگر از پنل چینی استفاده میکنید لطفا نوع پنل را ( ساده ) انتخاب کنید 
+❤️ اگر از پنل سنایی استفاده میکنید لطفاً نوع پنل را ( سنایی ) انتخاب کنید
+🧡 اگر از پنل علیرضا استفاده میکنید لطفاً نوع پنل را ( علیرضا ) انتخاب کنید
+💚 اگر از پنل نیدوکا استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
+💙 اگر از پنل چینی استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
 ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
 📣 حتما نوع پنل را انتخاب کنید وگرنه براتون مشکل ساز میشه !
 ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
@@ -9984,21 +10655,21 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
 if(preg_match('/^changesServerLoginInfo(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     delMessage();
     setUser($data);
-    sendMessage( "▪️لطفا آدرس پنل را وارد کنید:",$cancelKey);
+    sendMessage( "▪️لطفاً آدرس پنل را وارد کنید:",$cancelKey);
 }
 if(preg_match('/^changesServerLoginInfo(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = array();
     $data['rowId'] = $match[1];
     $data['panel_url'] = $text;
     setUser('editServerPaneUser' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "▪️لطفا یوزر پنل را وارد کنید:",$cancelKey);
+    sendMessage( "▪️لطفاً یوزر پنل را وارد کنید:",$cancelKey);
     exit();
 }
 if(preg_match('/^editServerPaneUser(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $data = json_decode($match[1],true);
     $data['panel_user'] = $text;
     setUser('editServerPanePassword' . json_encode($data, JSON_UNESCAPED_UNICODE));
-    sendMessage( "▪️لطفا پسورد پنل را وارد کنید:");
+    sendMessage( "▪️لطفاً پسورد پنل را وارد کنید:");
     exit();
 }
 if(preg_match('/^editServerPanePassword(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -10123,7 +10794,7 @@ if(preg_match('/^editServer(\D+)(\d+)/',$data,$match) && $text != $buttonValues[
             break;
     }
     delMessage();
-    sendMessage("🔘|لطفا " . $txt . " جدید را وارد کنید" . $end,$cancelKey);
+    sendMessage("🔘|لطفاً " . $txt . " جدید را وارد کنید" . $end,$cancelKey);
     setUser($data);
     exit();
 }
@@ -10165,7 +10836,7 @@ if(preg_match('/^editServer(\D+)(\d+)/',$userInfo['step'],$match) && $text != $b
 if(preg_match('/^editsServer(\D+)(\d+)/',$data,$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $txt = str_replace("_", " ", $match[1]);
     delMessage();
-    sendMessage("🔘|لطفا " . $txt . " جدید را وارد کنید\nبرای خالی کردن متن /empty را وارد کنید",$cancelKey);
+    sendMessage("🔘|لطفاً " . $txt . " جدید را وارد کنید\nبرای خالی کردن متن /empty را وارد کنید",$cancelKey);
     setUser($data);
     exit();
 }
@@ -10224,7 +10895,7 @@ if(preg_match('/^editServer(\D+)(\d+)/',$data,$match) && $text != $buttonValues[
             break;
     }
     delMessage();
-    sendMessage("🔘|لطفا " . $txt . " جدید را وارد کنید",$cancelKey);
+    sendMessage("🔘|لطفاً " . $txt . " جدید را وارد کنید",$cancelKey);
     setUser($data);
 }
 if(preg_match('/^editServer(\D+)(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -10258,7 +10929,7 @@ if($data=="discount_codes" && ($from_id == $admin || $userInfo['isAdmin'] == tru
 }
 if($data=="addDiscountCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🔘|لطفا مقدار تخفیف را وارد کنید\nبرای درصد علامت % را در کنار عدد وارد کنید در غیر آن مقدار تخفیف به تومان محاسبه میشود",$cancelKey);
+    sendMessage("🔘|لطفاً مقدار تخفیف را وارد کنید\nبرای درصد علامت % را در کنار عدد وارد کنید در غیر آن مقدار تخفیف به تومان محاسبه میشود",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "addDiscountCode" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -10269,8 +10940,8 @@ if($userInfo['step'] == "addDiscountCode" && $text != $buttonValues['cancel'] &&
     if(is_numeric($text)){
         $dInfo['amount'] = $text;
         setUser("addDiscountDate" . json_encode($dInfo,JSON_UNESCAPED_UNICODE));
-        sendMessage("🔘|لطفا مدت زمان این تخفیف را به روز وارد کنید\nبرای نامحدود بودن 0 وارد کنید");
-    }else sendMessage("🔘|لطفا فقط عدد و یا درصد بفرستید");
+        sendMessage("🔘|لطفاً مدت زمان این تخفیف را به روز وارد کنید\nبرای نامحدود بودن 0 وارد کنید");
+    }else sendMessage("🔘|لطفاً فقط عدد و یا درصد بفرستید");
 }
 if(preg_match('/^addDiscountDate(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text)){
@@ -10278,8 +10949,8 @@ if(preg_match('/^addDiscountDate(.*)/',$userInfo['step'],$match) && $text != $bu
         $dInfo['date'] = $text != 0?time() + ($text * 24 * 60 * 60):0;
         
         setUser("addDiscountCount" . json_encode($dInfo,JSON_UNESCAPED_UNICODE));
-        sendMessage("🔘|لطفا تعداد استفاده این تخفیف را وارد کنید\nبرای نامحدود بودن 0 وارد کنید");
-    }else sendMessage("🔘|لطفا فقط عدد بفرستید");
+        sendMessage("🔘|لطفاً تعداد استفاده این تخفیف را وارد کنید\nبرای نامحدود بودن 0 وارد کنید");
+    }else sendMessage("🔘|لطفاً فقط عدد بفرستید");
 }
 if(preg_match('/^addDiscountCount(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text)){ 
@@ -10287,8 +10958,8 @@ if(preg_match('/^addDiscountCount(.*)/',$userInfo['step'],$match) && $text != $b
         $dInfo['count'] = $text>0?$text:-1;
         
         setUser('addDiscountCanUse' . json_encode($dInfo,JSON_UNESCAPED_UNICODE));
-        sendMessage("لطفا تعداد استفاده هر یوزر را وارد کنید");
-    }else sendMessage("🔘|لطفا فقط عدد بفرستید");
+        sendMessage("لطفاً تعداد استفاده هر یوزر را وارد کنید");
+    }else sendMessage("🔘|لطفاً فقط عدد بفرستید");
 }
 if(preg_match('/^addDiscountCanUse(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text)){ 
@@ -10305,7 +10976,7 @@ if(preg_match('/^addDiscountCanUse(.*)/',$userInfo['step'],$match) && $text != $
         sendMessage("کد تخفیف جدید (<code>$hashId</code>) با موفقیت ساخته شد",$removeKeyboard,"HTML");
         setUser();
         sendMessage("مدیریت کد های تخفیف",getDiscountCodeKeys());
-    }else sendMessage("🔘|لطفا فقط عدد بفرستید");
+    }else sendMessage("🔘|لطفاً فقط عدد بفرستید");
 }
 if(preg_match('/^delDiscount(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("DELETE FROM `discounts` WHERE `id` = ?");
@@ -10324,7 +10995,7 @@ if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == tr
     setUser();
     $msg = "
 👤 عزیزم به بخش مدیریت خوشومدی 
-🤌 هرچی نیاز داشتی میتونی اینجا طبق نیازهات اضافه و تغییر بدی ، عزیزم $first_name جان اگه از فروش ربات درآمد داری از من حمایت کن تا پروژه همیشه آپدیت بمونه !
+🤌 هرچی نیاز داشتی میتونی اینجا طبق نیازهات اضافه و تغییر بدی ، عزیزم $first_name جان اگه از فروش ربات درآمد داری از من حمایت کن تا پروژه همیشه به‌روزرسانی بمونه !
 
 🆔 @wizwizch
 
@@ -10386,7 +11057,7 @@ function getAdminKeysPlus(){
     }
 
     $data['inline_keyboard'][] = [
-        ['text' => "♻️ آپدیت و ارسال کانفیگ‌ها", 'callback_data' => "updateConfigsMenu"]
+        ['text' => "♻️ به‌روزرسانی و ارسال کانفیگ‌ها", 'callback_data' => "updateConfigsMenu"]
     ];
 
     return json_encode($data, JSON_UNESCAPED_UNICODE);
@@ -10410,7 +11081,7 @@ function farid_attachUpdateConfigButton($keyboardJson, $orderId){
     }
 
     $newRow = [
-        ['text' => "♻️ آپدیت کانفیگ", 'callback_data' => $cb]
+        ['text' => "♻️ به‌روزرسانی کانفیگ", 'callback_data' => $cb]
     ];
 
     // تلاش برای قرار دادن دکمه قبل از برگشت به منو
@@ -10430,6 +11101,82 @@ function farid_attachUpdateConfigButton($keyboardJson, $orderId){
 
     return json_encode($data, JSON_UNESCAPED_UNICODE);
 }
+
+
+// ✅ دکمه «به‌روزرسانی همه کانفیگ‌ها» برای کاربر
+function farid_attachUpdateAllMyConfigsButton($keyboardJson){
+    if(empty($keyboardJson)) return $keyboardJson;
+
+    $data = json_decode($keyboardJson, true);
+    if(!is_array($data) || !isset($data['inline_keyboard'])) return $keyboardJson;
+
+    $cb = "updateAllMyConfigs_0";
+
+    // جلوگیری از تکراری شدن
+    foreach($data['inline_keyboard'] as $row){
+        foreach($row as $btn){
+            if(isset($btn['callback_data']) && $btn['callback_data'] == $cb){
+                return $keyboardJson;
+            }
+        }
+    }
+
+    // قبل از دکمه‌های اصلی (مثل mainMenu) اضافه شود
+    $insertIndex = count($data['inline_keyboard']);
+    foreach($data['inline_keyboard'] as $i => $row){
+        foreach($row as $btn){
+            if(isset($btn['callback_data']) && in_array($btn['callback_data'], ["mainMenu","mySubscriptions","managePanel"])){
+                $insertIndex = $i;
+                break 2;
+            }
+        }
+    }
+
+    array_splice($data['inline_keyboard'], $insertIndex, 0, [[
+        ['text' => "♻️ به‌روزرسانی همه کانفیگ‌ها", 'callback_data' => $cb]
+    ]]);
+
+    return json_encode($data, JSON_UNESCAPED_UNICODE);
+}
+
+// ✅ دکمه «به‌روزرسانی همه کانفیگ‌های کاربر» برای ادمین
+function farid_attachUpdateAllUserConfigsButton($keyboardJson, $userId){
+    if(empty($keyboardJson)) return $keyboardJson;
+
+    $data = json_decode($keyboardJson, true);
+    if(!is_array($data) || !isset($data['inline_keyboard'])) return $keyboardJson;
+
+    $userId = intval($userId);
+    if($userId <= 0) return $keyboardJson;
+
+    $cb = "updateAllUserConfigs" . $userId . "_0";
+
+    // جلوگیری از تکراری شدن
+    foreach($data['inline_keyboard'] as $row){
+        foreach($row as $btn){
+            if(isset($btn['callback_data']) && $btn['callback_data'] == $cb){
+                return $keyboardJson;
+            }
+        }
+    }
+
+    $insertIndex = count($data['inline_keyboard']);
+    foreach($data['inline_keyboard'] as $i => $row){
+        foreach($row as $btn){
+            if(isset($btn['callback_data']) && in_array($btn['callback_data'], ["mainMenu","mySubscriptions","managePanel","updateConfigsMenu"])){
+                $insertIndex = $i;
+                break 2;
+            }
+        }
+    }
+
+    array_splice($data['inline_keyboard'], $insertIndex, 0, [[
+        ['text' => "♻️ به‌روزرسانی همه کانفیگ‌های کاربر", 'callback_data' => $cb]
+    ]]);
+
+    return json_encode($data, JSON_UNESCAPED_UNICODE);
+}
+
 
 function farid_getSettingValue($type){
     global $connection;
@@ -10466,39 +11213,548 @@ function farid_setSettingValue($type, $value){
     }
 }
 
-function farid_getUpdateConfigsJob(){
-    $raw = farid_getSettingValue("UPDATE_CONFIGS_JOB");
-    if(empty($raw)){
-        return ['state'=>0,'mode'=>null,'userid'=>0,'offset'=>0,'batch'=>5];
+
+
+// ===========================
+// پیام پس از به‌روزرسانی کانفیگ
+// ===========================
+function farid_defaultUpdateAfterMessage(){
+    return "✅ کانفیگ شما به‌روزرسانی شد. لطفاً از این پس از این کانفیگ استفاده کنید.";
+}
+
+function farid_getUpdateAfterMessage(){
+    $raw = farid_getSettingValue("UPDATE_CONFIGS_AFTER_MESSAGE");
+    if($raw === null){
+        // اگر تنظیم نشده، پیش‌فرض باشد
+        return farid_defaultUpdateAfterMessage();
     }
-    $job = json_decode($raw, true);
-    if(!is_array($job)){
-        return ['state'=>0,'mode'=>null,'userid'=>0,'offset'=>0,'batch'=>5];
+    // اگر خالی باشد => یعنی خاموش
+    return strval($raw);
+}
+
+function farid_setUpdateAfterMessage($msg){
+    farid_setSettingValue("UPDATE_CONFIGS_AFTER_MESSAGE", strval($msg));
+}
+
+
+
+
+// ===========================
+// فیلتر بر اساس دامنه/آدرس
+// ===========================
+function farid_base64UrlDecode($data){
+    if($data === null) return false;
+    $data = str_replace(["-","_"], ["+","/"], $data);
+    $pad = strlen($data) % 4;
+    if($pad > 0){
+        $data .= str_repeat("=", 4 - $pad);
+    }
+    return base64_decode($data);
+}
+
+function farid_normalizeDomainInput($input){
+    $input = trim(strval($input));
+    if($input === "") return "";
+
+    // حذف فاصله‌ها
+    $input = preg_replace('/\s+/', '', $input);
+
+    // اگر URL کامل بود
+    if(strpos($input, "://") !== false){
+        $u = @parse_url($input);
+        if(is_array($u) && !empty($u['host'])){
+            $input = $u['host'];
+        }
+    }else{
+        // حذف path در صورت وجود
+        $input = preg_replace('/\/.*$/', '', $input);
     }
 
+    // حذف پورت
+    $input = preg_replace('/:\d+$/', '', $input);
+
+    // حذف براکت IPv6
+    $input = trim($input, "[]");
+
+    return strtolower($input);
+}
+
+function farid_extractDomainCandidatesFromLink($link){
+    $link = trim(strval($link));
+    if($link === "") return [];
+
+    $candidates = [];
+
+    // VMESS: داخل base64 است
+    if(stripos($link, "vmess://") === 0){
+        $b64 = substr($link, 8);
+        $decoded = farid_base64UrlDecode($b64);
+        if($decoded !== false){
+            $j = json_decode($decoded, true);
+            if(is_array($j)){
+                if(!empty($j['add']))  $candidates[] = $j['add'];
+                if(!empty($j['host'])) $candidates[] = $j['host'];
+                if(!empty($j['sni']))  $candidates[] = $j['sni'];
+                if(!empty($j['tlsServerName'])) $candidates[] = $j['tlsServerName'];
+            }
+        }
+        return $candidates;
+    }
+
+    // سایر پروتکل‌ها: host اصلی + پارامترهای مهم (sni/host/peer/...) در Query
+    $u = @parse_url($link);
+    if(is_array($u)){
+        if(!empty($u['host'])){
+            $candidates[] = $u['host'];
+        }
+
+        // برخی لینک‌ها ممکن است host در userinfo باشند: ...@host:port
+        if(preg_match('/@([^:\\/\\?#]+)(:|\\/|\\?|#|$)/', $link, $m)){
+            $candidates[] = $m[1];
+        }
+
+        // Query Params
+        if(!empty($u['query'])){
+            $params = [];
+            @parse_str($u['query'], $params);
+
+            if(is_array($params) && !empty($params)){
+                // کلیدهایی که معمولاً دامنه در آن‌ها ذخیره می‌شود
+                $allowedKeys = [
+                    'sni','host','peer',
+                    'servername','serverName',
+                    'tlsServerName','tls-server-name',
+                    'wsHost','wshost','ws-host',
+                    'h2host','h2-host',
+                ];
+
+                foreach($params as $k => $v){
+                    $kNorm = strtolower(strval($k));
+                    if(!in_array($kNorm, array_map('strtolower', $allowedKeys), true)) continue;
+
+                    $vals = [];
+                    if(is_array($v)){
+                        $vals = $v;
+                    }else{
+                        $vals = preg_split('/[,\s;|]+/', strval($v));
+                    }
+
+                    foreach($vals as $vv){
+                        $vv = trim(strval($vv));
+                        if($vv === "") continue;
+                        $candidates[] = $vv;
+                    }
+                }
+            }
+        }
+    }else{
+        // fallback: فقط ...@host:port
+        if(preg_match('/@([^:\\/\\?#]+)(:|\\/|\\?|#|$)/', $link, $m)){
+            $candidates[] = $m[1];
+        }
+    }
+
+    return $candidates;
+}
+
+function farid_linkMatchesDomain($link, $domainRaw){
+    $domain = farid_normalizeDomainInput($domainRaw);
+    if($domain === "") return false;
+
+    $candidates = farid_extractDomainCandidatesFromLink($link);
+    if(empty($candidates)) return false;
+
+    foreach($candidates as $h){
+        $hNorm = farid_normalizeDomainInput($h);
+        if($hNorm === "") continue;
+
+        // تطبیق دقیق
+        if($hNorm === $domain) return true;
+
+        // پشتیبانی از ساب‌دامین‌ها
+        if(strlen($hNorm) > strlen($domain) && substr($hNorm, -strlen($domain)-1) === "." . $domain){
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function farid_findOrderIdsByDomain($domainRaw){
+    global $connection;
+
+    $domain = farid_normalizeDomainInput($domainRaw);
+    if($domain === "") return ['ids'=>[], 'orders_count'=>0, 'links_count'=>0];
+
+    $like = "%" . $domain . "%";
+
+    // برای سرعت: همه غیر-vmessها فقط با LIKE (case-insensitive)، و vmessها را هم جدا می‌کنیم چون داخل base64 است
+    $stmt = $connection->prepare("SELECT `id`, `protocol`, `link` FROM `orders_list` WHERE `status` = 1 AND (`protocol` = 'vmess' OR LOWER(`link`) LIKE ?)");
+    $stmt->bind_param("s", $like);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    $ids = [];
+    $linksCount = 0;
+
+    while($row = $res->fetch_assoc()){
+        $oid = intval($row['id']);
+        $linkJson = $row['link'] ?? "";
+
+        $links = json_decode($linkJson, true);
+        if(!is_array($links)){
+            $links = [$linkJson];
+        }
+
+        $matchedThisOrder = false;
+
+        foreach($links as $lnk){
+            if(farid_linkMatchesDomain($lnk, $domain)){
+                $matchedThisOrder = true;
+                $linksCount++;
+                // اگر می‌خواهیم فقط یک بار برای هر سفارش شمارش لینک انجام شود، این break را بردارید.
+                // فعلاً تعداد «لینک‌های منطبق» را می‌شمارد.
+            }
+        }
+
+        if($matchedThisOrder){
+            $ids[] = $oid;
+        }
+    }
+
+    // یکتا سازی آی‌دی‌ها
+    $ids = array_values(array_unique(array_map('intval', $ids)));
+
+    return [
+        'ids' => $ids,
+        'orders_count' => count($ids),
+        'links_count' => intval($linksCount),
+    ];
+}
+
+
+function farid_findLinkItemsByDomain($domainRaw){
+    global $connection;
+
+    $domain = farid_normalizeDomainInput($domainRaw);
+    if($domain === "") return ['items'=>[], 'orders_count'=>0, 'links_count'=>0];
+
+    $like = "%" . $domain . "%";
+
+    // برای سرعت: همه غیر-vmessها فقط با LIKE (case-insensitive)، و vmessها را هم جدا می‌کنیم چون داخل base64 است
+    $stmt = $connection->prepare("SELECT `id`, `protocol`, `link` FROM `orders_list` WHERE `status` = 1 AND (`protocol` = 'vmess' OR LOWER(`link`) LIKE ?)");
+    $stmt->bind_param("s", $like);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    $items = [];
+    $ordersSet = [];
+    $linksCount = 0;
+
+    while($row = $res->fetch_assoc()){
+        $oid = intval($row['id']);
+        $linkJson = $row['link'] ?? "";
+
+        $links = json_decode($linkJson, true);
+        if(!is_array($links)){
+            $links = [$linkJson];
+        }
+
+        foreach($links as $idx => $lnk){
+            if(farid_linkMatchesDomain($lnk, $domain)){
+                $items[] = $oid . ":" . intval($idx);
+                $linksCount++;
+                $ordersSet[$oid] = 1;
+            }
+        }
+    }
+
+    return [
+        'items' => array_values($items),
+        'orders_count' => count($ordersSet),
+        'links_count' => intval($linksCount),
+    ];
+}
+
+
+function farid_getUpdateConfigsJob(){
+    $defaults = [
+        'state' => 0,
+        'mode'  => null,
+        'userid'=> 0,
+        'ids'   => [],
+        'items' => [],
+        'orders_count' => 0,
+        'offset'=> 0,
+        'batch' => 10,
+        'created_at' => 0,
+        'requested_by' => 0,
+        'filter_title' => null,
+        'stats' => ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0],
+        'links_count' => 0,
+        'status_chat_id' => 0,
+        'status_message_id' => 0,
+        'auto_running' => 0,
+        'auto_last_ts' => 0,
+        'stopped_at' => 0,
+        'stopped_by' => 0,
+        'report_sent' => 0
+    ];
+
+    $raw = farid_getSettingValue("UPDATE_CONFIGS_JOB");
+    if(empty($raw)){
+        return $defaults;
+    }
+
+    $job = json_decode($raw, true);
+    if(!is_array($job)){
+        return $defaults;
+    }
+
+    // merge with defaults
+    $job = array_merge($defaults, $job);
+
     $job['state']  = intval($job['state'] ?? 0);
-    $job['offset'] = intval($job['offset'] ?? 0);
-    $job['batch']  = intval($job['batch'] ?? 5);
+    $job['offset'] = max(0, intval($job['offset'] ?? 0));
+    $job['batch']  = intval($job['batch'] ?? 10);
+    if($job['batch'] < 1) $job['batch'] = 10;
+
+    $job['links_count'] = intval($job['links_count'] ?? 0);
+    $job['orders_count'] = intval($job['orders_count'] ?? 0);
+
+    if(!isset($job['ids']) || !is_array($job['ids'])) $job['ids'] = [];
+    if(!isset($job['items']) || !is_array($job['items'])) $job['items'] = [];
+    $job['status_chat_id'] = intval($job['status_chat_id'] ?? 0);
+    $job['status_message_id'] = intval($job['status_message_id'] ?? 0);
+    $job['auto_running'] = intval($job['auto_running'] ?? 0);
+    $job['auto_last_ts'] = intval($job['auto_last_ts'] ?? 0);
+    $job['stopped_at'] = intval($job['stopped_at'] ?? 0);
+    $job['stopped_by'] = intval($job['stopped_by'] ?? 0);
+
     $job['userid'] = intval($job['userid'] ?? 0);
     if(!isset($job['mode'])) $job['mode'] = null;
 
+    // ids normalization
+    if(!isset($job['ids'])) $job['ids'] = [];
+    if(!is_array($job['ids'])){
+        if(is_string($job['ids']) && strlen(trim($job['ids'])) > 0){
+            $job['ids'] = array_filter(array_map('intval', explode(',', $job['ids'])));
+        }else{
+            $job['ids'] = [];
+        }
+    }
+    $job['ids'] = array_values(array_map('intval', $job['ids']));
+
+    // stats normalization
+    if(!isset($job['stats']) || !is_array($job['stats'])){
+        $job['stats'] = ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0];
+    }else{
+        $job['stats']['processed'] = intval($job['stats']['processed'] ?? 0);
+        $job['stats']['updated']   = intval($job['stats']['updated'] ?? 0);
+        $job['stats']['failed']    = intval($job['stats']['failed'] ?? 0);
+        $job['stats']['sent']      = intval($job['stats']['sent'] ?? 0);
+    }
+
+    $job['created_at']   = intval($job['created_at'] ?? 0);
+    $job['requested_by'] = intval($job['requested_by'] ?? 0);
+    $job['report_sent']  = intval($job['report_sent'] ?? 0);
+
+    // filter_title
+    if(!isset($job['filter_title'])) $job['filter_title'] = null;
+
     return $job;
 }
+
 
 function farid_setUpdateConfigsJob($job){
     $value = json_encode($job, JSON_UNESCAPED_UNICODE);
     farid_setSettingValue("UPDATE_CONFIGS_JOB", $value);
 }
 
+
+function farid_finishWebhookResponse(){
+    // تلاش می‌کند پاسخ وبهوک را سریع ببندد تا اجرای طولانی باعث Retry تلگرام نشود
+    @ignore_user_abort(true);
+    @set_time_limit(0);
+
+    if(function_exists('fastcgi_finish_request')){
+        @fastcgi_finish_request();
+        return;
+    }
+
+    // Fallback برای سرورهایی که fastcgi_finish_request ندارند
+    $startedBuffer = false;
+    if(ob_get_level() == 0){
+        @ob_start();
+        $startedBuffer = true;
+    }
+
+    echo "OK";
+    $size = ob_get_length();
+
+    if(!headers_sent()){
+        @header("Content-Encoding: none");
+        @header("Content-Length: ".$size);
+        @header("Connection: close");
+    }
+
+    if($startedBuffer){
+        @ob_end_flush();
+    }else{
+        @ob_flush();
+    }
+    @flush();
+}
+
+function farid_updateConfigsModeTitle($job){
+    $mode = $job['mode'] ?? '';
+    if($mode == "all_active") return "همه کانفیگ‌های فعال";
+    if($mode == "user") return "کاربر: " . intval($job['userid'] ?? 0);
+    if($mode == "ids") return strval($job['filter_title'] ?? "فیلتر سفارشی");
+    if($mode == "links") return strval($job['filter_title'] ?? "فیلتر سفارشی");
+    return "—";
+}
+
+function farid_buildUpdateConfigsProgressText($job){
+    $total  = farid_getUpdateConfigsTotal($job);
+    $offset = intval($job['offset'] ?? 0);
+    $left   = max(0, $total - $offset);
+
+    $stats = $job['stats'] ?? [];
+    if(!is_array($stats)) $stats = [];
+
+    $updated = intval($stats['updated'] ?? 0);
+    $failed  = intval($stats['failed'] ?? 0);
+    $sent    = intval($stats['sent'] ?? 0);
+
+    $modeTitle = farid_updateConfigsModeTitle($job);
+
+    $state = intval($job['state'] ?? 0);
+    $statusLine = "⏳ در حال اجرا";
+    if($state != 1){
+        if($offset >= $total){
+            $statusLine = "✅ تکمیل شد";
+        }else{
+            $statusLine = "⛔️ متوقف شد";
+        }
+    }
+
+    $percent = ($total > 0) ? round(($offset * 100) / $total) : 0;
+
+    $createdAt = intval($job['created_at'] ?? 0);
+    $createdTxt = "-";
+    if($createdAt > 0){
+        $createdTxt = function_exists('jdate') ? jdate("Y-m-d H:i", $createdAt) : date("Y-m-d H:i", $createdAt);
+    }
+
+    $nowTxt = function_exists('jdate') ? jdate("Y-m-d H:i", time()) : date("Y-m-d H:i", time());
+
+    $batch = intval($job['batch'] ?? 10);
+    if($batch < 1) $batch = 10;
+
+    $extra = "";
+    $linksCount = intval($job['links_count'] ?? 0);
+    if($linksCount > 0){
+        $extra .= "🔗 کانفیگ‌های منطبق (دیتابیس): $linksCount\n";
+    }
+
+    $ordersCount = intval($job['orders_count'] ?? 0);
+    if($ordersCount > 0){
+        $extra .= "📌 سفارش‌های درگیر (یکتا): $ordersCount\n";
+    }
+
+    $txt = "♻️ عملیات به‌روزرسانی و ارسال کانفیگ‌ها\n\n".
+           "📌 وضعیت: $statusLine\n".
+           "🎯 نوع: $modeTitle\n".
+           $extra.
+           "📦 کل: $total\n".
+           "✅ انجام‌شده: $offset\n".
+           "⏳ باقی‌مانده: $left\n".
+           "📈 پیشرفت: $percent%\n\n".
+           "✅ موفق: $updated\n".
+           "⛔️ ناموفق: $failed\n".
+           "📤 ارسال‌شده: $sent\n\n".
+           "🧩 اندازه هر مرحله: $batch\n".
+           "🕒 شروع: $createdTxt\n".
+           "🔄 آخرین به‌روزرسانی: $nowTxt";
+
+    return $txt;
+}
+
+function farid_getUpdateConfigsProgressKeyboard($job){
+    $total  = farid_getUpdateConfigsTotal($job);
+    $offset = intval($job['offset'] ?? 0);
+    $state  = intval($job['state'] ?? 0);
+
+    // در حال اجرا
+    if($state == 1){
+        return json_encode(['inline_keyboard'=>[
+            [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
+        ]], JSON_UNESCAPED_UNICODE);
+    }
+
+    // متوقف شده ولی کامل نشده
+    if($offset < $total){
+        return json_encode(['inline_keyboard'=>[
+            [['text'=>"🚀 ادامه اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE);
+    }
+
+    // تکمیل شده
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function farid_editUpdateConfigsProgressMessage($job, $forceFinal = false){
+    // اگر پیام وضعیت مشخص نباشد، کاری نمی‌کنیم
+    $chatId = intval($job['status_chat_id'] ?? 0);
+    $msgId  = intval($job['status_message_id'] ?? 0);
+    if($chatId <= 0 || $msgId <= 0) return;
+
+    $text = farid_buildUpdateConfigsProgressText($job);
+    $keyboard = farid_getUpdateConfigsProgressKeyboard($job);
+
+    if(function_exists('bot')){
+        bot('editMessageText',[
+            'chat_id' => $chatId,
+            'message_id' => $msgId,
+            'text' => $text,
+            'parse_mode' => "HTML",
+            'reply_markup' => $keyboard
+        ]);
+    }
+}
+
 function farid_getUpdateConfigsTotal($job){
     global $connection;
+
     $mode = $job['mode'] ?? '';
 
+    // ✅ حالت: به‌روزرسانی بر اساس «لیست لینک‌ها»
+    if($mode == "links"){
+        $items = $job['items'] ?? [];
+        if(!is_array($items)) $items = [];
+        return count($items);
+    }
+
+    // ✅ حالت: به‌روزرسانی بر اساس «لیست آی‌دی سفارش‌ها»
+    if($mode == "ids"){
+        $ids = $job['ids'] ?? [];
+        if(!is_array($ids)) $ids = [];
+        return count($ids);
+    }
+
+    // حالت: کاربر مشخص
     if($mode == "user"){
         $uid = intval($job['userid'] ?? 0);
         $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `orders_list` WHERE `status` = 1 AND `userid` = ?");
         $stmt->bind_param("i", $uid);
     }else{
+        // حالت: همه کانفیگ‌های فعال
         $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `orders_list` WHERE `status` = 1");
     }
 
@@ -10509,32 +11765,262 @@ function farid_getUpdateConfigsTotal($job){
     return $total;
 }
 
+
+
+// ===========================
+// گزارش پایان کار عملیات به‌روزرسانی
+// ===========================
+function farid_sendUpdateConfigsFinalReportIfNeeded($job){
+    global $admin;
+
+    if(!is_array($job)) return;
+
+    if(intval($job['report_sent'] ?? 0) == 1) return;
+
+    $total = farid_getUpdateConfigsTotal($job);
+    $offset = intval($job['offset'] ?? 0);
+
+    $modeTitle = "نامشخص";
+    if(($job['mode'] ?? '') == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
+    elseif(($job['mode'] ?? '') == "user") $modeTitle = "کانفیگ‌های کاربر: " . intval($job['userid'] ?? 0);
+    elseif(($job['mode'] ?? '') == "ids" || ($job['mode'] ?? '') == "links") $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
+
+    $stats = $job['stats'] ?? [];
+    $processed = intval($stats['processed'] ?? $offset);
+    $updated   = intval($stats['updated'] ?? 0);
+    $failed    = intval($stats['failed'] ?? 0);
+    $sent      = intval($stats['sent'] ?? 0);
+
+    $start = intval($job['created_at'] ?? 0);
+    $duration = ($start > 0) ? (time() - $start) : 0;
+
+    $requestedBy = intval($job['requested_by'] ?? 0);
+    if($requestedBy <= 0) $requestedBy = $admin;
+
+ $txt = 
+"📄 <b>گزارش پایان کار به‌روزرسانی کانفیگ‌ها</b>\n\n".
+"🎯 <b>نوع:</b> {$modeTitle}\n".
+"🔰 <b>کل:</b> {$total}\n".
+"☑️ <b>پردازش‌شده:</b> {$processed}\n".
+"✅ <b>موفق:</b> {$updated}\n".
+"⛔️ <b>ناموفق:</b> {$failed}\n".
+"📨 <b>ارسال‌شده به کاربر:</b> {$sent}\n".
+"⏱ <b>مدت:</b> {$duration}s\n".
+"🕒 <b>زمان:</b> " . jdate("Y-m-d H:i", time());
+
+sendMessage($txt, null, "HTML", $requestedBy);
+
+
+    $job['report_sent'] = 1;
+    farid_setUpdateConfigsJob($job);
+}
+
+
 function farid_runUpdateConfigsBatch($job, $batch = 5){
     global $connection;
 
+    if(!is_array($job)){
+        return ['done'=>true,'processed'=>0,'offset'=>0,'total'=>0,'stats'=>[]];
+    }
+
     $mode = $job['mode'] ?? '';
-    $offset = intval($job['offset'] ?? 0);
+    $offset = max(0, intval($job['offset'] ?? 0));
     $batch = intval($batch);
     if($batch < 1) $batch = 1;
 
-    if($mode == "user"){
-        $uid = intval($job['userid'] ?? 0);
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `userid` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?");
-        $stmt->bind_param("iii", $uid, $batch, $offset);
-    }else{
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 ORDER BY `id` ASC LIMIT ? OFFSET ?");
-        $stmt->bind_param("ii", $batch, $offset);
+    $stats = $job['stats'] ?? ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0];
+    if(!is_array($stats)){
+        $stats = ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0];
     }
 
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $stmt->close();
+    $processedNow = 0;
 
-    $processed = 0;
-    while($order = $res->fetch_assoc()){
-        $processed++;
-        $links = farid_generateUpdatedVrayLinks($order);
-        if($links != null){
+    // ✅ حالت: پردازش بر اساس «لیست لینک‌ها» (برای فیلتر دامنه/آدرس)
+    if($mode == "links"){
+        $items = $job['items'] ?? [];
+        if(!is_array($items)) $items = [];
+
+        $slice = array_slice($items, $offset, $batch);
+
+        // cache برای جلوگیری از چند بار Query و Update یک سفارش در همان Batch
+        $orderCache = [];
+        $linksCache = [];
+
+        foreach($slice as $token){
+            $processedNow++;
+            $stats['processed']++;
+
+            $oid = 0;
+            $idx = 0;
+
+            // token می‌تواند "OID:IDX" باشد یا آرایه
+            if(is_string($token) && strpos($token, ":") !== false){
+                $parts = explode(":", $token, 2);
+                $oid = intval($parts[0] ?? 0);
+                $idx = intval($parts[1] ?? 0);
+            }elseif(is_array($token)){
+                if(isset($token['id'])) $oid = intval($token['id']);
+                elseif(isset($token[0])) $oid = intval($token[0]);
+
+                if(isset($token['idx'])) $idx = intval($token['idx']);
+                elseif(isset($token[1])) $idx = intval($token[1]);
+            }else{
+                $stats['failed']++;
+                continue;
+            }
+
+            if($oid <= 0){
+                $stats['failed']++;
+                continue;
+            }
+
+            // دریافت سفارش (cache)
+            if(!array_key_exists($oid, $orderCache)){
+                $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+                $stmt->bind_param("i", $oid);
+                $stmt->execute();
+                $orderCache[$oid] = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+            }
+
+            $order = $orderCache[$oid];
+            if(!$order){
+                $stats['failed']++;
+                continue;
+            }
+
+            // تولید لینک‌های جدید + آپدیت دیتابیس (یک بار در هر سفارش داخل Batch)
+            if(!array_key_exists($oid, $linksCache)){
+                $links = farid_generateUpdatedVrayLinks($order);
+                if($links == null){
+                    $linksCache[$oid] = null;
+                }else{
+                    $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
+
+                    $stmt = $connection->prepare("UPDATE `orders_list` SET `link` = ? WHERE `id` = ?");
+                    $stmt->bind_param("si", $linkJson, $oid);
+                    $stmt->execute();
+                    $stmt->close();
+
+                    $stats['updated']++;
+                    $linksCache[$oid] = $links;
+                }
+            }
+
+            $links = $linksCache[$oid];
+            if($links == null){
+                $stats['failed']++;
+                continue;
+            }
+
+            // ارسال فقط همان لینکِ منطبق (بر اساس Index ذخیره‌شده در دیتابیس)
+            $toUser = intval($order['userid'] ?? 0);
+            if($toUser > 0){
+                $remark = $order['remark'] ?? "-";
+
+                $toSend = $links;
+
+                if(is_array($links)){
+                    // تلاش می‌کنیم همان index را ارسال کنیم
+                    if(isset($links[$idx])){
+                        $toSend = [$links[$idx]];
+                    }else{
+                        $vals = array_values($links);
+                        if(isset($vals[$idx])){
+                            $toSend = [$vals[$idx]];
+                        }else{
+                            // fallback: اگر index پیدا نشد، همه لینک‌های تولیدشده ارسال شود
+                            $toSend = $links;
+                        }
+                    }
+                }
+
+                farid_sendUpdatedConfigToUser($toUser, $remark, $toSend);
+                $stats['sent']++;
+            }
+        }
+
+        $job['offset'] = $offset + $processedNow;
+    }
+
+    // ✅ حالت: فیلتر شده با لیست آی‌دی‌ها (سفارش‌ها)
+    elseif($mode == "ids"){
+        $ids = $job['ids'] ?? [];
+        if(!is_array($ids)) $ids = [];
+
+        $slice = array_slice($ids, $offset, $batch);
+
+        foreach($slice as $oid){
+            $oid = intval($oid);
+
+            $processedNow++;
+            $stats['processed']++;
+
+            if($oid <= 0){
+                $stats['failed']++;
+                continue;
+            }
+
+            $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            $stmt->bind_param("i", $oid);
+            $stmt->execute();
+            $order = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if(!$order){
+                $stats['failed']++;
+                continue;
+            }
+
+            $links = farid_generateUpdatedVrayLinks($order);
+            if($links == null){
+                $stats['failed']++;
+                continue;
+            }
+
+            $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
+
+            $stmt = $connection->prepare("UPDATE `orders_list` SET `link` = ? WHERE `id` = ?");
+            $stmt->bind_param("si", $linkJson, $oid);
+            $stmt->execute();
+            $stmt->close();
+
+            $stats['updated']++;
+
+            $toUser = intval($order['userid'] ?? 0);
+            if($toUser > 0){
+                $remark = $order['remark'] ?? "-";
+                farid_sendUpdatedConfigToUser($toUser, $remark, $links);
+                $stats['sent']++;
+            }
+        }
+
+        $job['offset'] = $offset + $processedNow;
+    }else{
+        // حالت‌های all_active و user
+        if($mode == "user"){
+            $uid = intval($job['userid'] ?? 0);
+            $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `userid` = ? ORDER BY `id` ASC LIMIT ? OFFSET ?");
+            $stmt->bind_param("iii", $uid, $batch, $offset);
+        }else{
+            $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 ORDER BY `id` ASC LIMIT ? OFFSET ?");
+            $stmt->bind_param("ii", $batch, $offset);
+        }
+
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+
+        while($order = $res->fetch_assoc()){
+            $processedNow++;
+            $stats['processed']++;
+
+            $links = farid_generateUpdatedVrayLinks($order);
+            if($links == null){
+                $stats['failed']++;
+                continue;
+            }
+
             $oid = intval($order['id']);
             $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
 
@@ -10543,25 +12029,37 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
             $stmt->execute();
             $stmt->close();
 
-            $remark = $order['remark'] ?? "-";
+            $stats['updated']++;
+
             $toUser = intval($order['userid'] ?? 0);
             if($toUser > 0){
+                $remark = $order['remark'] ?? "-";
                 farid_sendUpdatedConfigToUser($toUser, $remark, $links);
+                $stats['sent']++;
             }
         }
+
+        $job['offset'] = $offset + $processedNow;
     }
 
-    $job['offset'] = $offset + $processed;
+    $job['stats'] = $stats;
 
     $total = farid_getUpdateConfigsTotal($job);
-    if($job['offset'] >= $total){
+    if(intval($job['offset']) >= $total){
         $job['state'] = 0;
     }
 
     farid_setUpdateConfigsJob($job);
 
-    return ['processed'=>$processed,'offset'=>$job['offset'],'total'=>$total,'done'=>intval($job['state'] ?? 0) != 1];
+    return [
+        'processed' => $processedNow,
+        'offset' => intval($job['offset']),
+        'total' => $total,
+        'done' => (intval($job['state']) != 1),
+        'stats' => $stats
+    ];
 }
+
 
 function farid_updateAndSendOneOrder($oid, $requestedBy = 0){
     global $connection;
@@ -10704,7 +12202,7 @@ function farid_generateUpdatedVrayLinks($order){
     return getConnectionLink($server_id, $uuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni);
 }
 
-function farid_sendUpdatedConfigToUser($userId, $remark, $links){
+function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage = null){
     global $botState, $botUrl;
 
     $userId = intval($userId);
@@ -10727,8 +12225,8 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links){
         if(empty($link)) continue;
 
         $text = ($botState['configLinkState'] ?? '') != "off"
-            ? ("✅ کانفیگ آپدیت شد: <b>$remark</b>\n\n<code>$link</code>")
-            : ("✅ کانفیگ آپدیت شد: <b>$remark</b>");
+            ? ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>\n\n<code>$link</code>")
+            : ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>");
 
         $file = RandomString() . ".png";
         $ecc = 'L';
@@ -10763,6 +12261,15 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links){
 
         // کمی تاخیر برای جلوگیری از محدودیت تلگرام
         usleep(350000);
+    }
+
+    // پیام پس از به‌روزرسانی (اختیاری)
+    $msg = $afterMessage;
+    if($msg === null){
+        $msg = farid_getUpdateAfterMessage();
+    }
+    if(strlen(trim(strval($msg))) > 0){
+        sendMessage($msg, null, "HTML", $userId);
     }
 }
 
