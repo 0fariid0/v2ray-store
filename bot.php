@@ -10906,9 +10906,6 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
         sendMessage( "
 ⚠️ با خطا مواجه شدی ! 
 
-برای رفع این مشکل روی لینک زیر بزن و ویس رو با دقت گوش کن 👇
-
-⛔️🔗 https://t.me/wizwizch/186
 
 مجدد نام کاربری پنل را وارد کنید:
 ⁮⁮ ⁮⁮
@@ -11303,7 +11300,7 @@ if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == tr
 👤 عزیزم به بخش مدیریت خوشومدی 
 🤌 هرچی نیاز داشتی میتونی اینجا طبق نیازهات اضافه و تغییر بدی ، عزیزم $first_name جان اگه از فروش ربات درآمد داری از من حمایت کن تا پروژه همیشه به‌روزرسانی بمونه !
 
-🆔 @wizwizch
+
 
 🚪 /start
 ";
