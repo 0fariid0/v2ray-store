@@ -2877,6 +2877,312 @@ if($data == "updateConfigsRun" && ($from_id == $admin || $userInfo['isAdmin'] ==
 }
 
 
+/* ======================================================================
+   📩 پیام به کاربران تمام/نزدیک اتمام (X-UI)
+   - لیست کردن اکانت‌هایی که «حجم» یا «تاریخ» آنها تمام شده ولی هنوز در پنل هستند
+   - لیست کردن اکانت‌هایی که «نزدیک به اتمام» هستند (مثلاً ۳ روز یا ۳ گیگ باقی‌مانده)
+   - ارسال پیام گروهی به کاربران (بر اساس دیتابیس ربات)
+   ====================================================================== */
+
+// منوی اصلی پیام به کاربران
+if($data == "xuiMsgMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+
+    $days = farid_xuiMsg_getNearDaysThreshold();
+    $gb   = farid_xuiMsg_getNearGbThreshold();
+
+    $txt = "📩 پیام به کاربران (X-UI)\n\n".
+           "در این بخش می‌تونی کاربران \"تمام شده\" یا \"نزدیک به اتمام\" رو (از روی اطلاعات پنل X-UI) پیدا کنی و براشون پیام ارسال کنی.\n\n".
+           "⚙️ آستانه نزدیک به اتمام:\n".
+           "⏳ روز: $days\n".
+           "📦 حجم: $gb گیگ\n\n".
+           "یک گزینه رو انتخاب کن:";
+
+    $keys = json_encode(['inline_keyboard'=>[
+        [["text"=>"📛 لیست تمام‌شده‌ها (حجم/تاریخ)","callback_data"=>"xuiMsgExpired_0"]],
+        [["text"=>"⏳ لیست نزدیک به اتمام","callback_data"=>"xuiMsgNear_0"]],
+        [["text"=>"⚙️ تنظیم آستانه","callback_data"=>"xuiMsgSettings"]],
+        [["text"=>$buttonValues['back_button'],"callback_data"=>"managePanel"]],
+    ]], JSON_UNESCAPED_UNICODE);
+
+    editText($message_id, $txt, $keys);
+    exit();
+}
+
+// تنظیم آستانه‌ها
+if($data == "xuiMsgSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+    $days = farid_xuiMsg_getNearDaysThreshold();
+    $gb   = farid_xuiMsg_getNearGbThreshold();
+
+    $txt = "⚙️ تنظیم آستانه نزدیک به اتمام\n\n".
+           "⏳ روز فعلی: $days\n".
+           "📦 حجم فعلی: $gb گیگ\n\n".
+           "نکته: اگر یکی از مقادیر را 0 بگذاری، آن معیار در «نزدیک به اتمام» لحاظ نمی‌شود.";
+
+    $keys = json_encode(['inline_keyboard'=>[
+        [["text"=>"⏳ تغییر روز","callback_data"=>"xuiMsgSetDays"]],
+        [["text"=>"📦 تغییر حجم (گیگ)","callback_data"=>"xuiMsgSetGb"]],
+        [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+    ]], JSON_UNESCAPED_UNICODE);
+
+    editText($message_id, $txt, $keys);
+    exit();
+}
+
+if($data == "xuiMsgSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("⏳ تعداد روزِ نزدیک به اتمام رو بفرست (مثلاً 3).\nاگر می‌خوای معیار روز غیرفعال بشه: 0", $cancelKey);
+    setUser("xuiMsgSetDays");
+    exit();
+}
+if($userInfo['step'] == "xuiMsgSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    if(!is_numeric($text)){
+        sendMessage("⛔️ فقط عدد بفرست.");
+        exit();
+    }
+    $days = intval($text);
+    if($days < 0) $days = 0;
+    if($days > 3650) $days = 3650;
+
+    farid_setSettingValue("XUI_NEAR_EXPIRE_DAYS", strval($days));
+    setUser();
+    sendMessage("✅ ذخیره شد. آستانه روز: $days", json_encode(['inline_keyboard'=>[
+        [["text"=>"⚙️ تنظیمات","callback_data"=>"xuiMsgSettings"]],
+        [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "xuiMsgSetGb" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("📦 آستانه حجمِ نزدیک به اتمام رو به گیگ بفرست (مثلاً 3).\nاگر می‌خوای معیار حجم غیرفعال بشه: 0", $cancelKey);
+    setUser("xuiMsgSetGb");
+    exit();
+}
+if($userInfo['step'] == "xuiMsgSetGb" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    if(!is_numeric($text)){
+        sendMessage("⛔️ فقط عدد بفرست.");
+        exit();
+    }
+    $gb = floatval($text);
+    if($gb < 0) $gb = 0;
+    if($gb > 10240) $gb = 10240;
+
+    // ذخیره به صورت عدد (رشته)
+    farid_setSettingValue("XUI_NEAR_EXPIRE_GB", strval($gb));
+    setUser();
+    sendMessage("✅ ذخیره شد. آستانه حجم: $gb گیگ", json_encode(['inline_keyboard'=>[
+        [["text"=>"⚙️ تنظیمات","callback_data"=>"xuiMsgSettings"]],
+        [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+// لیست «تمام شده‌ها»
+if(preg_match('/^xuiMsgExpired_(\d+)/', $data, $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+    $offset = intval($m[1]);
+    if($offset < 0) $offset = 0;
+    $limit = 15;
+
+    $accounts = farid_xuiMsg_getExpiredAccounts();
+    $total = count($accounts);
+
+    if($total <= 0){
+        editText($message_id, "✅ موردی پیدا نشد (اکانتِ تمام‌شده‌ای که هنوز داخل پنل X-UI باشد).", json_encode(['inline_keyboard'=>[
+            [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        exit();
+    }
+
+    $pageItems = array_slice($accounts, $offset, $limit);
+    $lines = [];
+    $i = $offset + 1;
+    foreach($pageItems as $acc){
+        $order = farid_xuiMsg_findOrderByUuid($acc['server_id'], $acc['uuid']);
+        $lines[] = farid_xuiMsg_formatAccountLine($i, $acc, $order, true);
+        $i++;
+    }
+
+    $fromNum = $offset + 1;
+    $toNum = min($offset + $limit, $total);
+
+    $txt = "📛 لیست تمام‌شده‌ها (X-UI)\n\n".
+           "🔢 تعداد کل: $total\n".
+           "📄 نمایش: $fromNum تا $toNum\n\n".
+           implode("\n", $lines) .
+           "\n\n⚠️ فقط مواردی که UserID در دیتابیس ربات دارند قابل پیام دادن هستند.";
+
+    $navRow = [];
+    if($offset > 0){
+        $prev = max(0, $offset - $limit);
+        $navRow[] = ["text"=>"◀️ قبلی","callback_data"=>"xuiMsgExpired_{$prev}"];
+    }
+    if(($offset + $limit) < $total){
+        $next = $offset + $limit;
+        $navRow[] = ["text"=>"▶️ بعدی","callback_data"=>"xuiMsgExpired_{$next}"];
+    }
+
+    $kb = [];
+    $kb[] = [["text"=>"✉️ ارسال پیام به کاربران این لیست","callback_data"=>"xuiMsgSendExpired"]];
+    if(!empty($navRow)) $kb[] = $navRow;
+    $kb[] = [["text"=>"🔄 بروزرسانی","callback_data"=>"xuiMsgExpired_{$offset}"]];
+    $kb[] = [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]];
+
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>$kb], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+// لیست «نزدیک به اتمام»
+if(preg_match('/^xuiMsgNear_(\d+)/', $data, $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+    $offset = intval($m[1]);
+    if($offset < 0) $offset = 0;
+    $limit = 15;
+
+    $days = farid_xuiMsg_getNearDaysThreshold();
+    $gb   = farid_xuiMsg_getNearGbThreshold();
+
+    $accounts = farid_xuiMsg_getNearExpireAccounts($days, $gb);
+    $total = count($accounts);
+
+    if($total <= 0){
+        $t = "✅ موردی پیدا نشد (اکانتِ نزدیک به اتمام با آستانه فعلی).\n\n".
+             "⚙️ آستانه فعلی:\n⏳ روز: $days\n📦 حجم: $gb گیگ";
+        editText($message_id, $t, json_encode(['inline_keyboard'=>[
+            [["text"=>"⚙️ تنظیم آستانه","callback_data"=>"xuiMsgSettings"]],
+            [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        exit();
+    }
+
+    $pageItems = array_slice($accounts, $offset, $limit);
+    $lines = [];
+    $i = $offset + 1;
+    foreach($pageItems as $acc){
+        $order = farid_xuiMsg_findOrderByUuid($acc['server_id'], $acc['uuid']);
+        $lines[] = farid_xuiMsg_formatAccountLine($i, $acc, $order, false);
+        $i++;
+    }
+
+    $fromNum = $offset + 1;
+    $toNum = min($offset + $limit, $total);
+
+    $txt = "⏳ لیست نزدیک به اتمام (X-UI)\n\n".
+           "⚙️ آستانه: $days روز یا $gb گیگ\n".
+           "🔢 تعداد کل: $total\n".
+           "📄 نمایش: $fromNum تا $toNum\n\n".
+           implode("\n", $lines) .
+           "\n\n⚠️ فقط مواردی که UserID در دیتابیس ربات دارند قابل پیام دادن هستند.";
+
+    $navRow = [];
+    if($offset > 0){
+        $prev = max(0, $offset - $limit);
+        $navRow[] = ["text"=>"◀️ قبلی","callback_data"=>"xuiMsgNear_{$prev}"];
+    }
+    if(($offset + $limit) < $total){
+        $next = $offset + $limit;
+        $navRow[] = ["text"=>"▶️ بعدی","callback_data"=>"xuiMsgNear_{$next}"];
+    }
+
+    $kb = [];
+    $kb[] = [["text"=>"✉️ ارسال پیام به کاربران این لیست","callback_data"=>"xuiMsgSendNear"]];
+    if(!empty($navRow)) $kb[] = $navRow;
+    $kb[] = [["text"=>"🔄 بروزرسانی","callback_data"=>"xuiMsgNear_{$offset}"]];
+    $kb[] = [["text"=>"⚙️ تنظیم آستانه","callback_data"=>"xuiMsgSettings"]];
+    $kb[] = [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]];
+
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>$kb], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+// ارسال پیام برای تمام‌شده‌ها
+if($data == "xuiMsgSendExpired" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("✉️ متن پیامی که می‌خوای برای کاربرانِ تمام‌شده ارسال بشه رو بفرست.\n\nبرای لغو: دکمه لغو", $cancelKey);
+    setUser("xuiMsgSendExpired");
+    exit();
+}
+if($userInfo['step'] == "xuiMsgSendExpired" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $msg = trim($text);
+    if($msg === ""){
+        sendMessage("⛔️ متن پیام خالیه.");
+        exit();
+    }
+
+    setUser();
+    sendMessage("⏳ شروع شد... در حال آماده‌سازی لیست و ارسال پیام.");
+
+    // جلوگیری از retry تلگرام
+    if(function_exists('farid_finishWebhookResponse')){
+        farid_finishWebhookResponse();
+    }
+
+    $accounts = farid_xuiMsg_getExpiredAccounts();
+    $report = farid_xuiMsg_sendMessageToAccounts($accounts, $msg);
+
+    $repTxt = "✅ گزارش ارسال پیام (تمام‌شده‌ها)\n\n".
+              "👥 کاربران هدف: {$report['target_users']}\n".
+              "📨 ارسال موفق: {$report['sent']}\n".
+              "⛔️ ناموفق: {$report['failed']}\n".
+              "❓ اکانت‌های بدون UserID در دیتابیس: {$report['unknown_accounts']}\n".
+              "🔢 کل اکانت‌های لیست: {$report['total_accounts']}";
+
+    if(!empty($report['failed_user_ids'])){
+        $repTxt .= "\n\n⚠️ UserIDهای ناموفق (تا 20 مورد):\n" . implode(", ", array_slice($report['failed_user_ids'], 0, 20));
+    }
+
+    sendMessage($repTxt, json_encode(['inline_keyboard'=>[
+        [["text"=>"📛 مشاهده لیست","callback_data"=>"xuiMsgExpired_0"]],
+        [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+// ارسال پیام برای نزدیک به اتمام
+if($data == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("✉️ متن پیامی که می‌خوای برای کاربرانِ نزدیک به اتمام ارسال بشه رو بفرست.\n\nبرای لغو: دکمه لغو", $cancelKey);
+    setUser("xuiMsgSendNear");
+    exit();
+}
+if($userInfo['step'] == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $msg = trim($text);
+    if($msg === ""){
+        sendMessage("⛔️ متن پیام خالیه.");
+        exit();
+    }
+
+    setUser();
+    sendMessage("⏳ شروع شد... در حال آماده‌سازی لیست و ارسال پیام.");
+
+    if(function_exists('farid_finishWebhookResponse')){
+        farid_finishWebhookResponse();
+    }
+
+    $days = farid_xuiMsg_getNearDaysThreshold();
+    $gb   = farid_xuiMsg_getNearGbThreshold();
+    $accounts = farid_xuiMsg_getNearExpireAccounts($days, $gb);
+    $report = farid_xuiMsg_sendMessageToAccounts($accounts, $msg);
+
+    $repTxt = "✅ گزارش ارسال پیام (نزدیک به اتمام)\n\n".
+              "⚙️ آستانه: $days روز یا $gb گیگ\n\n".
+              "👥 کاربران هدف: {$report['target_users']}\n".
+              "📨 ارسال موفق: {$report['sent']}\n".
+              "⛔️ ناموفق: {$report['failed']}\n".
+              "❓ اکانت‌های بدون UserID در دیتابیس: {$report['unknown_accounts']}\n".
+              "🔢 کل اکانت‌های لیست: {$report['total_accounts']}";
+
+    if(!empty($report['failed_user_ids'])){
+        $repTxt .= "\n\n⚠️ UserIDهای ناموفق (تا 20 مورد):\n" . implode(", ", array_slice($report['failed_user_ids'], 0, 20));
+    }
+
+    sendMessage($repTxt, json_encode(['inline_keyboard'=>[
+        [["text"=>"⏳ مشاهده لیست","callback_data"=>"xuiMsgNear_0"]],
+        [["text"=>"⚙️ تنظیم آستانه","callback_data"=>"xuiMsgSettings"]],
+        [["text"=>"⬅️ بازگشت","callback_data"=>"xuiMsgMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+
 
 
 if($userInfo['step'] == 's2a' and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -11047,18 +11353,28 @@ function getAdminKeysPlus(){
     $data = json_decode($keysJson, true);
     if(!is_array($data) || !isset($data['inline_keyboard'])) return $keysJson;
 
-    // جلوگیری از تکرار دکمه
+    $hasUpdateConfigs = false;
+    $hasXuiMsgMenu = false;
+
     foreach($data['inline_keyboard'] as $row){
         foreach($row as $btn){
-            if(isset($btn['callback_data']) && $btn['callback_data'] == "updateConfigsMenu"){
-                return $keysJson;
-            }
+            if(!isset($btn['callback_data'])) continue;
+            if($btn['callback_data'] == "updateConfigsMenu") $hasUpdateConfigs = true;
+            if($btn['callback_data'] == "xuiMsgMenu") $hasXuiMsgMenu = true;
         }
     }
 
-    $data['inline_keyboard'][] = [
-        ['text' => "♻️ به‌روزرسانی و ارسال کانفیگ‌ها", 'callback_data' => "updateConfigsMenu"]
-    ];
+    if(!$hasUpdateConfigs){
+        $data['inline_keyboard'][] = [
+            ['text' => "♻️ به‌روزرسانی و ارسال کانفیگ‌ها", 'callback_data' => "updateConfigsMenu"]
+        ];
+    }
+
+    if(!$hasXuiMsgMenu){
+        $data['inline_keyboard'][] = [
+            ['text' => "📩 پیام به کاربران تمام/نزدیک اتمام", 'callback_data' => "xuiMsgMenu"]
+        ];
+    }
 
     return json_encode($data, JSON_UNESCAPED_UNICODE);
 }
@@ -12271,6 +12587,474 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage =
     if(strlen(trim(strval($msg))) > 0){
         sendMessage($msg, null, "HTML", $userId);
     }
+}
+
+
+/* ======================================================================
+   ✅ Helper functions for X-UI Expired / Near-Expiry messaging
+   ====================================================================== */
+
+function farid_xuiMsg_getNearDaysThreshold(){
+    $raw = farid_getSettingValue("XUI_NEAR_EXPIRE_DAYS");
+    $days = ($raw === null) ? 3 : intval($raw);
+    if($days < 0) $days = 0;
+    if($days > 3650) $days = 3650;
+    return $days;
+}
+
+function farid_xuiMsg_getNearGbThreshold(){
+    $raw = farid_getSettingValue("XUI_NEAR_EXPIRE_GB");
+    $gb = ($raw === null) ? 3 : floatval($raw);
+    if($gb < 0) $gb = 0;
+    if($gb > 10240) $gb = 10240;
+    // جلوگیری از نمایش اعشار خیلی زیاد
+    return rtrim(rtrim(number_format($gb, 2, '.', ''), '0'), '.');
+}
+
+function farid_xuiMsg_parseExpirySeconds($expiryVal){
+    if($expiryVal === null) return 0;
+    // اگر رشته خالی یا صفر بود
+    $s = trim(strval($expiryVal));
+    if($s === '' || $s === '0') return 0;
+
+    // حذف کاراکترهای غیر عددی
+    if(!preg_match('/^\d+$/', $s)){
+        $s = preg_replace('/\D+/', '', $s);
+    }
+    if($s === '') return 0;
+
+    // اگر طول بیشتر از 10 باشد، احتمالاً میلی‌ثانیه است
+    if(strlen($s) > 10){
+        return intval(substr($s, 0, -3));
+    }
+
+    return intval($s);
+}
+
+
+function farid_xuiMsg_collectAllXuiAccounts(){
+    global $connection;
+
+    $accounts = [];
+
+    $stmt = $connection->prepare("SELECT `id`,`type` FROM `server_config`");
+    $stmt->execute();
+    $servers = $stmt->get_result();
+    $stmt->close();
+
+    if(!$servers) return [];
+
+    while($srv = $servers->fetch_assoc()){
+        $sid = intval($srv['id']);
+        $stype = $srv['type'] ?? '';
+
+        // فقط X-UI / 3X-UI
+        if($stype == 'marzban') continue;
+
+        $resp = getJson($sid);
+        if(!$resp || !isset($resp->success) || !$resp->success) continue;
+        if(!isset($resp->obj)) continue;
+
+        $list = $resp->obj;
+        if(is_object($list)){
+            // در صورت برگشت آبجکت، تبدیل به آرایه (نادر ولی برای اطمینان)
+            $list = [$list];
+        }
+        if(!is_array($list) || count($list) == 0) continue;
+
+        $hasClientStats = isset($list[0]->clientStats);
+
+        foreach($list as $inb){
+            if(!is_object($inb)) continue;
+
+            $inboundId = intval($inb->id ?? 0);
+
+            $settingsRaw = $inb->settings ?? '{}';
+            $settingsArr = json_decode($settingsRaw, true);
+            if(!is_array($settingsArr)) $settingsArr = [];
+
+            $clients = $settingsArr['clients'] ?? [];
+            if(!is_array($clients)) $clients = [];
+
+            if($hasClientStats && isset($inb->clientStats) && is_array($inb->clientStats)){
+                $statsArr = $inb->clientStats;
+
+                foreach($clients as $cl){
+                    if(!is_array($cl)) continue;
+
+                    $uuid = $cl['id'] ?? ($cl['password'] ?? null);
+                    if(empty($uuid)) continue;
+
+                    $email = $cl['email'] ?? null;
+                    $remark = $email;
+                    if($remark === null || $remark === '') $remark = $inb->remark ?? '';
+
+                    // پیدا کردن stats مربوط به همین کلاینت بر اساس email
+                    $statObj = null;
+                    if($email !== null && $email !== ''){
+                        foreach($statsArr as $st){
+                            if(is_object($st) && isset($st->email) && $st->email == $email){
+                                $statObj = $st;
+                                break;
+                            }
+                        }
+                    }
+
+                    if($statObj){
+                        $up = intval($statObj->up ?? 0);
+                        $down = intval($statObj->down ?? 0);
+
+                        $total = intval($statObj->total ?? 0);
+                        if($total == 0 && intval($inb->total ?? 0) != 0) $total = intval($inb->total ?? 0);
+
+                        $expiryRaw = $statObj->expiryTime ?? 0;
+                        if(intval($expiryRaw) == 0 && intval($inb->expiryTime ?? 0) != 0) $expiryRaw = $inb->expiryTime;
+
+                        $enable = null;
+                        if(isset($statObj->enable)) $enable = (bool)$statObj->enable;
+                        elseif(isset($inb->enable)) $enable = (bool)$inb->enable;
+                    }else{
+                        // fallback به آمار کلی inbound
+                        $up = intval($inb->up ?? 0);
+                        $down = intval($inb->down ?? 0);
+                        $total = intval($inb->total ?? 0);
+                        $expiryRaw = $inb->expiryTime ?? 0;
+                        $enable = isset($inb->enable) ? (bool)$inb->enable : true;
+                    }
+
+                    $expirySec = farid_xuiMsg_parseExpirySeconds($expiryRaw);
+
+                    $used = $up + $down;
+                    $left = null;
+                    if($total > 0){
+                        $left = $total - $used;
+                        if($left < 0) $left = 0;
+                    }
+
+                    $accounts[] = [
+                        'server_id' => $sid,
+                        'inbound_id' => $inboundId,
+                        'uuid' => strval($uuid),
+                        'remark' => strval($remark),
+                        'enable' => ($enable === null ? true : $enable),
+                        'up' => $up,
+                        'down' => $down,
+                        'total' => $total,
+                        'used' => $used,
+                        'left' => $left,
+                        'expiry' => $expirySec,
+                        'source' => ($statObj ? 'clientStats' : 'inbound')
+                    ];
+                }
+            }else{
+                // نسخه‌هایی که clientStats ندارند: آمار روی خود inbound است
+                if(count($clients) == 0) continue;
+
+                $up = intval($inb->up ?? 0);
+                $down = intval($inb->down ?? 0);
+                $total = intval($inb->total ?? 0);
+                $expiryRaw = $inb->expiryTime ?? 0;
+                $enable = isset($inb->enable) ? (bool)$inb->enable : true;
+
+                $expirySec = farid_xuiMsg_parseExpirySeconds($expiryRaw);
+
+                $used = $up + $down;
+                $left = null;
+                if($total > 0){
+                    $left = $total - $used;
+                    if($left < 0) $left = 0;
+                }
+
+                foreach($clients as $cl){
+                    if(!is_array($cl)) continue;
+
+                    $uuid = $cl['id'] ?? ($cl['password'] ?? null);
+                    if(empty($uuid)) continue;
+
+                    $remark = $cl['email'] ?? ($inb->remark ?? '');
+
+                    $accounts[] = [
+                        'server_id' => $sid,
+                        'inbound_id' => $inboundId,
+                        'uuid' => strval($uuid),
+                        'remark' => strval($remark),
+                        'enable' => $enable,
+                        'up' => $up,
+                        'down' => $down,
+                        'total' => $total,
+                        'used' => $used,
+                        'left' => $left,
+                        'expiry' => $expirySec,
+                        'source' => 'inbound'
+                    ];
+                }
+            }
+        }
+    }
+
+    // حذف تکراری‌ها
+    $uniq = [];
+    $final = [];
+    foreach($accounts as $a){
+        $k = $a['server_id'] . '|' . $a['inbound_id'] . '|' . $a['uuid'];
+        if(isset($uniq[$k])) continue;
+        $uniq[$k] = true;
+        $final[] = $a;
+    }
+
+    return $final;
+}
+
+
+function farid_xuiMsg_isExpiredAccount($acc){
+    $now = time();
+    $exp = intval($acc['expiry'] ?? 0);
+    if($exp > 0 && $exp <= $now) return true;
+    if(isset($acc['left']) && $acc['left'] !== null && is_numeric($acc['left']) && intval($acc['left']) <= 0) return true;
+    return false;
+}
+
+
+function farid_xuiMsg_getExpiredAccounts(){
+    $all = farid_xuiMsg_collectAllXuiAccounts();
+    $out = [];
+    foreach($all as $acc){
+        if(farid_xuiMsg_isExpiredAccount($acc)) $out[] = $acc;
+    }
+
+    // مرتب‌سازی (قدیمی‌ترین منقضی در بالا)
+    usort($out, function($a, $b){
+        $ea = intval($a['expiry'] ?? 0);
+        $eb = intval($b['expiry'] ?? 0);
+
+        // expiryTime مشخص‌ها اول
+        if($ea == 0 && $eb != 0) return 1;
+        if($ea != 0 && $eb == 0) return -1;
+
+        if($ea != $eb) return ($ea < $eb) ? -1 : 1;
+
+        $la = ($a['left'] === null) ? PHP_INT_MAX : intval($a['left']);
+        $lb = ($b['left'] === null) ? PHP_INT_MAX : intval($b['left']);
+        if($la == $lb) return 0;
+        return ($la < $lb) ? -1 : 1;
+    });
+
+    return $out;
+}
+
+
+function farid_xuiMsg_getNearExpireAccounts($daysThreshold, $gbThreshold){
+    $days = intval($daysThreshold);
+    $gb = floatval($gbThreshold);
+    if($days < 0) $days = 0;
+    if($gb < 0) $gb = 0;
+
+    // اگر هر دو خاموش باشند
+    if($days == 0 && $gb == 0) return [];
+
+    $all = farid_xuiMsg_collectAllXuiAccounts();
+    $out = [];
+    $now = time();
+    $bytesThreshold = ($gb > 0) ? ($gb * 1073741824) : 0;
+
+    foreach($all as $acc){
+        if(farid_xuiMsg_isExpiredAccount($acc)) continue;
+
+        $near = false;
+
+        $exp = intval($acc['expiry'] ?? 0);
+        if(!$near && $days > 0 && $exp > 0){
+            $secLeft = $exp - $now;
+            if($secLeft <= ($days * 86400)) $near = true;
+        }
+
+        $left = $acc['left'] ?? null;
+        if(!$near && $gb > 0 && $left !== null && is_numeric($left)){
+            if(floatval($left) <= $bytesThreshold) $near = true;
+        }
+
+        if($near) $out[] = $acc;
+    }
+
+    // مرتب‌سازی: زودتر تمام‌شونده‌ها اول
+    usort($out, function($a, $b){
+        $now = time();
+        $sa = (intval($a['expiry'] ?? 0) > 0) ? max(0, intval($a['expiry']) - $now) : PHP_INT_MAX;
+        $sb = (intval($b['expiry'] ?? 0) > 0) ? max(0, intval($b['expiry']) - $now) : PHP_INT_MAX;
+        if($sa != $sb) return ($sa < $sb) ? -1 : 1;
+
+        $la = ($a['left'] === null) ? PHP_INT_MAX : intval($a['left']);
+        $lb = ($b['left'] === null) ? PHP_INT_MAX : intval($b['left']);
+        if($la == $lb) return 0;
+        return ($la < $lb) ? -1 : 1;
+    });
+
+    return $out;
+}
+
+
+function farid_xuiMsg_getServerTitle($serverId){
+    global $connection;
+    static $cache = [];
+
+    $sid = intval($serverId);
+    if(isset($cache[$sid])) return $cache[$sid];
+
+    $title = strval($sid);
+    $stmt = $connection->prepare("SELECT `title` FROM `server_info` WHERE `id`=? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param("i", $sid);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+        if($res && $res->num_rows > 0){
+            $title = $res->fetch_assoc()['title'] ?? $title;
+        }
+    }
+
+    $cache[$sid] = $title;
+    return $title;
+}
+
+
+function farid_xuiMsg_findOrderByUuid($serverId, $uuid){
+    global $connection;
+    static $cache = [];
+
+    $sid = intval($serverId);
+    $uuid = strval($uuid);
+    $key = $sid . '|' . $uuid;
+
+    if(array_key_exists($key, $cache)){
+        return $cache[$key];
+    }
+
+    $stmt = $connection->prepare("SELECT `id`,`userid`,`remark` FROM `orders_list` WHERE `uuid`=? AND `server_id`=? ORDER BY `id` DESC LIMIT 1");
+    if(!$stmt){
+        $cache[$key] = null;
+        return null;
+    }
+
+    $stmt->bind_param("si", $uuid, $sid);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    if($res && $res->num_rows > 0){
+        $row = $res->fetch_assoc();
+        $cache[$key] = [
+            'id' => intval($row['id'] ?? 0),
+            'userid' => intval($row['userid'] ?? 0),
+            'remark' => $row['remark'] ?? null
+        ];
+        return $cache[$key];
+    }
+
+    $cache[$key] = null;
+    return null;
+}
+
+
+function farid_xuiMsg_formatAccountLine($index, $acc, $order = null, $isExpiredList = true){
+    $now = time();
+    $serverTitle = farid_xuiMsg_getServerTitle($acc['server_id'] ?? 0);
+
+    $uid = 0;
+    $remark = $acc['remark'] ?? '-';
+    if(is_array($order)){
+        $uid = intval($order['userid'] ?? 0);
+        if(!empty($order['remark'])) $remark = $order['remark'];
+    }
+
+    $uidTxt = ($uid > 0) ? strval($uid) : '—';
+
+    // روز باقی‌مانده
+    $exp = intval($acc['expiry'] ?? 0);
+    if($exp > 0){
+        $daysLeft = floor(($exp - $now) / 86400);
+        if($daysLeft < 0) $daysTxt = 'منقضی';
+        elseif($daysLeft == 0) $daysTxt = 'امروز';
+        else $daysTxt = $daysLeft . 'روز';
+    }else{
+        $daysTxt = '∞';
+    }
+
+    // حجم باقی‌مانده
+    if(!isset($acc['left']) || $acc['left'] === null){
+        $leftTxt = '∞';
+    }else{
+        $lb = intval($acc['left']);
+        $leftTxt = ($lb <= 0) ? 'تمام' : (function_exists('sumerize') ? sumerize($lb) : ($lb . 'B'));
+    }
+
+    // دلیل
+    $reason = '';
+    if($isExpiredList){
+        if($exp > 0 && $exp <= $now) $reason .= '⏰';
+        if(isset($acc['left']) && $acc['left'] !== null && is_numeric($acc['left']) && intval($acc['left']) <= 0) $reason .= '📦';
+    }else{
+        // نزدیک به اتمام
+        if($exp > 0) $reason .= '⏳';
+        if(isset($acc['left']) && $acc['left'] !== null) $reason .= '📦';
+    }
+
+    $reason = ($reason !== '') ? (" " . $reason) : '';
+
+    return "$index) [$serverTitle] $remark | UID:$uidTxt | ⏳$daysTxt | 📦$leftTxt$reason";
+}
+
+
+function farid_xuiMsg_sendMessageToAccounts($accounts, $message){
+    $targets = [];
+    $unknownAccounts = 0;
+
+    foreach($accounts as $acc){
+        $order = farid_xuiMsg_findOrderByUuid($acc['server_id'], $acc['uuid']);
+        if(!$order || intval($order['userid'] ?? 0) <= 0){
+            $unknownAccounts++;
+            continue;
+        }
+        $uid = intval($order['userid']);
+        $targets[$uid] = true;
+    }
+
+    $userIds = array_keys($targets);
+
+    $sent = 0;
+    $failed = 0;
+    $failedUserIds = [];
+
+    foreach($userIds as $uid){
+        $resp = sendMessage($message, null, null, $uid);
+
+        $ok = true;
+        if($resp === false){
+            $ok = false;
+        }elseif(is_object($resp) && isset($resp->ok)){
+            $ok = ($resp->ok == true);
+        }elseif(is_array($resp) && isset($resp['ok'])){
+            $ok = (bool)$resp['ok'];
+        }
+
+        if($ok){
+            $sent++;
+        }else{
+            $failed++;
+            $failedUserIds[] = $uid;
+        }
+
+        // کمی تاخیر برای جلوگیری از محدودیت تلگرام
+        usleep(200000);
+    }
+
+    return [
+        'total_accounts' => count($accounts),
+        'unknown_accounts' => $unknownAccounts,
+        'target_users' => count($userIds),
+        'sent' => $sent,
+        'failed' => $failed,
+        'failed_user_ids' => $failedUserIds
+    ];
 }
 
 ?>
