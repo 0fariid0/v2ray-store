@@ -9,6 +9,94 @@ if($connection->connect_error){
 }
 $connection->set_charset("utf8mb4");
 
+
+function wizwiz_cleanSingleDomainHost($domain){
+    $domain = trim(str_replace(["\r", "\n", "\t"], "", (string)$domain));
+    if($domain === "") return "";
+
+    // Accept values like domain.com, https://domain.com:443/path, or domain.com:443/path
+    $parseSource = preg_match('/^https?:\/\//i', $domain) ? $domain : ('http://' . $domain);
+    $parsed = @parse_url($parseSource);
+    if(is_array($parsed) && !empty($parsed['host'])){
+        $domain = $parsed['host'];
+    }else{
+        $domain = preg_replace('/^https?:\/\//i', '', $domain);
+        $domain = explode('/', $domain, 2)[0];
+        // Remove a simple :port from normal hostnames, but leave IPv6-style values alone.
+        if(substr_count($domain, ':') === 1) $domain = preg_replace('/:\d+$/', '', $domain);
+    }
+
+    return trim($domain, " \t\n\r\0\x0B[]");
+}
+
+function wizwiz_normalizePlanDomainInput($domain){
+    $domain = trim((string)$domain);
+    if($domain === "") return "";
+
+    $lines = preg_split('/\r\n|\r|\n/', $domain);
+    $clean = [];
+    foreach($lines as $line){
+        $host = wizwiz_cleanSingleDomainHost($line);
+        if($host !== "") $clean[] = $host;
+    }
+    $clean = array_values(array_unique($clean));
+    return implode("\n", $clean);
+}
+
+function wizwiz_ensurePlanCustomDomainColumn(){
+    global $connection;
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_plans` LIKE 'custom_domain'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `server_plans` ADD `custom_domain` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `custom_sni`"));
+    }
+}
+wizwiz_ensurePlanCustomDomainColumn();
+
+function wizwiz_extractHeaderPair($headerLine){
+    $headerLine = trim((string)$headerLine);
+    if($headerLine === '' || strpos($headerLine, ':') === false) return ['', ''];
+    [$key, $value] = explode(':', $headerLine, 2);
+    return [trim($key), trim($value)];
+}
+
+function wizwiz_buildHttpupgradeStreamSettings($security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType){
+    [$headerKey, $headerValue] = wizwiz_extractHeaderPair($request_header);
+    $host = '';
+    $headersArr = [];
+
+    if($header_type != 'none' && $headerKey !== ''){
+        if(strtolower($headerKey) == 'host') $host = $headerValue;
+        else $headersArr[$headerKey] = $headerValue;
+    }
+
+    $httpupgradeSettings = [
+        'acceptProxyProtocol' => false,
+        'path' => '/',
+        'host' => $host,
+        'headers' => (object)$headersArr,
+    ];
+
+    $stream = [
+        'network' => 'httpupgrade',
+        'security' => $security,
+    ];
+
+    if($security == 'xtls' && $serverType != 'sanaei' && $serverType != 'alireza'){
+        $stream[$xtlsTitle] = json_decode($tlsSettings, true) ?: (object)[];
+    }elseif($security != 'none'){
+        $stream['tlsSettings'] = json_decode($tlsSettings, true) ?: (object)[];
+    }
+
+    $stream['httpupgradeSettings'] = $httpupgradeSettings;
+    return json_encode($stream, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType){
+    if($netType == 'tcp') return $tcpSettings;
+    if($netType == 'httpupgrade') return wizwiz_buildHttpupgradeStreamSettings($security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
+    return $wsSettings;
+}
+
 function bot($method, $datas = []){
     global $botToken;
     $url = "https://api.telegram.org/bot" . $botToken . "/" . $method;
@@ -1339,6 +1427,8 @@ function getPlanDetailsKeys($planId){
         $flow = $pd['flow'];
         $customPort = $pd['custom_port'];
         $customSni = $pd['custom_sni']??" ";
+        $customDomain = trim($pd['custom_domain'] ?? "");
+        $customDomainText = $customDomain !== "" ? $customDomain : "پیش‌فرض";
 
         $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `fileid`=?");
         $stmt->bind_param("i", $id);
@@ -1361,6 +1451,7 @@ function getPlanDetailsKeys($planId){
                 ['text'=>$customSni,'callback_data'=>'changeCustomSni' . $id],
                 ['text'=>"sni دلخواه",'callback_data'=>'wizwizch'],
                 ]:[]),
+            [['text'=>$customDomainText,'callback_data'=>'changeCustomDomain' . $id],['text'=>"🌐 دامنه اختصاصی پلن",'callback_data'=>"wizwizch"]],
             [['text'=>$name,'callback_data'=>"wizwizplanname$id"],['text'=>"🔮 نام پلن",'callback_data'=>"wizwizch"]],
             ($reality == "true"?[['text'=>$dest,'callback_data'=>"editDestName$id"],['text'=>"dest",'callback_data'=>"wizwizch"]]:[]),
             ($reality == "true"?[['text'=>$serverName,'callback_data'=>"editServerNames$id"],['text'=>"serverNames",'callback_data'=>"wizwizch"]]:[]),
@@ -3761,7 +3852,7 @@ function getNewHeaders($netType, $request_header, $response_header, $type){
             }';
         }
 
-    }elseif( $netType == 'ws'){
+    }elseif( $netType == 'ws' || $netType == 'httpupgrade'){
         if($type == 'none') {
             $headers = '{}';
         }else {
@@ -3773,7 +3864,7 @@ function getNewHeaders($netType, $request_header, $response_header, $type){
     return $headers;
 
 }
-function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id = 0, $rahgozar = false, $customPath = false, $customPort = 0, $customSni = null){
+function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id = 0, $rahgozar = false, $customPath = false, $customPort = 0, $customSni = null, $customDomain = null){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
     $stmt->bind_param("i", $server_id);
@@ -3795,6 +3886,8 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
     $panel_url = str_ireplace('https://','',$panel_url);
     $panel_url = strtok($panel_url,":");
     if($server_ip == '') $server_ip = $panel_url;
+    $planDomain = wizwiz_normalizePlanDomainInput($customDomain);
+    if($planDomain !== '') $server_ip = $planDomain;
 
     $response = getJson($server_id)->obj;
     foreach($response as $row){
@@ -3830,6 +3923,13 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     $header_type = json_decode($row->streamSettings)->wsSettings->header->type;
                     $path = json_decode($row->streamSettings)->wsSettings->path;
                     $host = json_decode($row->streamSettings)->wsSettings->headers->Host;
+                }
+                if($netType == 'httpupgrade') {
+                    $httpupgradeSettings = json_decode($row->streamSettings)->httpupgradeSettings;
+                    $path = $httpupgradeSettings->path ?? '/';
+                    $host = $httpupgradeSettings->host ?? '';
+                    if(empty($host) && isset($httpupgradeSettings->headers->Host)) $host = $httpupgradeSettings->headers->Host;
+                    $header_type = !empty($host) ? 'http' : 'none';
                 }
                 if($header_type == 'http' && empty($host)){
                     $request_header = explode(':', $request_header);
@@ -3909,6 +4009,12 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     $header_type = json_decode($row->streamSettings)->wsSettings->header->type;
                     $path = json_decode($row->streamSettings)->wsSettings->path;
                     $host = json_decode($row->streamSettings)->wsSettings->headers->Host;
+                }elseif($netType == 'httpupgrade') {
+                    $httpupgradeSettings = json_decode($row->streamSettings)->httpupgradeSettings;
+                    $path = $httpupgradeSettings->path ?? '/';
+                    $host = $httpupgradeSettings->host ?? '';
+                    if(empty($host) && isset($httpupgradeSettings->headers->Host)) $host = $httpupgradeSettings->headers->Host;
+                    $header_type = !empty($host) ? 'http' : 'none';
                 }elseif($netType == 'grpc') {
                     if($tlsStatus == 'tls'){
                         $alpn = $tlsSetting->alpn;
@@ -3971,7 +4077,12 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     }
                 }
                 $psting = '';
-                if(($header_type == 'http' && $rahgozar != true && $netType != "grpc") || ($netType == "ws" && !empty($host) && $rahgozar != true)) $psting .= "&path=/&host=$host";;
+                if(($header_type == 'http' && $rahgozar != true && $netType != "grpc" && $netType != "httpupgrade")) $psting .= "&path=/&host=$host";
+                if($netType == "ws" && !empty($host) && $rahgozar != true) $psting .= "&path=" . rawurlencode($path ?: '/') . "&host=$host";
+                if($netType == "httpupgrade" && $rahgozar != true){
+                    $psting .= "&path=" . rawurlencode($path ?: '/');
+                    if(!empty($host)) $psting .= "&host=$host";
+                }
                 if($netType == 'tcp' and $header_type == 'http') $psting .= '&headerType=http';
                 if(strlen($sni) > 1 && $tlsStatus != "reality") $psting .= "&sni=$sni";
                 if(strlen($serverName)>1 && $tlsStatus=="xtls") $server_ip = $serverName;
@@ -3991,7 +4102,11 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
     
             if($protocol == 'trojan'){
                 $psting = '';
-                if($header_type == 'http') $psting .= "&path=/&host=$host";
+                if($header_type == 'http' && $netType != 'httpupgrade') $psting .= "&path=/&host=$host";
+                if($netType == 'httpupgrade'){
+                    $psting = "&path=" . rawurlencode($path ?: '/');
+                    if(!empty($host)) $psting .= "&host=$host";
+                }
                 if($netType == 'tcp' and $header_type == 'http') $psting .= '&headerType=http';
                 if(strlen($sni) > 1) $psting .= "&sni=$sni";
                 $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus{$psting}#$remark";
@@ -4081,7 +4196,9 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus{$psting}#$remark";
                 }elseif($netType == 'ws'){
                     if($rahgozar == true)$outputlink = "$protocol://$uniqid@$server_ip:" . ($customPort!=0?$customPort:"443") . "?type=$netType&security=tls&path=" . rawurlencode($path . ($customPath == true?"?ed=2048":"")) . "&encryption=none&host=$host{$psting}#$remark";
-                    else $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=/&host=$host{$psting}#$remark";
+                    else $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=" . rawurlencode($path ?: '/') . "&host=$host{$psting}#$remark";
+                }elseif($netType == 'httpupgrade'){
+                    $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"") . "{$psting}#$remark";
                 }
                 elseif($netType == 'kcp')
                     $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&headerType=$kcpType&seed=$kcpSeed#$remark";
@@ -4098,7 +4215,11 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                 }
             }elseif($protocol == 'trojan'){                
                 $psting = '';
-                if($header_type == 'http') $psting .= "&path=/&host=$host";
+                if($header_type == 'http' && $netType != 'httpupgrade') $psting .= "&path=/&host=$host";
+                if($netType == 'httpupgrade'){
+                    $psting = "&path=" . rawurlencode($path ?: '/');
+                    if(!empty($host)) $psting .= "&host=$host";
+                }
                 if($netType == 'tcp' and $header_type == 'http') $psting .= '&headerType=http';
                 if(strlen($sni) > 1) $psting .= "&sni=$sni";
                 $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus{$psting}#$remark";
@@ -4120,7 +4241,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     "id"=> $uniqid,
                     "aid"=> 0,
                     "net"=> $netType,
-                    "type"=> ($header_type) ? $header_type : ($kcpType ? $kcpType : "none"),
+                    "type"=> ($netType == 'httpupgrade') ? "none" : (($header_type) ? $header_type : ($kcpType ? $kcpType : "none")),
                     "host"=> ($rahgozar == true && empty($host))?$server_ip:(is_null($host) ? '' : $host),
                     "path"=> ($rahgozar == true)?($path . ($customPath == true?"?ed=2048":"")) :((is_null($path) and $path != '') ? '/' : (is_null($path) ? '' : $path)),
                     "tls"=> $rahgozar == true?"tls":((is_null($tlsStatus)) ? 'none' : $tlsStatus)
@@ -4263,7 +4384,7 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
         }
         
         
-                $streamSettings = ($netType == 'tcp') ? $tcpSettings : $wsSettings;
+                $streamSettings = wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
 		if($netType == 'grpc'){
 		    $keyFileInfo = json_decode($tlsSettings,true);
 		    $certificateFile = "/root/cert.crt";
@@ -4378,7 +4499,7 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
                 }';
                 }
             }
-            $streamSettings = ($netType == 'tcp') ? $tcpSettings : $wsSettings;
+            $streamSettings = wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
         }
 
         $dataArr = array('up' => $row->up,'down' => $row->down,'total' => $row->total,'remark' => $remark,'enable' => 'true',
@@ -4621,7 +4742,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
         }
         
         
-                $streamSettings = ($netType == 'tcp') ? $tcpSettings : $wsSettings;
+                $streamSettings = wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
 		if($netType == 'grpc'){
 		    $keyFileInfo = json_decode($tlsSettings,true);
 		    $certificateFile = "/root/cert.crt";
@@ -4852,7 +4973,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                 }
                 }
             }
-            $streamSettings = ($netType == 'tcp') ? $tcpSettings : $wsSettings;
+            $streamSettings = wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
         }
 
 
@@ -5674,7 +5795,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
 
 
 
-        $streamSettings = ($netType == 'tcp') ? $tcpSettings : $wsSettings;
+        $streamSettings = wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
 		if($netType == 'grpc'){
 		    $keyFileInfo = json_decode($tlsSettings,true);
 		    $certificateFile = "/root/cert.crt";
@@ -6021,7 +6142,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
 		    }
 		}
 
-        $streamSettings = ($netType == 'tcp') ? $tcpSettings : $wsSettings;
+        $streamSettings = wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
 		if($netType == 'grpc' && $reality != "true"){
 		    $keyFileInfo = json_decode($tlsSettings,true);
 		    $certificateFile = "/root/cert.crt";

@@ -1173,6 +1173,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
     
     
     
@@ -1303,7 +1304,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         }
         else{
             $token = RandomString(30);
-            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
             $vray_link = json_encode($vraylink);
         }
@@ -1618,6 +1619,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
     
     $accountCount = $payInfo['agent_count']!=0?$payInfo['agent_count']:1;
     $eachPrice = $price / $accountCount;
@@ -1735,7 +1737,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $token = RandomString(30);
             $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
     
-            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink);
         }
         foreach($vraylink as $link){
@@ -3876,6 +3878,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
 
 
     if($acount == 0 and $inbound_id != 0){
@@ -3985,7 +3988,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $token = RandomString(30);
         $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
     
-        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link = json_encode($vraylink);
     }
     delMessage();
@@ -4288,6 +4291,10 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     $inbound_id = $file_detail['inbound_id'];
     $limitip = $file_detail['limitip'];
     $rahgozar = $file_detail['rahgozar'];
+    $customPath = $file_detail['custom_path'] ?? null;
+    $customPort = $file_detail['custom_port'] ?? null;
+    $customSni = $file_detail['custom_sni'] ?? null;
+    $customDomain = $file_detail['custom_domain'] ?? null;
 
     if($acount == 0 and $inbound_id != 0){
         alert($mainValues['out_of_connection_capacity']);
@@ -4393,7 +4400,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
         $token = RandomString(30);
         $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
     
-        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id);
+        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link= json_encode($vraylink);
     }
     define('IMAGE_WIDTH',540);
@@ -4538,6 +4545,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
     $price = $payInfo['price'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
     
     if($userInfo['wallet'] < $price){
         alert("موجودی حساب شما کم است");
@@ -4713,7 +4721,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             }
             else{
                 $token = RandomString(30);
-                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link= json_encode($vraylink);
                 $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
             }
@@ -5097,6 +5105,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
 
     
     if($payInfo['type'] == "RENEW_SCONFIG"){
@@ -5246,7 +5255,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 $token = RandomString(30);
                 $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
         
-                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link = json_encode($vraylink);
             }
             foreach($vraylink as $link){
@@ -6590,6 +6599,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
     
     $agentBought = false;
     if($match['buyType'] == "one" || $match['buyType'] == "much"){
@@ -6710,7 +6720,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     }else{
         $token = RandomString(30);
         $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
-        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link = json_encode($vraylink);
     }
     define('IMAGE_WIDTH',540);
@@ -7638,7 +7648,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         
         if($userInfo['step'] == "addNewPlan"){
             $sql = ("UPDATE `server_plans` SET `volume`=?,`step`=55 WHERE `active`=0");
-            $msg = "🔉 | لطفاً نوع شبکه این پلن را در انتخاب کنید  (ws | tcp | grpc) :";
+            $msg = "🔉 | لطفاً نوع شبکه این پلن را انتخاب کنید (ws | tcp | grpc | httpupgrade) :";
         }elseif($userInfo['step'] == "addNewRahgozarPlan" || $userInfo['step'] == "addNewMarzbanPlan"){
             $sql = ("UPDATE `server_plans` SET `volume`=?, `type`='ws', `step`=4 WHERE `active`=0");
             $msg = '🔻یه توضیح برای پلن مورد نظرت بنویس:';
@@ -7651,8 +7661,8 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         sendMessage($msg);
     }
     if($step==55 and $text!=$buttonValues['cancel']){
-        if($text != "tcp" && $text != "ws" && $text != "grpc"){
-            sendMessage("لطفاً فقط نوع (ws | tcp | grpc) را وارد کنید");
+        if($text != "tcp" && $text != "ws" && $text != "grpc" && $text != "httpupgrade"){
+            sendMessage("لطفاً فقط نوع (ws | tcp | grpc | httpupgrade) را وارد کنید");
             exit();
         }
         $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?,`step`=4 WHERE `active`=0");
@@ -8269,6 +8279,37 @@ if(preg_match('/^changeCustomSni(\d+)/',$userInfo['step'],$match) && ($from_id =
     sendMessage("ویرایش تنظیمات پلن", getPlanDetailsKeys($match[1]));
     setUser();
 }
+if(preg_match('/^changeCustomDomain(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("🌐 دامنه اختصاصی این پلن را وارد کنید.
+
+مثال:
+example.com
+cdn.example.com
+
+اگر چند دامنه داری هر کدام را در یک خط بفرست.
+برای برگشت به دامنه/آی‌پی کلی، /empty را بفرست.", $cancelKey);
+    setUser($data);
+}
+if(preg_match('/^changeCustomDomain(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $planId = intval($match[1]);
+    $normalizedDomain = wizwiz_normalizePlanDomainInput($text);
+    if($text == "/empty" || $normalizedDomain === ""){
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_domain`= NULL WHERE `id` = ?");
+        $stmt->bind_param("i", $planId);
+    }else{
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_domain`= ? WHERE `id` = ?");
+        $stmt->bind_param("si", $normalizedDomain, $planId);
+    }
+    $stmt->execute();
+    $stmt->close();
+
+    $updatedLinks = farid_refreshPlanOrderLinks($planId);
+    sendMessage($mainValues['saved_successfuly'] . "
+✅ لینک‌های ذخیره‌شده کاربران این پلن هم به‌روزرسانی شد: " . $updatedLinks, $removeKeyboard);
+    sendMessage("ویرایش تنظیمات پلن", getPlanDetailsKeys($planId));
+    setUser();
+}
 if(preg_match('/^changeCustomPath(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_path` = IF(`custom_path` = 1, 0, 1) WHERE `id` = ?");
     $stmt->bind_param("i", $match[1]);
@@ -8338,7 +8379,11 @@ if(preg_match('/changeNetworkType(\d+)_(\d+)/', $data, $match)){
     if($protocol == 'trojan') $netType = 'tcp';
 
     $update_response = editInbound($server_id, $uuid, $uuid, $protocol, $netType);
-    $vraylink = getConnectionLink($server_id, $uuid, $protocol, $remark, $port, $netType);
+    $order['protocol'] = $protocol;
+    $order['server_id'] = $server_id;
+    $order['uuid'] = $uuid;
+    $order['remark'] = $remark;
+    $vraylink = farid_generateUpdatedVrayLinks($order);
 
     $vray_link = json_encode($vraylink);
     $stmt = $connection->prepare("UPDATE `orders_list` SET `protocol`=?,`link`=? WHERE `id`=?");
@@ -8639,6 +8684,7 @@ if(preg_match('/changAccountConnectionLink(\d+)/', $data,$match)){
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
     
     
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -8679,7 +8725,7 @@ if(preg_match('/changAccountConnectionLink(\d+)/', $data,$match)){
             $update_response = renewClientUuid($server_id, $inboundId, $uuid);
         }
         $newUuid = $update_response->newUuid;
-        $vraylink = getConnectionLink($server_id, $newUuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni);
+        $vraylink = getConnectionLink($server_id, $newUuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $newToken = RandomString(30);
     }
 
@@ -8784,6 +8830,7 @@ if(preg_match('/changeAccProtocol(\d+)_(\d+)_(.*)/', $data,$match)){
     $customPath = $file_detail['custom_path'];
     $customPort = $file_detail['custom_port'];
     $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
     
     $response = getJson($server_id)->obj;
     foreach($response as $row){
@@ -8802,7 +8849,7 @@ if(preg_match('/changeAccProtocol(\d+)_(\d+)_(.*)/', $data,$match)){
     $uniqid = generateRandomString(42,$protocol); 
     $leftgb = round( ($total - $up - $down) / 1073741824, 2) . " GB"; 
     $update_response = editInbound($server_id, $uniqid, $uuid, $protocol, $netType, $security, $rahgozar);
-    $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, 0, $rahgozar, $customPath, $customPort, $customSni);
+    $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, 0, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
     
     $vray_link = json_encode($vraylink);
     $stmt = $connection->prepare("UPDATE `orders_list` SET `protocol`=?,`link`=?, `uuid` = ? WHERE `id`=?");
@@ -9386,6 +9433,10 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     $stmt->close();
     
     $flow = $file_detail['flow'] == "None"?"":$file_detail['flow'];
+    $customPath = $file_detail['custom_path'] ?? null;
+    $customPort = $file_detail['custom_port'] ?? null;
+    $customSni = $file_detail['custom_sni'] ?? null;
+    $customDomain = $file_detail['custom_domain'] ?? null;
 	
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
     $stmt->bind_param("i", $server_id);
@@ -9483,7 +9534,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
 				alert('🔻خطا در ساخت کانفیگ. لطفاً به مدیریت اطلاع بدید',true);
 				exit;
 			}
-			$vray_link = getConnectionLink($sid, $uniqid, $protocol, $newRemark, $port, $netType, $inbound_id);
+			$vray_link = getConnectionLink($sid, $uniqid, $protocol, $newRemark, $port, $netType, $inbound_id, null, $customPath, $customPort, $customSni, $customDomain);
 			deleteClient($server_id, $inbound_id, $uuid, 1);
         }
     }else{
@@ -9512,7 +9563,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
 
             }else{
                 $res = addUser($sid, $response['uniqid'], $response['protocol'], $response['port'], $response['expiryTime'], $newRemark, $response['volume'] / 1073741824, $response['netType'], $response['security']);
-                $vray_link = getConnectionLink($sid, $response['uniqid'], $response['protocol'], $newRemark, $response['port'], $response['netType'], $inbound_id);
+                $vray_link = getConnectionLink($sid, $response['uniqid'], $response['protocol'], $newRemark, $response['port'], $response['netType'], $inbound_id, null, $customPath, $customPort, $customSni, $customDomain);
             }
             deleteInbound($server_id, $uuid, 1);
         }
@@ -12406,6 +12457,32 @@ function farid_updateAndSendOneOrder($oid, $requestedBy = 0){
     return true;
 }
 
+function farid_refreshPlanOrderLinks($planId){
+    global $connection;
+    $planId = intval($planId);
+    if($planId <= 0) return 0;
+
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `fileid` = ?");
+    $stmt->bind_param("i", $planId);
+    $stmt->execute();
+    $orders = $stmt->get_result();
+    $stmt->close();
+
+    $updated = 0;
+    while($order = $orders->fetch_assoc()){
+        $links = farid_generateUpdatedVrayLinks($order);
+        if($links == null) continue;
+        $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
+        $oid = intval($order['id']);
+        $stmt = $connection->prepare("UPDATE `orders_list` SET `link` = ? WHERE `id` = ?");
+        $stmt->bind_param("si", $linkJson, $oid);
+        $stmt->execute();
+        $stmt->close();
+        $updated++;
+    }
+    return $updated;
+}
+
 function farid_generateUpdatedVrayLinks($order){
     global $connection, $botState;
 
@@ -12421,9 +12498,9 @@ function farid_generateUpdatedVrayLinks($order){
     $file_id = intval($order['fileid'] ?? 0);
 
     // مقادیر سفارشی پلن (در صورت وجود)
-    $customPath = null; $customPort = null; $customSni = null;
+    $customPath = null; $customPort = null; $customSni = null; $customDomain = null;
     if($file_id > 0){
-        $stmt = $connection->prepare("SELECT `custom_path`, `custom_port`, `custom_sni` FROM `server_plans` WHERE `id` = ? LIMIT 1");
+        $stmt = $connection->prepare("SELECT `custom_path`, `custom_port`, `custom_sni`, `custom_domain` FROM `server_plans` WHERE `id` = ? LIMIT 1");
         $stmt->bind_param("i", $file_id);
         $stmt->execute();
         $plan = $stmt->get_result()->fetch_assoc();
@@ -12433,6 +12510,7 @@ function farid_generateUpdatedVrayLinks($order){
             $customPath = $plan['custom_path'];
             $customPort = $plan['custom_port'];
             $customSni  = $plan['custom_sni'];
+            $customDomain = $plan['custom_domain'] ?? null;
         }
     }
 
@@ -12512,7 +12590,7 @@ function farid_generateUpdatedVrayLinks($order){
         updateConfig($server_id, $iId, $protocol, $netType, $security, $rahgozar);
     }
 
-    return getConnectionLink($server_id, $uuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni);
+    return getConnectionLink($server_id, $uuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
 }
 
 function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage = null){

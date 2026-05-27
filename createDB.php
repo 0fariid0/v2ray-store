@@ -209,6 +209,7 @@ $connection->query("CREATE TABLE `server_plans` (
   `custom_path` int(10) DEFAULT 1,
   `custom_port` int(255) NOT NULL DEFAULT 0,
   `custom_sni` varchar(500)  CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
+  `custom_domain` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci");
 
