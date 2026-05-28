@@ -28,9 +28,10 @@ $token = $_GET['token'];
         $stmt->bind_param("i", $file_id);
         $stmt->execute();
         $file_detail = $stmt->get_result()->fetch_assoc();
-        $customPath = $file_detail['custom_path'];
-        $customPort = $file_detail['custom_port'];
-        $customSni = $file_detail['custom_sni'];
+        $customPath = $file_detail['custom_path'] ?? null;
+        $customPort = $file_detail['custom_port'] ?? 0;
+        $customSni = $file_detail['custom_sni'] ?? null;
+        $customDomain = $file_detail['custom_domain'] ?? null;
 
 
         $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE id=?");
@@ -39,6 +40,23 @@ $token = $_GET['token'];
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         $serverType = $server_info['type'];
+
+        $panelSubLink = wizwiz_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
+        if($panelSubLink != '' && strpos($panelSubLink, 'settings/subLink.php') === false){
+            header('Location: ' . $panelSubLink, true, 302);
+            exit();
+        }
+        // For latest 3x-ui, if the bot-local subscription endpoint is used, serve the exact protocol links
+        // returned by the panel API instead of regenerating them locally.
+        if($serverType == 'sanaei_new' && function_exists('wizwiz_sanaeiNewSubLinksFromPanel')){
+            $realSubId = wizwiz_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
+            $panelApiLinks = wizwiz_sanaeiNewSubLinksFromPanel($server_id, $realSubId);
+            if(!empty($panelApiLinks)){
+                echo base64_encode(implode("
+", $panelApiLinks));
+                exit();
+            }
+        }
 
         $response = getJson($server_id)->obj;
         if($inbound_id == 0) {
@@ -105,7 +123,7 @@ $token = $_GET['token'];
         else $res = editClientRemark($server_id, $clientInbound, $uuid, $newRemark);
 
         if($res->success){
-            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $newRemark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni);
+            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $newRemark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $stmt = $connection->prepare("UPDATE `orders_list` SET `link` = ?, `remark` = ? WHERE `token` = ?");
             $newLink = json_encode($vraylink);
             $stmt->bind_param("sss", $newLink, $newRemark, $token);
