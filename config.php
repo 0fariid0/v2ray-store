@@ -52,6 +52,173 @@ function wizwiz_ensurePlanCustomDomainColumn(){
 }
 wizwiz_ensurePlanCustomDomainColumn();
 
+function wizwiz_ensureNewMemberLockColumns(){
+    global $connection;
+    $columns = [
+        'approval_status' => "ALTER TABLE `users` ADD `approval_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci NOT NULL DEFAULT 'approved' AFTER `spam_info`",
+        'approval_referrer' => "ALTER TABLE `users` ADD `approval_referrer` bigint(10) DEFAULT NULL AFTER `approval_status`",
+        'approval_request_date' => "ALTER TABLE `users` ADD `approval_request_date` int(255) NOT NULL DEFAULT 0 AFTER `approval_referrer`",
+    ];
+
+    foreach($columns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `users` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0){
+            @($connection->query($query));
+        }
+    }
+}
+wizwiz_ensureNewMemberLockColumns();
+
+function wizwiz_getUserByTelegramId($userId){
+    global $connection;
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
+    $stmt->bind_param("i", $userId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $user = $res->num_rows > 0 ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return $user;
+}
+
+function wizwiz_setUserApprovalStatus($userId, $status, $referrerId = null){
+    global $connection;
+    $time = time();
+    if($referrerId === null || $referrerId === ''){
+        $stmt = $connection->prepare("UPDATE `users` SET `approval_status` = ?, `approval_referrer` = NULL, `approval_request_date` = ?, `step` = 'none' WHERE `userid` = ?");
+        $stmt->bind_param("sii", $status, $time, $userId);
+    }else{
+        $stmt = $connection->prepare("UPDATE `users` SET `approval_status` = ?, `approval_referrer` = ?, `approval_request_date` = ?, `refered_by` = ?, `step` = 'newMemberApprovalWait' WHERE `userid` = ?");
+        $stmt->bind_param("siiii", $status, $referrerId, $time, $referrerId, $userId);
+    }
+    $stmt->execute();
+    $stmt->close();
+}
+
+function wizwiz_createPendingUserIfNeeded($userId, $firstName, $userName){
+    global $connection;
+    $existing = wizwiz_getUserByTelegramId($userId);
+    if($existing) return $existing;
+
+    $firstName = !empty($firstName) ? $firstName : ' ';
+    $userName = !empty($userName) ? $userName : ' ';
+    $time = time();
+    $status = 'pending';
+    $step = 'newMemberEnterReferrer';
+    $stmt = $connection->prepare("INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`, `step`, `approval_status`, `approval_request_date`) VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?)");
+    $stmt->bind_param("ississi", $userId, $firstName, $userName, $time, $step, $status, $time);
+    $stmt->execute();
+    $stmt->close();
+
+    return wizwiz_getUserByTelegramId($userId);
+}
+
+function wizwiz_isUserApprovedForLock($userInfo){
+    if(!$userInfo) return false;
+    return !isset($userInfo['approval_status']) || $userInfo['approval_status'] == 'approved';
+}
+
+function wizwiz_getAllAdminIds(){
+    global $connection, $admin;
+    $ids = [(int)$admin];
+    $res = $connection->query("SELECT `userid` FROM `users` WHERE `isAdmin` = 1");
+    if($res){
+        while($row = $res->fetch_assoc()){
+            $ids[] = (int)$row['userid'];
+        }
+    }
+    return array_values(array_unique(array_filter($ids)));
+}
+
+function wizwiz_sendNewMemberApprovalRequest($userId, $referrerId){
+    global $first_name, $username;
+    $refUser = wizwiz_getUserByTelegramId($referrerId);
+    $refName = $refUser ? $refUser['name'] : '-';
+    $uname = !empty($username) ? '@' . str_replace('@', '', $username) : 'ندارد';
+
+    $msg = "🔐 درخواست عضویت جدید\n\n" .
+           "👤 کاربر: <a href='tg://user?id=$userId'>" . htmlspecialchars($first_name) . "</a>\n" .
+           "🆔 آیدی عددی کاربر: <code>$userId</code>\n" .
+           "🔸 یوزرنیم: $uname\n\n" .
+           "👥 معرف: <a href='tg://user?id=$referrerId'>" . htmlspecialchars($refName) . "</a>\n" .
+           "🆔 آیدی عددی معرف: <code>$referrerId</code>\n\n" .
+           "برای فعال شدن دسترسی کاربر، یکی از گزینه‌های زیر را انتخاب کنید.";
+
+    $keys = json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'✅ تایید عضویت','callback_data'=>'approveNewMember' . $userId],
+            ['text'=>'❌ رد درخواست','callback_data'=>'rejectNewMember' . $userId]
+        ]
+    ]]);
+
+    foreach(wizwiz_getAllAdminIds() as $adminId){
+        sendMessage($msg, $keys, 'HTML', $adminId);
+    }
+}
+
+function wizwiz_referrerInstructionMessage($rejected = false){
+    $prefix = $rejected ? "❌ درخواست قبلی شما تایید نشد.\n\n" : "🔒 عضویت در ربات فعلاً نیاز به تایید ادمین دارد.\n\n";
+    return $prefix .
+        "برای ثبت درخواست، لطفاً <b>آیدی عددی معرف خودتان</b> را ارسال کنید.\n\n" .
+        "معرف شما می‌تواند آیدی عددی خودش را از داخل ربات، بخش <b>حساب من</b> / <b>اطلاعات حساب</b> بردارد و برای شما بفرستد.\n" .
+        "فقط عدد را ارسال کنید؛ مثال: <code>123456789</code>";
+}
+
+function wizwiz_handleNewMemberLock(){
+    global $connection, $from_id, $admin, $userInfo, $botState, $text, $data, $first_name, $username;
+
+    if(($botState['newMemberLockState'] ?? 'off') != 'on') return false;
+    if($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin']))) return false;
+
+    $userInfo = wizwiz_createPendingUserIfNeeded($from_id, $first_name, $username);
+    if(wizwiz_isUserApprovedForLock($userInfo)) return false;
+
+    $status = $userInfo['approval_status'] ?? 'pending';
+    $plainText = trim((string)$text);
+
+    $deepLinkReferrer = null;
+    if(preg_match('/^\/start\s+(\d+)$/', $plainText, $m)){
+        $deepLinkReferrer = (int)$m[1];
+    }
+
+    if($status == 'pending' && ($userInfo['step'] ?? '') == 'newMemberApprovalWait' && $deepLinkReferrer === null && !preg_match('/^\d+$/', $plainText)){
+        sendMessage("⏳ درخواست شما قبلاً برای ادمین ارسال شده است.\nبعد از تایید، پیام فعال شدن دسترسی برای شما ارسال می‌شود.", null, 'HTML');
+        exit();
+    }
+
+    if($status == 'rejected'){
+        wizwiz_setUserApprovalStatus($from_id, 'pending');
+        sendMessage(wizwiz_referrerInstructionMessage(true), null, 'HTML');
+        exit();
+    }
+
+    $referrerId = $deepLinkReferrer;
+    if($referrerId === null && preg_match('/^\d+$/', $plainText)){
+        $referrerId = (int)$plainText;
+    }
+
+    if($referrerId !== null){
+        if($referrerId == $from_id){
+            sendMessage("❌ نمی‌توانید آیدی عددی خودتان را به عنوان معرف وارد کنید.\nلطفاً آیدی عددی معرفتان را ارسال کنید.", null, 'HTML');
+            exit();
+        }
+
+        $refUser = wizwiz_getUserByTelegramId($referrerId);
+        if(!$refUser || !wizwiz_isUserApprovedForLock($refUser)){
+            sendMessage("❌ معرفی با این آیدی عددی پیدا نشد یا هنوز تایید نشده است.\nلطفاً آیدی عددی درست معرفتان را ارسال کنید.", null, 'HTML');
+            exit();
+        }
+
+        wizwiz_setUserApprovalStatus($from_id, 'pending', $referrerId);
+        wizwiz_sendNewMemberApprovalRequest($from_id, $referrerId);
+        sendMessage("✅ درخواست شما برای ادمین ارسال شد.\nبعد از تایید، دسترسی شما به ربات فعال می‌شود.", null, 'HTML');
+        exit();
+    }
+
+    setUser('newMemberEnterReferrer');
+    sendMessage(wizwiz_referrerInstructionMessage(false), null, 'HTML');
+    exit();
+}
+
 function wizwiz_extractHeaderPair($headerLine){
     $headerLine = trim((string)$headerLine);
     if($headerLine === '' || strpos($headerLine, ':') === false) return ['', ''];
@@ -81,7 +248,7 @@ function wizwiz_buildHttpupgradeStreamSettings($security, $tlsSettings, $xtlsTit
         'security' => $security,
     ];
 
-    if($security == 'xtls' && $serverType != 'sanaei' && $serverType != 'alireza'){
+    if($security == 'xtls' && $serverType != 'sanaei' && $serverType != 'sanaei_new' && $serverType != 'alireza'){
         $stream[$xtlsTitle] = json_decode($tlsSettings, true) ?: (object)[];
     }elseif($security != 'none'){
         $stream['tlsSettings'] = json_decode($tlsSettings, true) ?: (object)[];
@@ -95,6 +262,707 @@ function wizwiz_pickStreamSettings($netType, $tcpSettings, $wsSettings, $securit
     if($netType == 'tcp') return $tcpSettings;
     if($netType == 'httpupgrade') return wizwiz_buildHttpupgradeStreamSettings($security, $tlsSettings, $xtlsTitle, $request_header, $header_type, $serverType);
     return $wsSettings;
+}
+
+
+function wizwiz_normalizeSanaeiNewResponse($decoded, $serverType){
+    if($serverType !== 'sanaei_new' || !is_object($decoded) || !isset($decoded->obj)) return $decoded;
+    if(is_array($decoded->obj)){
+        foreach($decoded->obj as $row){
+            if(!is_object($row)) continue;
+            foreach(['settings','streamSettings','sniffing'] as $field){
+                if(isset($row->$field) && !is_string($row->$field)){
+                    $row->$field = json_encode($row->$field, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                }
+            }
+        }
+    }
+    return $decoded;
+}
+
+function wizwiz_sanaeiNewBaseUrlFromApiUrl($url){
+    $base = preg_replace('#/panel/api/.*$#', '', (string)$url);
+    return rtrim($base ?: $url, '/');
+}
+
+function wizwiz_sanaeiNewCsrfToken($curl, $baseUrl, $session){
+    $baseUrl = rtrim((string)$baseUrl, '/');
+    if($baseUrl === '') return '';
+
+    $csrfCurl = curl_init();
+    curl_setopt_array($csrfCurl, array(
+        CURLOPT_URL => $baseUrl . '/csrf-token',
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_ENCODING => '',
+        CURLOPT_MAXREDIRS => 5,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+        CURLOPT_CUSTOMREQUEST => 'GET',
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER => false,
+        CURLOPT_HTTPHEADER => array(
+            'User-Agent: Mozilla/5.0',
+            'Accept: application/json, text/plain, */*',
+            'X-Requested-With: XMLHttpRequest',
+            'Cookie: ' . $session
+        )
+    ));
+
+    $response = curl_exec($csrfCurl);
+    curl_close($csrfCurl);
+    $decoded = json_decode((string)$response, true);
+    if(is_array($decoded) && !empty($decoded['success']) && isset($decoded['obj'])) return (string)$decoded['obj'];
+    return '';
+}
+
+function wizwiz_sanaeiNewHeaders($curl, $url, $session, $json = true){
+    $headers = array(
+        'User-Agent: Mozilla/5.0',
+        'Accept: application/json, text/plain, */*',
+        'Accept-Language: en-US,en;q=0.5',
+        'Accept-Encoding: gzip, deflate',
+        'X-Requested-With: XMLHttpRequest',
+        'Cookie: ' . $session
+    );
+    if($json) $headers[] = 'Content-Type: application/json';
+
+    $csrf = wizwiz_sanaeiNewCsrfToken($curl, wizwiz_sanaeiNewBaseUrlFromApiUrl($url), $session);
+    if($csrf !== '') $headers[] = 'X-CSRF-Token: ' . $csrf;
+    return $headers;
+}
+
+function wizwiz_sanaeiNewDecodePayloadJsonFields($payload){
+    if(!is_array($payload)) return $payload;
+    foreach(array('settings','streamSettings','sniffing') as $field){
+        if(isset($payload[$field]) && is_string($payload[$field])){
+            $decoded = json_decode($payload[$field], true);
+            if(json_last_error() === JSON_ERROR_NONE) $payload[$field] = $decoded;
+        }
+    }
+    foreach(array('up','down','total','expiryTime','port') as $field){
+        if(isset($payload[$field]) && is_numeric($payload[$field])) $payload[$field] = (int)$payload[$field];
+    }
+    if(isset($payload['enable'])){
+        $payload['enable'] = ($payload['enable'] === true || $payload['enable'] === 1 || $payload['enable'] === '1' || $payload['enable'] === 'true');
+    }
+    return $payload;
+}
+
+function wizwiz_sanaeiNewJsonPost($curl, $url, $session, $payload = null){
+    $body = $payload === null ? '' : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    curl_setopt_array($curl, array(
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_ENCODING => '',
+        CURLOPT_MAXREDIRS => 10,
+        CURLOPT_CONNECTTIMEOUT => 15,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+        CURLOPT_POST => true,
+        CURLOPT_CUSTOMREQUEST => 'POST',
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER => false,
+        CURLOPT_HTTPHEADER => wizwiz_sanaeiNewHeaders($curl, $url, $session, true)
+    ));
+}
+
+
+function wizwiz_normalizePanelSettingsArray($settings){
+    if(is_string($settings)){
+        $decoded = json_decode($settings, true);
+        if(json_last_error() === JSON_ERROR_NONE) $settings = $decoded;
+    }
+    if(!is_array($settings)) return [];
+
+    // Some panels/forks return [{key/name, value}] instead of a plain object.
+    $isList = array_keys($settings) === range(0, count($settings) - 1);
+    if($isList){
+        $out = [];
+        foreach($settings as $row){
+            if(!is_array($row)) continue;
+            $key = $row['key'] ?? $row['name'] ?? $row['setting'] ?? null;
+            if($key === null || $key === '') continue;
+            $val = $row['value'] ?? $row['val'] ?? $row['data'] ?? null;
+            if(is_string($val)){
+                $trim = trim($val);
+                if(($trim !== '') && (($trim[0] === '{' && substr($trim, -1) === '}') || ($trim[0] === '[' && substr($trim, -1) === ']'))){
+                    $decodedVal = json_decode($trim, true);
+                    if(json_last_error() === JSON_ERROR_NONE) $val = $decodedVal;
+                }
+            }
+            $out[$key] = $val;
+        }
+        if(!empty($out)) return $out;
+    }
+    return $settings;
+}
+
+function wizwiz_sanaeiRequestJson($server_info, $endpoint, $method = 'GET', $payload = null){
+    [$curl, $session] = wizwiz_panelLoginSession($server_info);
+    if(!$curl || !$session){
+        if($curl) curl_close($curl);
+        return null;
+    }
+    $panel = rtrim($server_info['panel_url'] ?? '', '/');
+    $url = $panel . $endpoint;
+    $headers = array(
+        'User-Agent: Mozilla/5.0',
+        'Accept: application/json, text/plain, */*',
+        'X-Requested-With: XMLHttpRequest',
+        'Cookie: ' . $session,
+    );
+    $csrf = wizwiz_sanaeiNewCsrfToken(null, $panel, $session);
+    if($csrf !== '') $headers[] = 'X-CSRF-Token: ' . $csrf;
+    $method = strtoupper($method);
+    if($payload !== null) $headers[] = 'Content-Type: application/json';
+    curl_setopt_array($curl, array(
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_ENCODING => '',
+        CURLOPT_MAXREDIRS => 10,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 15,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER => false,
+        CURLOPT_HTTPHEADER => $headers,
+    ));
+    if($payload !== null) curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    elseif($method === 'POST') curl_setopt($curl, CURLOPT_POSTFIELDS, '');
+    $response = curl_exec($curl);
+    curl_close($curl);
+    $decoded = json_decode((string)$response, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+function wizwiz_sanaeiNewFindClientEmail($server_id, $uuid = '', $inbound_id = 0, $remark = ''){
+    $remark = trim((string)$remark);
+    $uuid = trim((string)$uuid);
+    if($remark !== '') return $remark;
+    if($uuid === '') return '';
+    $json = getJson($server_id);
+    if(!$json || empty($json->success) || !isset($json->obj) || !is_array($json->obj)) return '';
+    foreach($json->obj as $row){
+        if($inbound_id != 0 && intval($row->id ?? 0) != intval($inbound_id)) continue;
+        $settings = wizwiz_decodeMaybeJson($row->settings ?? '{}', true);
+        $clients = $settings['clients'] ?? [];
+        if(!is_array($clients)) continue;
+        foreach($clients as $client){
+            if(!is_array($client)) continue;
+            $cid = (string)($client['id'] ?? '');
+            $pwd = (string)($client['password'] ?? '');
+            if($cid === $uuid || $pwd === $uuid) return (string)($client['email'] ?? '');
+        }
+    }
+    return '';
+}
+
+function wizwiz_sanaeiNewClientLinksFromPanel($server_id, $email = '', $uuid = '', $inbound_id = 0){
+    global $connection;
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$server_info || ($server_info['type'] ?? '') !== 'sanaei_new') return [];
+    $email = wizwiz_sanaeiNewFindClientEmail($server_id, $uuid, $inbound_id, $email);
+    if($email === '') return [];
+    $decoded = wizwiz_sanaeiRequestJson($server_info, '/panel/api/clients/links/' . rawurlencode($email), 'GET');
+    if(!is_array($decoded) || empty($decoded['success'])) return [];
+    $obj = $decoded['obj'] ?? [];
+    if(is_string($obj)){
+        $tmp = json_decode($obj, true);
+        if(json_last_error() === JSON_ERROR_NONE) $obj = $tmp;
+    }
+    if(!is_array($obj)) return [];
+    $links = [];
+    foreach($obj as $link){
+        $link = trim((string)$link);
+        if(preg_match('#^(vmess|vless|trojan|ss|hysteria2?|hy2)://#i', $link)) $links[] = $link;
+    }
+    return array_values(array_unique($links));
+}
+
+function wizwiz_sanaeiNewSubLinksFromPanel($server_id, $subId){
+    global $connection;
+    $subId = trim((string)$subId);
+    if($subId === '') return [];
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$server_info || ($server_info['type'] ?? '') !== 'sanaei_new') return [];
+    $decoded = wizwiz_sanaeiRequestJson($server_info, '/panel/api/clients/subLinks/' . rawurlencode($subId), 'GET');
+    if(!is_array($decoded) || empty($decoded['success'])) return [];
+    $obj = $decoded['obj'] ?? [];
+    if(is_string($obj)){
+        $tmp = json_decode($obj, true);
+        if(json_last_error() === JSON_ERROR_NONE) $obj = $tmp;
+    }
+    if(!is_array($obj)) return [];
+    $links = [];
+    foreach($obj as $link){
+        $link = trim((string)$link);
+        if(preg_match('#^(vmess|vless|trojan|ss|hysteria2?|hy2)://#i', $link)) $links[] = $link;
+    }
+    return array_values(array_unique($links));
+}
+
+function wizwiz_isPanelSubscriptionServer($serverType){
+    return in_array($serverType, ['sanaei', 'sanaei_new'], true);
+}
+
+function wizwiz_decodeMaybeJson($value, $assoc = true){
+    if(is_array($value) || is_object($value)) return $value;
+    $decoded = json_decode((string)$value, $assoc);
+    if(json_last_error() === JSON_ERROR_NONE) return $decoded;
+    return $assoc ? [] : (object)[];
+}
+
+function wizwiz_arrayValue($arr, $key, $default = null){
+    if(is_array($arr) && array_key_exists($key, $arr)) return $arr[$key];
+    if(is_object($arr) && isset($arr->$key)) return $arr->$key;
+    return $default;
+}
+
+function wizwiz_extractSubIdFromSettings($settings, $uuid = null, $remark = null){
+    $settings = wizwiz_decodeMaybeJson($settings, true);
+    $clients = $settings['clients'] ?? [];
+    if(!is_array($clients)) return '';
+
+    $fallback = '';
+    foreach($clients as $client){
+        if(!is_array($client)) continue;
+        $subId = trim((string)($client['subId'] ?? ''));
+        if($subId === '') continue;
+        if($fallback === '') $fallback = $subId;
+
+        $cid = isset($client['id']) ? (string)$client['id'] : '';
+        $pwd = isset($client['password']) ? (string)$client['password'] : '';
+        $email = isset($client['email']) ? (string)$client['email'] : '';
+
+        if($uuid !== null && $uuid !== '' && ($cid === (string)$uuid || $pwd === (string)$uuid)) return $subId;
+        if($remark !== null && $remark !== '' && $email === (string)$remark) return $subId;
+    }
+    return count($clients) === 1 ? $fallback : '';
+}
+
+function wizwiz_findPanelSubId($server_id, $token = '', $uuid = '', $inbound_id = 0, $remark = ''){
+    global $connection;
+    $token = trim((string)$token);
+    $uuid = trim((string)$uuid);
+    $remark = trim((string)$remark);
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if($server_info && ($server_info['type'] ?? '') === 'sanaei_new' && $remark !== ''){
+        [$curl, $session] = wizwiz_panelLoginSession($server_info);
+        if($curl && $session){
+            curl_setopt_array($curl, array(
+                CURLOPT_URL => rtrim($server_info['panel_url'], '/') . '/panel/api/clients/get/' . rawurlencode($remark),
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_ENCODING => '',
+                CURLOPT_MAXREDIRS => 10,
+                CURLOPT_CONNECTTIMEOUT => 8,
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                CURLOPT_CUSTOMREQUEST => 'GET',
+                CURLOPT_SSL_VERIFYHOST => false,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_HEADER => false,
+                CURLOPT_HTTPHEADER => array(
+                    'User-Agent: Mozilla/5.0',
+                    'Accept: application/json, text/plain, */*',
+                    'X-Requested-With: XMLHttpRequest',
+                    'Cookie: ' . $session
+                )
+            ));
+            $clientResponse = curl_exec($curl);
+            curl_close($curl);
+            $clientDecoded = json_decode($clientResponse, true);
+            $clientObj = $clientDecoded['obj']['client'] ?? ($clientDecoded['obj'] ?? null);
+            if(is_array($clientObj) && !empty($clientObj['subId'])) return (string)$clientObj['subId'];
+        }
+    }
+
+    $json = getJson($server_id);
+    if(!$json || !isset($json->obj) || !is_array($json->obj)){
+        return ($token !== '' && !preg_match('/^[A-Za-z0-9]{30}$/', $token)) ? $token : '';
+    }
+
+    foreach($json->obj as $row){
+        if($inbound_id != 0 && intval($row->id ?? 0) != intval($inbound_id)) continue;
+        $settings = wizwiz_decodeMaybeJson($row->settings ?? '{}', true);
+        $clients = $settings['clients'] ?? [];
+        if(!is_array($clients)) continue;
+
+        foreach($clients as $client){
+            if(!is_array($client)) continue;
+            $subId = trim((string)($client['subId'] ?? ''));
+            if($subId === '') continue;
+
+            $cid = isset($client['id']) ? (string)$client['id'] : '';
+            $pwd = isset($client['password']) ? (string)$client['password'] : '';
+            $email = isset($client['email']) ? (string)$client['email'] : '';
+
+            if($token !== '' && $subId === $token) return $subId;
+            if($uuid !== '' && ($cid === $uuid || $pwd === $uuid)) return $subId;
+            if($remark !== '' && $email === $remark) return $subId;
+        }
+    }
+
+    // New 3x-ui subId is usually 16 lower/number characters. Old bot tokens are 30 chars.
+    if($token !== '' && !preg_match('/^[A-Za-z0-9]{30}$/', $token)) return $token;
+    return '';
+}
+
+function wizwiz_panelLoginHeaders($curl, $loginUrl){
+    $headers = array(
+        'Content-Type: application/x-www-form-urlencoded',
+        'Accept: application/json, text/plain, */*',
+        'X-Requested-With: XMLHttpRequest'
+    );
+
+    $baseUrl = preg_replace('#/login/?$#', '', (string)$loginUrl);
+    $baseUrl = rtrim($baseUrl, '/');
+    if($baseUrl === '') return $headers;
+
+    $csrfCurl = curl_init();
+    curl_setopt_array($csrfCurl, array(
+        CURLOPT_URL => $baseUrl . '/csrf-token',
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST => 'GET',
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 8,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER => true,
+        CURLOPT_HTTPHEADER => array(
+            'Accept: application/json, text/plain, */*',
+            'X-Requested-With: XMLHttpRequest'
+        )
+    ));
+
+    $response = curl_exec($csrfCurl);
+    if($response !== false){
+        $headerSize = curl_getinfo($csrfCurl, CURLINFO_HEADER_SIZE);
+        $header = substr($response, 0, $headerSize);
+        $body = substr($response, $headerSize);
+        if(preg_match_all('/^Set-Cookie:\s*([^;]*)/mi', $header, $matches) && !empty($matches[1])){
+            $headers[] = 'Cookie: ' . implode('; ', $matches[1]);
+        }
+        $decoded = json_decode((string)$body, true);
+        if(is_array($decoded) && !empty($decoded['success']) && isset($decoded['obj'])){
+            $headers[] = 'X-CSRF-Token: ' . (string)$decoded['obj'];
+        }
+    }
+    curl_close($csrfCurl);
+
+    return $headers;
+}
+
+function wizwiz_sanaeiCollectCookiesFromHeader($header){
+    $cookies = [];
+    if(preg_match_all('/^Set-Cookie:\s*([^;\r\n]*)/mi', (string)$header, $matches)){
+        foreach($matches[1] as $cookieLine){
+            $cookieLine = trim($cookieLine);
+            if($cookieLine !== '') $cookies[] = $cookieLine;
+        }
+    }
+    return implode('; ', array_unique($cookies));
+}
+
+function wizwiz_panelLoginSession($server_info){
+    $panel_url = rtrim($server_info['panel_url'], '/');
+    $loginUrl = $panel_url . '/login';
+    $username = (string)($server_info['username'] ?? '');
+    $password = (string)($server_info['password'] ?? '');
+
+    $formHeaders = wizwiz_panelLoginHeaders(null, $loginUrl);
+    $jsonHeaders = [];
+    foreach($formHeaders as $h){
+        if(stripos($h, 'Content-Type:') !== 0) $jsonHeaders[] = $h;
+    }
+    $jsonHeaders[] = 'Content-Type: application/json';
+
+    $attempts = [
+        ['body' => http_build_query(['username' => $username, 'password' => $password]), 'headers' => $formHeaders],
+        ['body' => json_encode(['username' => $username, 'password' => $password], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'headers' => $jsonHeaders],
+    ];
+
+    foreach($attempts as $attempt){
+        $curl = curl_init();
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => $loginUrl,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT => 12,
+            CURLOPT_POSTFIELDS => $attempt['body'],
+            CURLOPT_HTTPHEADER => $attempt['headers'],
+            CURLOPT_HEADER => true,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_SSL_VERIFYPEER => false,
+        ));
+        $response = curl_exec($curl);
+        if($response === false){
+            curl_close($curl);
+            continue;
+        }
+        $header_size = curl_getinfo($curl, CURLINFO_HEADER_SIZE);
+        $header = substr($response, 0, $header_size);
+        $body = substr($response, $header_size);
+        $session = wizwiz_sanaeiCollectCookiesFromHeader($header);
+        $loginResponse = json_decode((string)$body, true);
+        if($session && is_array($loginResponse) && !empty($loginResponse['success'])){
+            return [$curl, $session];
+        }
+        curl_close($curl);
+    }
+    return [null, null];
+}
+
+function wizwiz_arrayGetDeep($array, $keys){
+    if(!is_array($array)) return null;
+    foreach($keys as $key){
+        if(array_key_exists($key, $array)) return $array[$key];
+    }
+    foreach($array as $value){
+        if(is_array($value)){
+            $found = wizwiz_arrayGetDeep($value, $keys);
+            if($found !== null && $found !== '') return $found;
+        }
+    }
+    return null;
+}
+
+function wizwiz_panelUrlParts($server_info){
+    $panelUrl = trim((string)($server_info['panel_url'] ?? ''));
+    $parsed = @parse_url($panelUrl);
+    if(!is_array($parsed)) $parsed = [];
+    return [
+        'scheme' => !empty($parsed['scheme']) ? $parsed['scheme'] : 'http',
+        'host' => !empty($parsed['host']) ? $parsed['host'] : '',
+        'port' => isset($parsed['port']) ? intval($parsed['port']) : 0,
+        'path' => !empty($parsed['path']) ? $parsed['path'] : '',
+    ];
+}
+
+function wizwiz_normalizeSubPath($path, $default){
+    $path = trim((string)$path);
+    if($path === '') $path = $default;
+    if($path[0] !== '/') $path = '/' . $path;
+    if(substr($path, -1) !== '/') $path .= '/';
+    return $path;
+}
+
+function wizwiz_originWithPort($scheme, $host, $port = 0){
+    $scheme = $scheme ?: 'http';
+    $host = trim((string)$host);
+    if($host === '') return '';
+    $port = intval($port);
+    $portPart = '';
+    if($port > 0 && !(($scheme === 'http' && $port === 80) || ($scheme === 'https' && $port === 443))){
+        $portPart = ':' . $port;
+    }
+    return $scheme . '://' . $host . $portPart;
+}
+
+function wizwiz_normalizeDirectSubUri($server_info, $direct, $format = 'sub'){
+    $direct = trim((string)$direct);
+    if($direct === '') return '';
+    $parts = wizwiz_panelUrlParts($server_info);
+    $scheme = $parts['scheme'];
+    if(preg_match('#^https?://#i', $direct)){
+        return substr($direct, -1) === '/' ? $direct : $direct . '/';
+    }
+    if(strpos($direct, '//') === 0){
+        $direct = $scheme . ':' . $direct;
+        return substr($direct, -1) === '/' ? $direct : $direct . '/';
+    }
+    $path = wizwiz_normalizeSubPath($direct, ($format === 'json') ? '/json/' : '/sub/');
+    $origin = wizwiz_originWithPort($scheme, $parts['host'], $parts['port']);
+    return $origin !== '' ? $origin . $path : $path;
+}
+
+function wizwiz_buildPanelSubBaseFromSettings($server_info, $settings, $format = 'sub'){
+    $settings = is_array($settings) ? $settings : [];
+    $parts = wizwiz_panelUrlParts($server_info);
+    $scheme = $parts['scheme'];
+    $host = trim((string)wizwiz_arrayGetDeep($settings, ['subDomain','subHost','subscriptionDomain','subscriptionHost']));
+    if($host === '') $host = $parts['host'];
+
+    // مهم: اگر subPort وجود داشته باشد، باید از خودش استفاده شود و نباید subURI ساخته شده با آدرس پنل ادمین
+    // مثل http://domain:1030/wolf/sub/ را برگردانیم. ساب 3x-ui روی سرور جدا و معمولا بدون webBasePath پنل است.
+    $subPortRaw = wizwiz_arrayGetDeep($settings, ['subPort','sub_port','subscriptionPort','subscription_port','subListenPort']);
+    $subPort = is_numeric($subPortRaw) ? intval($subPortRaw) : 0;
+    if($subPort > 0 && $host !== ''){
+        if($format === 'json'){
+            $path = wizwiz_arrayGetDeep($settings, ['subJsonPath','subJsonURIPath','jsonPath','json_path','subscriptionJsonPath']);
+            $path = wizwiz_normalizeSubPath($path, '/json/');
+        }else{
+            $path = wizwiz_arrayGetDeep($settings, ['subPath','sub_path','subscriptionPath','subscription_path']);
+            $path = wizwiz_normalizeSubPath($path, '/sub/');
+        }
+        return wizwiz_originWithPort($scheme, $host, $subPort) . $path;
+    }
+
+    $directKey = ($format === 'json') ? 'subJsonURI' : 'subURI';
+    $direct = wizwiz_arrayGetDeep($settings, [$directKey]);
+    $normalizedDirect = wizwiz_normalizeDirectSubUri($server_info, $direct, $format);
+    if($normalizedDirect !== '') return $normalizedDirect;
+
+    $path = ($format === 'json') ? '/json/' : '/sub/';
+    $origin = wizwiz_originWithPort($scheme, $host, $parts['port']);
+    return $origin !== '' ? $origin . $path : rtrim((string)($server_info['panel_url'] ?? ''), '/') . $path;
+}
+
+function wizwiz_getPanelSettingResponse($server_info, $session, $endpoint){
+    $panel = rtrim($server_info['panel_url'] ?? '', '/');
+    if($panel === '') return null;
+
+    $headers = array(
+        'User-Agent: Mozilla/5.0',
+        'Accept: application/json, text/plain, */*',
+        'X-Requested-With: XMLHttpRequest',
+        'Cookie: ' . $session
+    );
+    if(function_exists('wizwiz_sanaeiNewCsrfToken')){
+        $csrf = wizwiz_sanaeiNewCsrfToken(null, $panel, $session);
+        if($csrf !== '') $headers[] = 'X-CSRF-Token: ' . $csrf;
+    }
+
+    foreach(['POST','GET'] as $method){
+        $curl = curl_init();
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => $panel . $endpoint,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_TIMEOUT => 10,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_HEADER => false,
+            CURLOPT_HTTPHEADER => $headers
+        ));
+        if($method === 'POST') curl_setopt($curl, CURLOPT_POSTFIELDS, '');
+        $response = curl_exec($curl);
+        curl_close($curl);
+        $decoded = json_decode((string)$response, true);
+        if(!is_array($decoded) || empty($decoded['success']) || !array_key_exists('obj', $decoded)) continue;
+        $obj = $decoded['obj'];
+        if(is_string($obj)){
+            $objDecoded = json_decode($obj, true);
+            if(json_last_error() === JSON_ERROR_NONE && is_array($objDecoded)) $obj = $objDecoded;
+        }
+        if(is_array($obj)) return wizwiz_normalizePanelSettingsArray($obj);
+    }
+    return null;
+}
+
+function wizwiz_getPanelSubscriptionUris($server_id){
+    global $connection;
+    static $cache = [];
+    if(isset($cache[$server_id])) return $cache[$server_id];
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $result = [
+        'subURI' => wizwiz_buildPanelSubBaseFromSettings($server_info ?: [], [], 'sub'),
+        'subJsonURI' => wizwiz_buildPanelSubBaseFromSettings($server_info ?: [], [], 'json'),
+        'subEnable' => true,
+    ];
+
+    if(!$server_info || !wizwiz_isPanelSubscriptionServer($server_info['type'] ?? '')){
+        $cache[$server_id] = $result;
+        return $result;
+    }
+
+    [$curl, $session] = wizwiz_panelLoginSession($server_info);
+    if($curl) curl_close($curl);
+    if(!$session){
+        $cache[$server_id] = $result;
+        return $result;
+    }
+
+    // The UI copy button uses computed subscription settings. In 2.6.x and current 3x-ui this is exposed by
+    // /panel/setting/defaultSettings; /panel/setting/all may contain raw webBasePath/webPort values and can recreate
+    // the wrong :panelPort/basePath/sub/ URL. Prefer defaultSettings, then fall back to all.
+    $settingsDefault = wizwiz_getPanelSettingResponse($server_info, $session, '/panel/setting/defaultSettings');
+    $settingsAll = wizwiz_getPanelSettingResponse($server_info, $session, '/panel/setting/all');
+
+    foreach([$settingsDefault, $settingsAll] as $settings){
+        if(!is_array($settings) || empty($settings)) continue;
+        $hasSubInfo = wizwiz_arrayGetDeep($settings, ['subURI','subJsonURI','subPort','sub_port','subscriptionPort','subscription_port','subPath','sub_path']) !== null;
+        if(!$hasSubInfo) continue;
+        $result['subURI'] = wizwiz_buildPanelSubBaseFromSettings($server_info, $settings, 'sub');
+        $result['subJsonURI'] = wizwiz_buildPanelSubBaseFromSettings($server_info, $settings, 'json');
+        if(array_key_exists('subEnable', $settings)) $result['subEnable'] = (bool)$settings['subEnable'];
+        break;
+    }
+
+    $cache[$server_id] = $result;
+    return $result;
+}
+
+function wizwiz_panelSubLinkBySubId($server_id, $subId, $format = 'sub'){
+    $subId = trim((string)$subId);
+    if($subId === '') return '';
+    $uris = wizwiz_getPanelSubscriptionUris($server_id);
+    $base = ($format === 'json') ? ($uris['subJsonURI'] ?? '') : ($uris['subURI'] ?? '');
+    if($base === '') return '';
+    return rtrim($base, '/') . '/' . rawurlencode($subId);
+}
+
+function wizwiz_makeCustomerSubLink($server_id, $token = '', $uuid = '', $inbound_id = 0, $remark = '', $format = 'sub'){
+    global $connection, $botUrl;
+
+    $stmt = $connection->prepare("SELECT `type`, `panel_url` FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$server_info) return '';
+
+    $serverType = $server_info['type'] ?? '';
+    if($serverType === 'marzban'){
+        $token = trim((string)$token);
+        if($token === '') return '';
+        return rtrim($server_info['panel_url'], '/') . '/sub/' . rawurlencode($token);
+    }
+
+    if(wizwiz_isPanelSubscriptionServer($serverType)){
+        $subId = wizwiz_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
+        return $subId !== '' ? wizwiz_panelSubLinkBySubId($server_id, $subId, $format) : '';
+    }
+
+    $token = trim((string)$token);
+    return $token !== '' ? $botUrl . 'settings/subLink.php?token=' . urlencode($token) : '';
 }
 
 function bot($method, $datas = []){
@@ -723,7 +1591,10 @@ function getServerConfigKeys($serverId,$offset = 0){
     $serverType = " ";
     switch ($serverConfig['type']){
         case "sanaei":
-            $serverType = "سنایی";
+            $serverType = "سنایی قدیمی";
+            break;
+        case "sanaei_new":
+            $serverType = "سنایی جدید";
             break;
         case "alireza":
             $serverType = "علیرضا";
@@ -785,7 +1656,7 @@ function getServerConfigKeys($serverId,$offset = 0){
             ['text'=>$security,'callback_data'=>"editsServersecurity$id"],
             ['text'=>"security",'callback_data'=>"wizwizch"],
             ],
-        (($serverConfig['type'] == "sanaei" || $serverConfig['type'] == "alireza")?
+        (($serverConfig['type'] == "sanaei" || $serverConfig['type'] == "sanaei_new" || $serverConfig['type'] == "alireza")?
         [
             ['text'=>$reality,'callback_data'=>"changeRealityState$id"],
             ['text'=>"reality",'callback_data'=>"wizwizch"],
@@ -839,7 +1710,10 @@ function getServerListKeys($offset = 0){
             $serverType = " ";
             switch ($serverTypeInfo['type']){
                 case "sanaei":
-                    $serverType = "سنایی";
+                    $serverType = "سنایی قدیمی";
+                    break;
+                case "sanaei_new":
+                    $serverType = "سنایی جدید";
                     break;
                 case "alireza":
                     $serverType = "علیرضا";
@@ -1036,6 +1910,7 @@ function getBotSettingKeys(){
     $testAccount = $botState['testAccount']=="on"?$buttonValues['on']:$buttonValues['off'];
     $agency = $botState['agencyState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $agencyPlanDiscount = $botState['agencyPlanDiscount']=="on"?$buttonValues['plan_discount']:$buttonValues['server_discount'];
+    $newMemberLock = ($botState['newMemberLockState'] ?? 'off')=="on"?$buttonValues['on']:$buttonValues['off'];
     $qrConfig = $botState['qrConfigState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $qrSub = $botState['qrSubState']=="on"?$buttonValues['on']:$buttonValues['off'];
     
@@ -1080,6 +1955,10 @@ function getBotSettingKeys(){
             ['text'=> $agencyPlanDiscount,'callback_data'=>"changeBotagencyPlanDiscount"],
             ['text'=>"نوع تخفیف نمایندگی",'callback_data'=>"wizwizch"]
             ],
+        [
+            ['text'=>$newMemberLock,'callback_data'=>"changeBotnewMemberLockState"],
+            ['text'=>"قفل اعضای جدید",'callback_data'=>"wizwizch"]
+        ],
         [
             ['text'=>$individualExistence,'callback_data'=>"changeBotindividualExistence"],
             ['text'=>"موجودی اختصاصی",'callback_data'=>"wizwizch"]
@@ -1495,7 +2374,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $agentBought = $order['agent_bought'];
         $isAgentBought = $agentBought == true?"بله":"نخیر";
 
-    	if($respd){
+    	if($respd && $respd->num_rows > 0){
     	    $respd = $respd->fetch_assoc(); 
     	    
     	    $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `id`=?");
@@ -1744,8 +2623,8 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        if($serverType == "marzban") $subLink = $botState['subLinkState'] == "on"?"<code>" . $panelUrl . "/sub/" . $token . "</code>":"";
-        else $subLink = $botState['subLinkState']=="on"?"<code>" . $botUrl . "settings/subLink.php?token=" . $token . "</code>":"";
+        $customerSubLink = wizwiz_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
+        $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         
         $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
@@ -1779,7 +2658,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
 	    $rahgozar = $order['rahgozar'];
         $agentBought = $order['agent_bought'];
 
-    	if($respd){
+    	if($respd && $respd->num_rows > 0){
     	    $respd = $respd->fetch_assoc(); 
     	    
     	    $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `id`=?");
@@ -2067,8 +2946,8 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        if($serverType == "marzban") $subLink = $botState['subLinkState'] == "on"?"<code>" . $panel_url . "/sub/" . $token . "</code>":"";
-        else $subLink = $botState['subLinkState']=="on"?"<code>" . $botUrl . "settings/subLink.php?token=" . $token . "</code>":"";
+        $customerSubLink = wizwiz_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
+        $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
         
@@ -2143,7 +3022,7 @@ function checkStep($table){
     return $res['step']; 
 }
 function setUser($value = 'none', $field = 'step'){
-    global $connection, $from_id, $username, $first_name;
+    global $connection, $from_id, $username, $first_name, $admin, $botState;
 
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=?");
     $stmt->bind_param("i", $from_id);
@@ -2153,10 +3032,11 @@ function setUser($value = 'none', $field = 'step'){
 
     
     if($uinfo->num_rows == 0){
-        $stmt = $connection->prepare("INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`)
-                            VALUES (?,?,?, 0,0,?)");
         $time = time();
-        $stmt->bind_param("issi", $from_id, $first_name, $username, $time);
+        $approvalStatus = (($botState['newMemberLockState'] ?? 'off') == 'on' && $from_id != $admin) ? 'pending' : 'approved';
+        $stmt = $connection->prepare("INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`, `approval_status`, `approval_request_date`)
+                            VALUES (?,?,?, 0,0,?,?,?)");
+        $stmt->bind_param("issisi", $from_id, $first_name, $username, $time, $approvalStatus, $time);
         $stmt->execute();
         $stmt->close();
     }
@@ -2273,6 +3153,7 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
         curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
         curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
         curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
         curl_setopt($curl, CURLOPT_HEADER, 1);
         $response = curl_exec($curl);
         
@@ -2289,8 +3170,16 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
             return $loginResponse;
         }
         
-        if($serverType == "sanaei" || $serverType == "alireza"){
-            if($serverType == "sanaei") $url = "$panel_url/panel/inbound/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
+        if($serverType == "sanaei_new"){
+            $url = "$panel_url/panel/api/clients/del/" . rawurlencode($email);
+            wizwiz_sanaeiNewJsonPost($curl, $url, $session, null);
+            $response = curl_exec($curl);
+            curl_close($curl);
+            return json_decode($response);
+        }
+        if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
+            if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
+            elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
             elseif($serverType == "alireza") $url = "$panel_url/xui/inbound/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
 
             curl_setopt_array($curl, array(
@@ -2316,6 +3205,9 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
                     'Cookie: ' . $session
                 )
             ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
         }else{
             curl_setopt_array($curl, array(
                 CURLOPT_URL => "$panel_url/xui/inbound/update/$inbound_id",
@@ -2338,6 +3230,9 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
                     'Cookie: ' . $session
                 )
             ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
         }
         
         $response = curl_exec($curl);
@@ -2383,6 +3278,7 @@ function editInboundRemark($server_id, $uuid, $newRemark){
 
     $serverName = $server_info['username'];
     $serverPass = $server_info['password'];
+    $serverType = $server_info['type'];
     
     $loginUrl = $panel_url . '/login';
     
@@ -2399,6 +3295,7 @@ function editInboundRemark($server_id, $uuid, $newRemark){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -2414,7 +3311,8 @@ function editInboundRemark($server_id, $uuid, $newRemark){
         return $loginResponse;
     }
 
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$inbound_id";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
     else $url = "$panel_url/xui/inbound/update/$inbound_id";
 
     curl_setopt_array($curl, array(
@@ -2438,6 +3336,9 @@ function editInboundRemark($server_id, $uuid, $newRemark){
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -2489,7 +3390,7 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
             $up = 0;
             $down = 0;
             $volume = $extend_volume;
-            if($serverType == "sanaei" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
+            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
             else resetClientTraffic($server_id, $email);
         }
         else $total = ($leftGB > 0) ? $total + $extend_volume : $extend_volume;
@@ -2518,6 +3419,7 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
     
@@ -2533,7 +3435,8 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
         return $loginResponse;
     }
 
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$inbound_id";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
     else $url = "$panel_url/xui/inbound/update/$inbound_id";
 
     $phost = str_ireplace('https://','',str_ireplace('http://','',$panel_url));
@@ -2558,6 +3461,9 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -2589,8 +3495,8 @@ function changeInboundState($server_id, $uuid){
         }
     }
     
-    if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
-    if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
+    if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
+    if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
 
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -2621,6 +3527,7 @@ function changeInboundState($server_id, $uuid){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
     
@@ -2637,7 +3544,8 @@ function changeInboundState($server_id, $uuid){
         return $loginResponse;
     }
 
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$inbound_id";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
     else $url = "$panel_url/xui/inbound/update/$inbound_id";
 
     $phost = str_ireplace('https://','',str_ireplace('http://','',$panel_url));
@@ -2662,6 +3570,9 @@ function changeInboundState($server_id, $uuid){
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -2704,8 +3615,8 @@ function renewInboundUuid($server_id, $uuid){
     $newUuid = generateRandomString(42,$protocol); 
     if($protocol == "trojan") $settings['clients'][0]['password'] = $newUuid;
     else $settings['clients'][0]['id'] = $newUuid;
-    if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
-    if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
+    if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
+    if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
 
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -2735,6 +3646,7 @@ function renewInboundUuid($server_id, $uuid){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -2750,7 +3662,8 @@ function renewInboundUuid($server_id, $uuid){
         return $loginResponse;
     }
 
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$inbound_id";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$inbound_id";
     else $url = "$panel_url/xui/inbound/update/$inbound_id";
 
     $phost = str_ireplace('https://','',str_ireplace('http://','',$panel_url));
@@ -2775,6 +3688,9 @@ function renewInboundUuid($server_id, $uuid){
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -2806,6 +3722,7 @@ function changeClientState($server_id, $inbound_id, $uuid){
             foreach($clients as $key => $client){
                 if($client['id'] == $uuid || $client['password'] == $uuid){
                     $client_key = $key;
+                    $email = $client['email'];
                     $enable = $client['enable'];
                     break;
                 }
@@ -2814,7 +3731,7 @@ function changeClientState($server_id, $inbound_id, $uuid){
     }
     if($client_key == -1) return null;
     
-    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
+    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     $settings['clients'][$client_key]['enable'] = $enable == true?false:true;
 
     $editedClient = $settings['clients'][$client_key];
@@ -2842,6 +3759,7 @@ function changeClientState($server_id, $inbound_id, $uuid){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -2857,7 +3775,14 @@ function changeClientState($server_id, $inbound_id, $uuid){
         return $loginResponse;
     }
 
-    if($serverType == "sanaei" || $serverType == "alireza"){
+    if($serverType == "sanaei_new"){
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
+        curl_close($curl);
+        return json_decode($response);
+    }
+    if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
         $newSetting = array();
         $newSetting['clients'][] = $editedClient;
@@ -2894,6 +3819,9 @@ function changeClientState($server_id, $inbound_id, $uuid){
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }else{
         curl_setopt_array($curl, array(
             CURLOPT_URL => "$panel_url/xui/inbound/update/$inbound_id",
@@ -2916,6 +3844,9 @@ function changeClientState($server_id, $inbound_id, $uuid){
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }
 
     $response = curl_exec($curl);
@@ -2948,6 +3879,7 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
                 if($client['id'] == $uuid || $client['password'] == $uuid){
                     $protocol = $row->protocol;
                     $client_key = $key;
+                    $email = $client['email'];
                     break;
                 }
             }
@@ -2958,8 +3890,8 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     $newUuid = generateRandomString(42,$protocol); 
     if($protocol == "trojan") $settings['clients'][$client_key]['password'] = $newUuid;
     else $settings['clients'][$client_key]['id'] = $newUuid;
-    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
-    if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
+    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
+    if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -2986,6 +3918,7 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -3001,7 +3934,14 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
         return $loginResponse;
     }
 
-    if($serverType == "sanaei" || $serverType == "alireza"){
+    if($serverType == "sanaei_new"){
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
+        curl_close($curl);
+        return json_decode($response);
+    }
+    if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
         $newSetting = array();
         $newSetting['clients'][] = $editedClient;
@@ -3038,6 +3978,9 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }else{
         curl_setopt_array($curl, array(
             CURLOPT_URL => "$panel_url/xui/inbound/update/$inbound_id",
@@ -3060,6 +4003,9 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }
 
     $response = curl_exec($curl);
@@ -3108,8 +4054,8 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
         }
     }
     $settings['clients'][$client_key]['email'] = $newRemark;
-    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
-    if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
+    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
+    if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -3136,6 +4082,7 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -3151,7 +4098,14 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
         return $loginResponse; 
     } 
 
-    if($serverType == "sanaei" || $serverType == "alireza"){
+    if($serverType == "sanaei_new"){
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
+        curl_close($curl);
+        return json_decode($response);
+    }
+    if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
         $newSetting = array();
         $newSetting['clients'][] = $editedClient;
@@ -3188,6 +4142,9 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }else{
         curl_setopt_array($curl, array(
             CURLOPT_URL => "$panel_url/xui/inbound/update/$inbound_id",
@@ -3210,6 +4167,9 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }
 
     $response = curl_exec($curl);
@@ -3260,12 +4220,12 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         $volume = ($client_total > 0) ? $client_total + $extend_volume : $extend_volume;
         if($editType == "renew"){
             $volume = $extend_volume;
-            if($serverType == "sanaei" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
+            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
             else resetClientTraffic($server_id, $email);
         }
         $settings['clients'][$client_key]['totalGB'] = $volume;
-        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
-        if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
+        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
+        if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
     }
     
     if($days != 0){
@@ -3275,8 +4235,8 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         if($editType == "renew") $expire_microdate = $now_microdate + $extend_date;
         else $expire_microdate = ($now_microdate > $expiryTime) ? $now_microdate + $extend_date : $expiryTime + $extend_date;
         $settings['clients'][$client_key]['expiryTime'] = $expire_microdate;
-        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
-        if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
+        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
+        if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
     }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -3303,6 +4263,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
     
@@ -3318,7 +4279,14 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         return $loginResponse; 
     } 
 
-    if($serverType == "sanaei" || $serverType == "alireza"){
+    if($serverType == "sanaei_new"){
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
+        curl_close($curl);
+        return json_decode($response);
+    }
+    if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
         $newSetting = array();
         $newSetting['clients'][] = $editedClient;
@@ -3355,6 +4323,9 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }else{
         curl_setopt_array($curl, array(
             CURLOPT_URL => "$panel_url/xui/inbound/update/$inbound_id",
@@ -3377,6 +4348,9 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }
 
     $response = curl_exec($curl);
@@ -3440,6 +4414,7 @@ function deleteInbound($server_id, $uuid, $delete = 0){
         curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
         curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
         curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
         curl_setopt($curl, CURLOPT_HEADER, 1);
         $response = curl_exec($curl);
 
@@ -3455,7 +4430,8 @@ function deleteInbound($server_id, $uuid, $delete = 0){
             return $loginResponse;
         }
         
-        if($serverType == "sanaei") $url = "$panel_url/panel/inbound/del/$inbound_id";
+        if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/del/$inbound_id";
+        elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/del/$inbound_id";
         else $url = "$panel_url/xui/inbound/del/$inbound_id";
        
         curl_setopt_array($curl, array(
@@ -3478,6 +4454,9 @@ function deleteInbound($server_id, $uuid, $delete = 0){
                 'Cookie: ' . $session
             )
         ));
+        if($serverType == "sanaei_new"){
+            wizwiz_sanaeiNewJsonPost($curl, $url, $session, null);
+        }
         $response = curl_exec($curl);
         curl_close($curl);
     }
@@ -3513,6 +4492,7 @@ function resetIpLog($server_id, $remark){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -3528,7 +4508,8 @@ function resetIpLog($server_id, $remark){
         return $loginResponse;
     }
     
-    if($serverType == "sanaei") $url = $panel_url. "/panel/inbound/clearClientIps/" . urlencode($remark);
+    if($serverType == "sanaei_new") $url = $panel_url. "/panel/api/clients/clearIps/" . rawurlencode($remark);
+    elseif($serverType == "sanaei") $url = $panel_url. "/panel/inbound/clearClientIps/" . urlencode($remark);
     else $url = $panel_url. "/xui/inbound/clearClientIps/" . urlencode($remark);
 
     curl_setopt_array($curl, array(
@@ -3552,6 +4533,9 @@ function resetIpLog($server_id, $remark){
         )
     ));
 
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, null);
+    }
     $response = curl_exec($curl);
     curl_close($curl);
     return $response = json_decode($response);
@@ -3586,6 +4570,7 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -3600,7 +4585,8 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
         curl_close($curl);
         return $loginResponse;
     }
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark);
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/clients/resetTraffic/" . rawurlencode($remark);
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark);
     elseif($inboundId == null) $url = "$panel_url/xui/inbound/resetClientTraffic/" . rawurlencode($remark);
     else $url = "$panel_url/xui/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark);
     curl_setopt_array($curl, array(
@@ -3623,6 +4609,9 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, null);
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -3657,7 +4646,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     $settings = json_decode($row->settings, true);
     $id_label = $protocol == 'trojan' ? 'password' : 'id';
     if($newarr == ''){
-		if($serverType == "sanaei" || $serverType == "alireza"){
+		if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
 		    if($reality == "true"){
                 $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
                 $stmt->bind_param("i", $planId);
@@ -3726,6 +4715,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -3741,7 +4731,15 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
         return $loginResponse;
     }
     
-    if($serverType == "sanaei" || $serverType == "alireza"){
+    if($serverType == "sanaei_new"){
+        $clientToAdd = ($newarr == '') ? $newClient : $newarr;
+        $url = "$panel_url/panel/api/clients/add";
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, array("client" => $clientToAdd, "inboundIds" => array((int)$inbound_id)));
+        $response = curl_exec($curl);
+        curl_close($curl);
+        return json_decode($response);
+    }
+    if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         $newSetting = array();
         if($newarr == '')$newSetting['clients'][] = $newClient;
         elseif(is_array($newarr)) $newSetting['clients'][] = $newarr;
@@ -3752,7 +4750,8 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
             "settings" => $newSetting
             );
             
-        if($serverType == "sanaei") $url = "$panel_url/panel/inbound/addClient/";
+        if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/addClient";
+        elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/addClient/";
         else $url = "$panel_url/xui/inbound/addClient/";
 
         curl_setopt_array($curl, array(
@@ -3778,6 +4777,9 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }else{
         curl_setopt_array($curl, array(
             CURLOPT_URL => "$panel_url/xui/inbound/update/$iid",
@@ -3802,6 +4804,9 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                 'Cookie: ' . $session
             )
         ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     }
 
     $response = curl_exec($curl);
@@ -3880,6 +4885,10 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
     $response_header = $server_info['response_header'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
+    if($serverType == 'sanaei_new' && $rahgozar == false && $customPath == false && intval($customPort) == 0 && $customSni === null && wizwiz_normalizePlanDomainInput($customDomain) === ''){
+        $panelLinks = wizwiz_sanaeiNewClientLinksFromPanel($server_id, $remark, $uniqid, $inbound_id);
+        if(!empty($panelLinks)) return $panelLinks;
+    }
     preg_match("/^Host:(.*)/i",$request_header,$hostMatch);
 
     $panel_url = str_ireplace('http://','',$panel_url);
@@ -3894,7 +4903,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
         if($inbound_id == 0){
             $clients = json_decode($row->settings)->clients;
             if($clients[0]->id == $uniqid || $clients[0]->password == $uniqid) {
-                if($serverType == "sanaei" || $serverType == "alireza"){
+                if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = json_decode($row->settings,true);
                     $email = $settings['clients'][0]['email'];
                     // $remark = (!empty($row->remark)?($row->remark . "-"):"") . $email;
@@ -3974,7 +4983,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
             }
         }else{
             if($row->id == $inbound_id) {
-                if($serverType == "sanaei" || $serverType == "alireza"){
+                if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = json_decode($row->settings);
                     $clients = $settings->clients;
                     foreach($clients as $key => $client){
@@ -4299,9 +5308,9 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
     $response_header = $server_info['response_header'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
-    $xtlsTitle = ($serverType == "sanaei" || $serverType == "alireza")?"XTLSSettings":"xtlsSettings";
+    $xtlsTitle = ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")?"XTLSSettings":"xtlsSettings";
     $sni = $server_info['sni'];
-    if(!empty($sni) && ($serverType == "sanaei" || $serverType == "alireza")){
+    if(!empty($sni) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
         $tlsSettings = json_decode($tlsSettings,true);
         $tlsSettings['serverName'] = $sni;
         $tlsSettings = json_encode($tlsSettings,488|JSON_UNESCAPED_UNICODE);
@@ -4343,7 +5352,7 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
               }
             }';
 
-        }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "alireza") {
+        }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "sanaei_new" && $serverType != "alireza") {
             
             $tcpSettings = '{
         	  "network": "tcp",
@@ -4400,7 +5409,7 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
   "security": "tls",
   "tlsSettings": {
     "serverName": "' .
-    (!empty($sni) && ($serverType == "sanaei" || $serverType == "alireza") ?  $sni: parse_url($panel_url, PHP_URL_HOST))
+    (!empty($sni) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") ?  $sni: parse_url($panel_url, PHP_URL_HOST))
      . '",
     "certificates": [
       {
@@ -4462,7 +5471,7 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
                   }
                 }';
                 }
-                elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "alireza") {
+                elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "sanaei_new" && $serverType != "alireza") {
                     $tcpSettings = '{
             	  "network": "tcp",
             	  "security": "'.$security.'",
@@ -4526,6 +5535,7 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -4541,7 +5551,8 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
         return $loginResponse;
     }
     
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$iid";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$iid";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$iid";
     else $url = "$panel_url/xui/inbound/update/$iid";
     curl_setopt_array($curl, array(
         CURLOPT_URL => $url,
@@ -4566,6 +5577,9 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -4587,9 +5601,9 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
     $response_header = $server_info['response_header'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
-    $xtlsTitle = ($serverType == "sanaei" || $serverType == "alireza")?"XTLSSettings":"xtlsSettings";
+    $xtlsTitle = ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")?"XTLSSettings":"xtlsSettings";
     $sni = $server_info['sni'];
-    if(!empty($sni) && ($serverType == "sanaei" || $serverType == "alireza")){
+    if(!empty($sni) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
         $tlsSettings = json_decode($tlsSettings,true);
         $tlsSettings['serverName'] = $sni;
         $tlsSettings = json_encode($tlsSettings);
@@ -4633,7 +5647,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
               }
             }';
 
-    	if($serverType == "sanaei" || $serverType == "alireza"){
+    	if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
             $settings = '{
         	  "clients": [
         		{
@@ -4662,7 +5676,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
         	  "fallbacks": []
         	}';
     	}
-        }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "alireza") {
+        }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "sanaei_new" && $serverType != "alireza") {
             
             $tcpSettings = '{
         	  "network": "tcp",
@@ -4712,7 +5726,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                 "headers": '.$headers.'
               }
             }';
-		if($serverType == "sanaei" || $serverType == "alireza"){
+		if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
             $settings = '{
 		  "clients": [
 			{
@@ -4759,7 +5773,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
   "security": "tls",
   "tlsSettings": {
     "serverName": "' .
-    (!empty($sni) && ($serverType == "sanaei" || $serverType == "alireza") ?  $sni: parse_url($panel_url, PHP_URL_HOST))
+    (!empty($sni) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") ?  $sni: parse_url($panel_url, PHP_URL_HOST))
      . '",
     "certificates": [
       {
@@ -4800,7 +5814,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                         "headers": {}
                       }
                     }';
-                if($serverType == "sanaei" || $serverType == "alireza"){
+                if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = '{
             	  "clients": [
             		{
@@ -4849,7 +5863,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                     "headers": '.$headers.'
                   }
                 }';
-                if($serverType == "sanaei" || $serverType == "alireza"){
+                if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = '{
                   "clients": [
                     {
@@ -4878,7 +5892,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                 }';
                 }
                 }
-                elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "alireza") {
+                elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "sanaei_new" && $serverType != "alireza") {
                     $tcpSettings = '{
             	  "network": "tcp",
             	  "security": "'.$security.'",
@@ -4896,7 +5910,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                     "headers": '.$headers.'
                   }
                 }';
-                if($serverType == "sanaei" || $serverType == "alireza"){
+                if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = '{
                   "clients": [
                     {
@@ -4942,7 +5956,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
                     "headers": {}
                   }
                 }';
-                if($serverType == "sanaei" || $serverType == "alireza"){
+                if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = '{
             	  "clients": [
             		{
@@ -5003,6 +6017,7 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -5018,7 +6033,8 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
         return $loginResponse;
     }
     
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$iid";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$iid";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/update/$iid";
     else $url = "$panel_url/xui/inbound/update/$iid";
     
     curl_setopt_array($curl, array(
@@ -5044,6 +6060,9 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
 
     $response = curl_exec($curl);
     curl_close($curl);
@@ -5520,6 +6539,7 @@ function getJson($server_id){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
     
@@ -5535,7 +6555,8 @@ function getJson($server_id){
         curl_close($curl);
         return $loginResponse;
     }
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/list";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/list";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/list";
     else $url = "$panel_url/xui/inbound/list";
     curl_setopt_array($curl, array(
         CURLOPT_URL => $url,
@@ -5546,7 +6567,7 @@ function getJson($server_id){
         CURLOPT_TIMEOUT => 15,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_CUSTOMREQUEST => 'POST',
+        CURLOPT_CUSTOMREQUEST => ($serverType == "sanaei_new" ? 'GET' : 'POST'),
         CURLOPT_HEADER => false,
         CURLOPT_HTTPHEADER => array(
             'User-Agent:  Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0',
@@ -5562,7 +6583,8 @@ function getJson($server_id){
     
     $response = curl_exec($curl);
     curl_close($curl);
-    return json_decode($response);
+    $decoded = json_decode($response);
+    return wizwiz_normalizeSanaeiNewResponse($decoded, $serverType);
 }
 function getNewCert($server_id){
     global $connection;
@@ -5577,6 +6599,7 @@ function getNewCert($server_id){
 
     $serverName = $server_info['username'];
     $serverPass = $server_info['password'];
+    $serverType = $server_info['type'];
     
     $loginUrl = $panel_url . '/login';
     
@@ -5593,6 +6616,7 @@ function getNewCert($server_id){
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -5609,7 +6633,7 @@ function getNewCert($server_id){
     }
     
     curl_setopt_array($curl, array(
-        CURLOPT_URL => "$panel_url/server/getNewX25519Cert",
+        CURLOPT_URL => ($serverType == "sanaei_new" ? "$panel_url/panel/api/server/getNewX25519Cert" : "$panel_url/server/getNewX25519Cert"),
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
@@ -5617,7 +6641,7 @@ function getNewCert($server_id){
         CURLOPT_TIMEOUT => 15,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_CUSTOMREQUEST => 'POST',
+        CURLOPT_CUSTOMREQUEST => ($serverType == "sanaei_new" ? 'GET' : 'POST'),
         CURLOPT_SSL_VERIFYHOST => false,
         CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_HEADER => false,
@@ -5652,10 +6676,10 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
     $sni = $server_info['sni'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
-    $xtlsTitle = ($serverType == "sanaei" || $serverType == "alireza")?"XTLSSettings":"xtlsSettings";
+    $xtlsTitle = ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")?"XTLSSettings":"xtlsSettings";
     $reality = $server_info['reality'];
 
-    if(!empty($sni) && ($serverType == "sanaei" || $serverType == "alireza")){
+    if(!empty($sni) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
         $tlsSettings = json_decode($tlsSettings,true);
         $tlsSettings['serverName'] = $sni;
         $tlsSettings = json_encode($tlsSettings);
@@ -5686,7 +6710,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
               }
             }';
             
-        	if($serverType == "sanaei" || $serverType == "alireza"){
+        	if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                 $settings = '{
         	  "clients": [
         		{
@@ -5715,7 +6739,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         	  "fallbacks": []
         	}';
         	}
-        }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "alireza") {
+        }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "sanaei_new" && $serverType != "alireza") {
                     $tcpSettings = '{
                 	  "network": "tcp",
                 	  "security": "'.$security.'",
@@ -5764,7 +6788,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                 "headers": '.$headers.'
               }
             }';
-		if($serverType == "sanaei" || $serverType == "alireza"){
+		if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
             $settings = '{
 		  "clients": [
 			{
@@ -5812,7 +6836,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
   "security": "tls",
   "tlsSettings": {
     "serverName": "' .
-    (!empty($sni) && ($serverType == "sanaei" || $serverType == "alireza") ?  $sni: parse_url($panel_url, PHP_URL_HOST))
+    (!empty($sni) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") ?  $sni: parse_url($panel_url, PHP_URL_HOST))
      . '",
     "certificates": [
       {
@@ -5861,7 +6885,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                     "headers": {}
                   }
                 }';
-            if($serverType == "sanaei" || $serverType == "alireza"){
+            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                 $settings = '{
         	  "clients": [
         		{
@@ -5909,7 +6933,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                 "headers": '.$headers.'
               }
             }';
-            if($serverType == "sanaei" || $serverType == "alireza"){
+            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                 $settings = '{
               "clients": [
                 {
@@ -5935,7 +6959,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
               "disableInsecureEncryption": false
             }';
             }
-            }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "alireza") {
+            }elseif($security == 'xtls' && $serverType != "sanaei" && $serverType != "sanaei_new" && $serverType != "alireza") {
                 $tcpSettings = '{
         	  "network": "tcp",
         	  "security": "'.$security.'",
@@ -5978,7 +7002,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
                 "headers": '.$headers.'
               }
             }';
-            if($serverType == "sanaei" || $serverType == "alireza"){
+            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                 $settings = '{
         	  "clients": [
         		{
@@ -6012,7 +7036,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         
         
 		if($protocol == 'vless'){
-		    if($serverType =="sanaei" || $serverType == "alireza"){
+		    if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
 		        if($reality == "true"){
 	                $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
                     $stmt->bind_param("i", $planId);
@@ -6182,7 +7206,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
 		}
 	    }
 
-        if(($serverType == "sanaei" || $serverType == "alireza") && $reality == "true"){
+        if(($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") && $reality == "true"){
             $sniffing = '{
               "enabled": true,
               "destOverride": [
@@ -6225,6 +7249,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 3);
     curl_setopt($curl, CURLOPT_TIMEOUT, 3); 
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query($postFields));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($curl, $loginUrl));
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $response = curl_exec($curl);
 
@@ -6241,7 +7266,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         return $loginResponse;
     }
     
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/add";
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/add";
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/add";
     else $url = "$panel_url/xui/inbound/add";
     
     curl_setopt_array($curl, array(
@@ -6267,6 +7293,9 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        wizwiz_sanaeiNewJsonPost($curl, $url, $session, wizwiz_sanaeiNewDecodePayloadJsonFields($dataArr));
+    }
     $response = curl_exec($curl);
     curl_close($curl);
     return json_decode($response);

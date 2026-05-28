@@ -32,6 +32,47 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
+if(preg_match('/^approveNewMember(\d+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = (int)$match[1];
+    $targetUser = wizwiz_getUserByTelegramId($targetId);
+    if(!$targetUser){
+        alert("کاربر پیدا نشد", true);
+        exit();
+    }
+
+    $referrerId = !empty($targetUser['approval_referrer']) ? (int)$targetUser['approval_referrer'] : (!empty($targetUser['refered_by']) ? (int)$targetUser['refered_by'] : null);
+    if(!empty($referrerId)){
+        $stmt = $connection->prepare("UPDATE `users` SET `approval_status` = 'approved', `step` = 'none', `refered_by` = ? WHERE `userid` = ?");
+        $stmt->bind_param("ii", $referrerId, $targetId);
+    }else{
+        $stmt = $connection->prepare("UPDATE `users` SET `approval_status` = 'approved', `step` = 'none' WHERE `userid` = ?");
+        $stmt->bind_param("i", $targetId);
+    }
+    $stmt->execute();
+    $stmt->close();
+
+    sendMessage("✅ درخواست عضویت شما تایید شد.\nحالا می‌توانید از ربات استفاده کنید. برای شروع /start را بزنید.", null, 'HTML', $targetId);
+    if(!empty($referrerId)){
+        sendMessage($mainValues['invited_user_joined_message'], null, null, $referrerId);
+    }
+
+    editText($message_id, "✅ عضویت کاربر <code>$targetId</code> تایید شد.", null, 'HTML');
+    alert("تایید شد");
+    exit();
+}
+if(preg_match('/^rejectNewMember(\d+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = (int)$match[1];
+    $stmt = $connection->prepare("UPDATE `users` SET `approval_status` = 'rejected', `step` = 'none' WHERE `userid` = ?");
+    $stmt->bind_param("i", $targetId);
+    $stmt->execute();
+    $stmt->close();
+
+    sendMessage("❌ درخواست عضویت شما توسط ادمین تایید نشد.\nدر صورت نیاز می‌توانید دوباره آیدی عددی معرف معتبر را ارسال کنید تا درخواست جدید ثبت شود.", null, 'HTML', $targetId);
+    editText($message_id, "❌ درخواست عضویت کاربر <code>$targetId</code> رد شد.", null, 'HTML');
+    alert("رد شد");
+    exit();
+}
+wizwiz_handleNewMemberLock();
 if(strstr($text, "/start ")){
     $inviter = str_replace("/start ", "", $text);
     if($inviter < 0) exit();
@@ -676,6 +717,7 @@ if($data=="myInfo"){
 💞 اطلاعات حساب شما:
     
 🔰 شناسه کاربری: <code> $from_id </code>
+این همان آیدی عددی معرف شماست؛ اگر کسی برای عضویت نیاز به معرف داشت، همین عدد را برایش بفرستید.
 🍄 یوزرنیم: <code> @$username </code>
 👤 اسم:  <code> $first_name </code>
 💰 موجودی: <code> $myWallet </code>
@@ -1305,14 +1347,14 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         else{
             $token = RandomString(30);
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
-            $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+            $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
             $vray_link = json_encode($vraylink);
         }
         foreach($vraylink as $link){
             $acc_text = "
     
         🔮 $remark \n " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"<code>$link</code>":"");
-            if($botState['subLinkState'] == "on") $acc_text .= 
+            if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= 
             " \n🌐 subscription : <code>$subLink</code>";
         
             $file = RandomString() .".png";
@@ -1735,7 +1777,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $vray_link = json_encode($response->vray_links);
         }else{
             $token = RandomString(30);
-            $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+            $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
     
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink);
@@ -1751,9 +1793,8 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 
-if($botState['subLinkState'] == "on") $acc_text .= "
+if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 
 🌐 subscription : <code>$subLink</code>
@@ -2226,6 +2267,7 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
         [['text'=>"♻️ به‌روزرسانی همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive"]],
         [['text'=>"👤 به‌روزرسانی کانفیگ‌های یک کاربر",'callback_data'=>"updateConfigsUser"]],
         [['text'=>"🧩 به‌روزرسانی یک کانفیگ",'callback_data'=>"updateConfigsOne"]],
+        [['text'=>"➕ افزودن دستی کانفیگ برای کاربر",'callback_data'=>"manualAttachConfig"]],
         [['text'=>"🌐 به‌روزرسانی بر اساس دامنه/آدرس",'callback_data'=>"updateConfigsByDomain"]],
         [['text'=>"🗑 پاکسازی کانفیگ‌های قدیمی",'callback_data'=>"cleanOldConfigsMenu"]],
         [['text'=>"✉️ تنظیم پیام پس از به‌روزرسانی",'callback_data'=>"updateConfigsAfterMessage"]],
@@ -2243,6 +2285,57 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
     editText($message_id, $txt, $keys);
     exit();
 }
+
+if($data == "manualAttachConfig" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    setUser('manualAttachConfigUser');
+    sendMessage("👤 آیدی عددی کاربری که می‌خوای کانفیگ به نامش ثبت بشه رو ارسال کن.\n\nمثال: <code>123456789</code>", $cancelKey, 'HTML');
+    exit();
+}
+
+if($userInfo['step'] == 'manualAttachConfigUser' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetUid = trim((string)$text);
+    if(!preg_match('/^\d+$/', $targetUid)){
+        sendMessage("❌ فقط آیدی عددی کاربر را ارسال کن.", $cancelKey, 'HTML');
+        exit();
+    }
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid` = ? LIMIT 1");
+    $uidInt = intval($targetUid);
+    $stmt->bind_param('i', $uidInt);
+    $stmt->execute();
+    $existsUser = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$existsUser){
+        sendMessage("❌ این کاربر در دیتابیس ربات پیدا نشد. کاربر باید حداقل یک بار /start بزند.", $cancelKey, 'HTML');
+        exit();
+    }
+    setUser($targetUid, 'temp');
+    setUser('manualAttachConfigLink');
+    sendMessage("🔗 حالا لینک کانفیگ یا لینک ساب را ارسال کن.\n\nربات خودش تشخیص می‌دهد لینک عادی است یا ساب، بعد داخل سرورهای ثبت‌شده می‌گردد و اگر کلاینت را پیدا کند به حساب همین کاربر اضافه می‌کند.", $cancelKey, 'HTML');
+    exit();
+}
+
+if($userInfo['step'] == 'manualAttachConfigLink' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage($mainValues['please_wait_message'], $removeKeyboard);
+    $targetUid = intval($userInfo['temp'] ?? 0);
+    [$ok, $result] = farid_registerManualConfigForUser($targetUid, $text);
+    setUser('', 'temp');
+    setUser();
+    if(!$ok){
+        sendMessage("❌ ثبت دستی انجام نشد:\n\n" . $result, json_encode(['inline_keyboard'=>[[['text'=>'↩️ تلاش دوباره','callback_data'=>'manualAttachConfig'], ['text'=>'⬅️ بازگشت','callback_data'=>'updateConfigsMenu']]]]), 'HTML');
+        exit();
+    }
+    $msg = "✅ کانفیگ با موفقیت ثبت شد.\n\n" .
+           "👤 کاربر: <code>$targetUid</code>\n" .
+           "🧾 شماره سفارش: <code>" . intval($result['order_id']) . "</code>\n" .
+           "🔮 نام سرویس: <b>" . htmlspecialchars($result['remark']) . "</b>\n" .
+           "📡 سرور: <code>" . intval($result['server_id']) . "</code>\n" .
+           "🔢 Inbound: <code>" . intval($result['inbound_id']) . "</code>";
+    if(!empty($result['sub_link'])) $msg .= "\n\n🌐 subscription:\n<code>" . $result['sub_link'] . "</code>";
+    sendMessage($msg, json_encode(['inline_keyboard'=>[[['text'=>'➕ افزودن کانفیگ دیگر','callback_data'=>'manualAttachConfig']], [['text'=>'⬅️ بازگشت','callback_data'=>'updateConfigsMenu']]]]), 'HTML');
+    exit();
+}
+
 
 // شروع صف: همه کانفیگ‌های فعال
 if($data == "updateConfigsAllActive" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -3986,7 +4079,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     }
     else{
         $token = RandomString(30);
-        $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+        $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
     
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link = json_encode($vraylink);
@@ -4003,9 +4096,8 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
+if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 
 🌐 subscription : <code>$subLink</code>"; 
@@ -4088,7 +4180,11 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     if($match[1] == "Sub"){
-        $subLink = $botUrl . "settings/subLink.php?token=" . $order['token'];
+        $subLink = wizwiz_makeCustomerSubLink($order['server_id'], $order['token'], $order['uuid'] ?? "", $order['inbound_id'] ?? 0, $order['remark'] ?? "");
+        if($subLink == ""){
+            alert("لینک ساب پنل برای این سرویس پیدا نشد.");
+            exit;
+        }
         $file = RandomString() .".png";
         $ecc = 'L';
         $pixel_Size = 11;
@@ -4398,7 +4494,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     }
     else{
         $token = RandomString(30);
-        $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+        $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
     
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link= json_encode($vraylink);
@@ -4415,9 +4511,8 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$vray_link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
+if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
     
@@ -4723,7 +4818,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 $token = RandomString(30);
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link= json_encode($vraylink);
-                $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+                $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
             }
 
             foreach($vraylink as $link){
@@ -4735,9 +4830,8 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
+if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
             
@@ -5253,7 +5347,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
             }
             else{
                 $token = RandomString(30);
-                $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+                $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
         
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link = json_encode($vraylink);
@@ -5267,9 +5361,8 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
 ⏰ مدت سرویس: $days روز
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
+if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
             
@@ -6719,7 +6812,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $vray_link = json_encode($response->vray_links);
     }else{
         $token = RandomString(30);
-        $subLink = $botState['subLinkState']=="on"?$botUrl . "settings/subLink.php?token=" . $token:"";
+        $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link = json_encode($vraylink);
     }
@@ -6734,9 +6827,8 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 ⏰ مدت سرویس: $days روز
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
-if($botState['subLinkState'] == "on") $acc_text .= "
+if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
-🔋 Volume web: <code> $botUrl"."search.php?id=".$uniqid."</code>
 
 \n🌐 subscription : <code>$subLink</code>";
     
@@ -8170,17 +8262,12 @@ if(($data == 'mySubscriptions' || $data == "agentConfigsList" or preg_match('/(c
 }
 if($data=="searchAgentConfig" || $data == "searchMyConfig" || $data=="searchUsersConfig"){
     delMessage();
-    sendMessage($mainValues['send_config_remark'],$cancelKey);
+    sendMessage("🔎 نام سرویس، لینک کانفیگ یا لینک ساب را ارسال کنید:",$cancelKey);
     setUser($data);
 }
 if(($userInfo['step'] == "searchAgentConfig" || $userInfo['step'] == "searchMyConfig") && $text != $buttonValues['cancel']){
     sendMessage($mainValues['please_wait_message'], $removeKeyboard);
-    if($userInfo['step'] == "searchMyConfig") $condition = "AND `agent_bought` = 0";
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid` = ? AND `remark` LIKE CONCAT('%', ?, '%') $condition");
-    $stmt->bind_param("is", $from_id, $text);
-    $stmt->execute();
-    $orderId = $stmt->get_result()->fetch_assoc()['id'];
-    $stmt->close();
+    $orderId = farid_findOrderIdBySearchText($text, $from_id, $userInfo['step'] == "searchMyConfig");
     
     $keys = getOrderDetailKeys($from_id, $orderId);
     if($keys != null){
@@ -8200,8 +8287,9 @@ if(($userInfo['step'] == "searchUsersConfig" && $text != $buttonValues['cancel']
     }
     else{
         sendMessage($mainValues['please_wait_message'], $removeKeyboard); 
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `remark` LIKE CONCAT('%', ?, '%')");
-        $stmt->bind_param("s", $text);
+        $foundOrderId = farid_findOrderIdBySearchText($text, 0, false);
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $foundOrderId);
     }
     $stmt->execute();
     $orderInfo = $stmt->get_result();
@@ -10701,9 +10789,10 @@ if(preg_match('/^changeRealityState(\d+)/',$data,$match) && ($from_id == $admin 
 if(preg_match('/^changeServerType(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id,"
     
-🔰 نکته مهم: ( پنل x-ui خود را به آخرین نسخه به‌روزرسانی کنید ) 
+🔰 نکته مهم: برای پنل 3x-ui جدید گزینه «سنایی جدید» را بزنید؛ برای 2.6.x گزینه «سنایی قدیمی» را بزنید 
 
-❤️ اگر از پنل سنایی استفاده میکنید لطفاً نوع پنل را ( سنایی ) انتخاب کنید
+❤️ اگر از پنل سنایی 2.x استفاده میکنید گزینه ( سنایی قدیمی ) را انتخاب کنید
+💜 اگر از آخرین نسخه 3x-ui / سنایی 3.x استفاده میکنید گزینه ( سنایی جدید ) را انتخاب کنید
 🧡 اگر از پنل علیرضا استفاده میکنید لطفاً نوع پنل را ( علیرضا ) انتخاب کنید
 💚 اگر از پنل نیدوکا استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
 💙 اگر از پنل چینی استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
@@ -10711,12 +10800,12 @@ if(preg_match('/^changeServerType(\d+)/',$data,$match) && ($from_id == $admin ||
 📣 حتما نوع پنل را انتخاب کنید وگرنه براتون مشکل ساز میشه !
 ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
 ",json_encode(['inline_keyboard'=>[
-        [['text'=>"ساده",'callback_data'=>"chhangeServerTypenormal_" . $match[1]],['text'=>"سنایی",'callback_data'=>"chhangeServerTypesanaei_" . $match[1]]],
-        [['text'=>"علیرضا",'callback_data'=>"chhangeServerTypealireza_" . $match[1]]]
+        [['text'=>"ساده",'callback_data'=>"chhangeServerTypenormal_" . $match[1]],['text'=>"سنایی قدیمی",'callback_data'=>"chhangeServerTypesanaei_" . $match[1]]],
+        [['text'=>"سنایی جدید",'callback_data'=>"chhangeServerTypesanaei_new_" . $match[1]],['text'=>"علیرضا",'callback_data'=>"chhangeServerTypealireza_" . $match[1]]]
         ]]));
     exit();
 }
-if(preg_match('/^chhangeServerType(\w+)_(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^chhangeServerType([A-Za-z0-9_]+)_(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     alert($mainValues['saved_successfuly']);
     $stmt = $connection->prepare("UPDATE `server_config` SET `type` = ? WHERE `id`=?");
     $stmt->bind_param("si",$match[1], $match[2]);
@@ -10948,6 +11037,7 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15); 
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($ch, $loginUrl));
         $loginResponse = json_decode(curl_exec($ch),true);
         curl_close($ch);
         
@@ -10989,9 +11079,10 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
     }else{
         sendMessage("
     
-🔰 نکته مهم: ( پنل x-ui خود را به آخرین نسخه به‌روزرسانی کنید ) 
+🔰 نکته مهم: برای پنل 3x-ui جدید گزینه «سنایی جدید» را بزنید؛ برای 2.6.x گزینه «سنایی قدیمی» را بزنید 
 
-❤️ اگر از پنل سنایی استفاده میکنید لطفاً نوع پنل را ( سنایی ) انتخاب کنید
+❤️ اگر از پنل سنایی 2.x استفاده میکنید گزینه ( سنایی قدیمی ) را انتخاب کنید
+💜 اگر از آخرین نسخه 3x-ui / سنایی 3.x استفاده میکنید گزینه ( سنایی جدید ) را انتخاب کنید
 🧡 اگر از پنل علیرضا استفاده میکنید لطفاً نوع پنل را ( علیرضا ) انتخاب کنید
 💚 اگر از پنل نیدوکا استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
 💙 اگر از پنل چینی استفاده میکنید لطفاً نوع پنل را ( ساده ) انتخاب کنید 
@@ -10999,8 +11090,8 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
 📣 حتما نوع پنل را انتخاب کنید وگرنه براتون مشکل ساز میشه !
 ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
     ",json_encode(['inline_keyboard'=>[
-            [['text'=>"ساده",'callback_data'=>"chhangeServerTypenormal_" . $rowId],['text'=>"سنایی",'callback_data'=>"chhangeServerTypesanaei_" . $rowId]],
-            [['text'=>"علیرضا",'callback_data'=>"chhangeServerTypealireza_" . $rowId]]
+            [['text'=>"ساده",'callback_data'=>"chhangeServerTypenormal_" . $rowId],['text'=>"سنایی قدیمی",'callback_data'=>"chhangeServerTypesanaei_" . $rowId]],
+            [['text'=>"سنایی جدید",'callback_data'=>"chhangeServerTypesanaei_new_" . $rowId],['text'=>"علیرضا",'callback_data'=>"chhangeServerTypealireza_" . $rowId]]
             ]]));
     }
     setUser();
@@ -11088,6 +11179,7 @@ if(preg_match('/^editServerPanePassword(.*)/',$userInfo['step'],$match) and $tex
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15); 
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($ch, $loginUrl));
         $loginResponse = json_decode(curl_exec($ch),true);
         curl_close($ch);
     }
@@ -11602,6 +11694,409 @@ function farid_setUpdateAfterMessage($msg){
 
 
 
+
+
+// ===========================
+// افزودن دستی / جستجوی کانفیگ با لینک یا ساب
+// ===========================
+function farid_bindParamsDynamic($stmt, $types, $values){
+    if($types === '') return true;
+    $refs = [];
+    foreach($values as $k => $v){
+        $refs[$k] = $values[$k];
+    }
+    $bind = [$types];
+    foreach($refs as $k => $v){
+        $bind[] = &$refs[$k];
+    }
+    return call_user_func_array([$stmt, 'bind_param'], $bind);
+}
+
+function farid_manualValue($obj, $key, $default = null){
+    if(is_array($obj) && array_key_exists($key, $obj)) return $obj[$key];
+    if(is_object($obj) && isset($obj->$key)) return $obj->$key;
+    return $default;
+}
+
+function farid_manualDecodeJson($value){
+    if(is_array($value)) return $value;
+    if(is_object($value)) return json_decode(json_encode($value), true);
+    $decoded = json_decode((string)$value, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function farid_extractSubIdFromInput($input){
+    $input = trim((string)$input);
+    if($input === '') return '';
+
+    if(preg_match('#/(?:sub|json|clash)/([^/?#\s]+)#i', $input, $m)){
+        return trim($m[1]);
+    }
+
+    $u = @parse_url($input);
+    if(is_array($u) && !empty($u['path'])){
+        $parts = array_values(array_filter(explode('/', trim($u['path'], '/'))));
+        if(count($parts) > 0){
+            $last = end($parts);
+            if(preg_match('/^[A-Za-z0-9_-]{6,}$/', $last)) return $last;
+        }
+    }
+    return '';
+}
+
+function farid_subUrlMatchesServer($input, $serverId){
+    $input = trim((string)$input);
+    if($input === '' || strpos($input, '://') === false) return false;
+    if(!function_exists('wizwiz_getPanelSubscriptionUris')) return false;
+
+    $iu = @parse_url($input);
+    if(!is_array($iu) || empty($iu['host'])) return false;
+    $inputHost = strtolower($iu['host']);
+    $inputPort = intval($iu['port'] ?? (($iu['scheme'] ?? 'http') === 'https' ? 443 : 80));
+    $inputPath = '/' . ltrim($iu['path'] ?? '/', '/');
+
+    $uris = wizwiz_getPanelSubscriptionUris($serverId);
+    foreach(['subURI','subJsonURI'] as $key){
+        if(empty($uris[$key])) continue;
+        $pu = @parse_url($uris[$key]);
+        if(!is_array($pu) || empty($pu['host'])) continue;
+        $panelHost = strtolower($pu['host']);
+        $panelPort = intval($pu['port'] ?? (($pu['scheme'] ?? 'http') === 'https' ? 443 : 80));
+        $panelPath = '/' . trim($pu['path'] ?? '/', '/');
+        if(substr($panelPath, -1) !== '/') $panelPath .= '/';
+        if($inputHost === $panelHost && $inputPort === $panelPort && stripos($inputPath, $panelPath) === 0) return true;
+    }
+    return false;
+}
+
+function farid_base64LooseDecode($data){
+    $data = trim((string)$data);
+    if($data === '') return false;
+    $data = str_replace(['-', '_'], ['+', '/'], $data);
+    $pad = strlen($data) % 4;
+    if($pad > 0) $data .= str_repeat('=', 4 - $pad);
+    return base64_decode($data);
+}
+
+function farid_parseConfigOrSubLink($link){
+    $link = trim((string)$link);
+    $res = [
+        'is_sub' => false,
+        'sub_id' => '',
+        'protocol' => '',
+        'uuid' => '',
+        'host' => '',
+        'port' => 0,
+        'net_type' => '',
+        'remark' => '',
+    ];
+    if($link === '') return $res;
+
+    $subId = farid_extractSubIdFromInput($link);
+    if($subId !== '' && preg_match('#^https?://#i', $link)){
+        $res['is_sub'] = true;
+        $res['sub_id'] = $subId;
+        return $res;
+    }
+
+    if(stripos($link, 'vmess://') === 0){
+        $decoded = farid_base64LooseDecode(substr($link, 8));
+        $j = $decoded !== false ? json_decode($decoded, true) : null;
+        if(is_array($j)){
+            $res['protocol'] = 'vmess';
+            $res['uuid'] = (string)($j['id'] ?? '');
+            $res['host'] = (string)($j['add'] ?? '');
+            $res['port'] = intval($j['port'] ?? 0);
+            $res['net_type'] = (string)($j['net'] ?? ($j['type'] ?? ''));
+            $res['remark'] = (string)($j['ps'] ?? '');
+        }
+        return $res;
+    }
+
+    if(preg_match('#^(vless|trojan|ss)://#i', $link, $m)){
+        $protocol = strtolower($m[1]);
+        $u = @parse_url($link);
+        $res['protocol'] = $protocol;
+        if(is_array($u)){
+            $res['host'] = (string)($u['host'] ?? '');
+            $res['port'] = intval($u['port'] ?? 0);
+            $res['remark'] = isset($u['fragment']) ? urldecode((string)$u['fragment']) : '';
+            if($protocol === 'vless' || $protocol === 'trojan'){
+                $res['uuid'] = urldecode((string)($u['user'] ?? ''));
+            }elseif($protocol === 'ss'){
+                $userinfo = urldecode((string)($u['user'] ?? ''));
+                $res['uuid'] = $userinfo;
+                if($res['uuid'] === '' && isset($u['path'])){
+                    $raw = trim((string)$u['path'], '/');
+                    $decoded = farid_base64LooseDecode($raw);
+                    $res['uuid'] = $decoded !== false ? $decoded : $raw;
+                }
+            }
+            if(!empty($u['query'])){
+                $params = [];
+                parse_str($u['query'], $params);
+                $res['net_type'] = (string)($params['type'] ?? $params['security'] ?? '');
+                if(!empty($params['sni']) && $res['host'] === '') $res['host'] = (string)$params['sni'];
+            }
+        }
+        return $res;
+    }
+
+    return $res;
+}
+
+function farid_manualClientIdentity($client){
+    $id = farid_manualValue($client, 'id', '');
+    if($id === '') $id = farid_manualValue($client, 'uuid', '');
+    if($id === '') $id = farid_manualValue($client, 'password', '');
+    return (string)$id;
+}
+
+function farid_manualClientSubId($client){
+    return trim((string)farid_manualValue($client, 'subId', ''));
+}
+
+function farid_manualFindClientStat($stats, $email){
+    if(!is_array($stats)) return null;
+    foreach($stats as $st){
+        if((string)farid_manualValue($st, 'email', '') === (string)$email) return $st;
+    }
+    return null;
+}
+
+function farid_manualExpiryToSeconds($value){
+    $v = intval($value);
+    if($v <= 0) return 0;
+    if($v > 9999999999) $v = intval($v / 1000);
+    return $v;
+}
+
+function farid_findPanelAccountByInput($input){
+    global $connection;
+    $parsed = farid_parseConfigOrSubLink($input);
+    $targetSubId = $parsed['sub_id'];
+    $targetUuid = $parsed['uuid'];
+    $targetPort = intval($parsed['port']);
+
+    if($targetSubId === '' && $targetUuid === ''){
+        return [false, 'لینک یا ساب‌آیدی قابل تشخیص نیست.'];
+    }
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `type` != 'marzban' ORDER BY `id` ASC");
+    $stmt->execute();
+    $serversRes = $stmt->get_result();
+    $stmt->close();
+
+    $servers = [];
+    while($srv = $serversRes->fetch_assoc()) $servers[] = $srv;
+
+    // اگر لینک ساب، سروری که subURI/subPort آن با لینک ورودی می‌خواند اول بررسی شود.
+    if($targetSubId !== '' && $parsed['is_sub']){
+        usort($servers, function($a, $b) use ($input){
+            $am = farid_subUrlMatchesServer($input, intval($a['id'])) ? 0 : 1;
+            $bm = farid_subUrlMatchesServer($input, intval($b['id'])) ? 0 : 1;
+            return $am <=> $bm;
+        });
+    }
+
+    foreach($servers as $srv){
+        $serverId = intval($srv['id']);
+        $json = getJson($serverId);
+        if(!$json || !isset($json->success) || !$json->success || !isset($json->obj)) continue;
+        $rows = is_array($json->obj) ? $json->obj : [$json->obj];
+
+        foreach($rows as $row){
+            if(!is_object($row) && !is_array($row)) continue;
+            $port = intval(farid_manualValue($row, 'port', 0));
+            if($targetPort > 0 && $port > 0 && $targetPort !== $port) continue;
+
+            $settings = farid_manualDecodeJson(farid_manualValue($row, 'settings', '{}'));
+            $clients = $settings['clients'] ?? [];
+            if(!is_array($clients)) continue;
+
+            $stream = farid_manualDecodeJson(farid_manualValue($row, 'streamSettings', '{}'));
+            $stats = farid_manualValue($row, 'clientStats', []);
+            if(is_object($stats)) $stats = [$stats];
+
+            foreach($clients as $client){
+                $clientId = farid_manualClientIdentity($client);
+                $subId = farid_manualClientSubId($client);
+                $email = (string)farid_manualValue($client, 'email', '');
+                $match = false;
+                if($targetSubId !== '' && $subId !== '' && $subId === $targetSubId) $match = true;
+                if(!$match && $targetUuid !== '' && $clientId !== '' && $clientId === $targetUuid) $match = true;
+                if(!$match) continue;
+
+                $stat = farid_manualFindClientStat($stats, $email);
+                $expiry = farid_manualExpiryToSeconds(farid_manualValue($client, 'expiryTime', 0));
+                if($stat !== null){
+                    $statExp = farid_manualExpiryToSeconds(farid_manualValue($stat, 'expiryTime', 0));
+                    if($statExp > 0) $expiry = $statExp;
+                }
+                if($expiry == 0){
+                    $rowExp = farid_manualExpiryToSeconds(farid_manualValue($row, 'expiryTime', 0));
+                    if($rowExp > 0) $expiry = $rowExp;
+                }
+
+                $protocol = strtolower((string)farid_manualValue($row, 'protocol', $parsed['protocol']));
+                if($protocol === '') $protocol = $parsed['protocol'] ?: 'vless';
+                $netType = (string)($stream['network'] ?? $parsed['net_type'] ?? 'tcp');
+                if($netType === '') $netType = 'tcp';
+                $remark = $email !== '' ? $email : ($parsed['remark'] ?: (string)farid_manualValue($row, 'remark', 'manual'));
+
+                return [true, [
+                    'server_id' => $serverId,
+                    'inbound_id' => intval(farid_manualValue($row, 'id', 0)),
+                    'port' => $port,
+                    'protocol' => $protocol,
+                    'net_type' => $netType,
+                    'uuid' => $clientId,
+                    'remark' => $remark,
+                    'sub_id' => $subId,
+                    'expire_date' => $expiry,
+                    'provided_link' => trim((string)$input),
+                    'is_sub' => !empty($parsed['is_sub']),
+                ]];
+            }
+        }
+    }
+
+    return [false, 'این کانفیگ/ساب در سرورهای ثبت‌شده ربات پیدا نشد.'];
+}
+
+function farid_registerManualConfigForUser($targetUserId, $input){
+    global $connection, $botState;
+    $targetUserId = intval($targetUserId);
+    if($targetUserId <= 0) return [false, 'آیدی عددی کاربر معتبر نیست.'];
+
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ? LIMIT 1");
+    $stmt->bind_param('i', $targetUserId);
+    $stmt->execute();
+    $targetUser = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$targetUser) return [false, 'این کاربر هنوز داخل ربات وجود ندارد. اول کاربر باید یک بار /start بزند.'];
+
+    [$ok, $found] = farid_findPanelAccountByInput($input);
+    if(!$ok) return [false, $found];
+
+    $serverId = intval($found['server_id']);
+    $inboundId = intval($found['inbound_id']);
+    $uuid = (string)$found['uuid'];
+    $remark = (string)$found['remark'];
+    $protocol = (string)$found['protocol'];
+    $expire = intval($found['expire_date']);
+    $token = trim((string)($found['sub_id'] ?? ''));
+    if($token === '') $token = RandomString(30);
+
+    $links = [];
+    if(empty($found['is_sub']) && !empty($found['provided_link'])){
+        $links[] = $found['provided_link'];
+    }else{
+        $generated = getConnectionLink($serverId, $uuid, $protocol, $remark, intval($found['port']), (string)$found['net_type'], $inboundId, 0);
+        if(is_array($generated)) $links = $generated;
+        elseif(is_string($generated) && $generated !== '') $links = [$generated];
+    }
+    if(empty($links)) return [false, 'کانفیگ پیدا شد، ولی ساخت لینک خروجی ممکن نشد.'];
+
+    $linkJson = json_encode(array_values($links), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $date = (string)time();
+    $fileId = 0;
+
+    $stmt = $connection->prepare("INSERT INTO `orders_list`
+        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`)
+        VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0, 0)");
+    $uidStr = (string)$targetUserId;
+    $stmt->bind_param('ssiiisssiss', $uidStr, $token, $fileId, $serverId, $inboundId, $remark, $uuid, $protocol, $expire, $linkJson, $date);
+    $stmt->execute();
+    $orderId = intval($connection->insert_id);
+    $stmt->close();
+
+    $subLink = '';
+    if(($botState['subLinkState'] ?? 'off') == 'on'){
+        $subLink = wizwiz_makeCustomerSubLink($serverId, $token, $uuid, $inboundId, $remark);
+    }
+
+    $msg = "✅ کانفیگ به حساب شما اضافه شد.\n\n" .
+           "🔮 نام سرویس: <b>" . htmlspecialchars($remark) . "</b>\n" .
+           (($botState['configLinkState'] ?? '') != 'off' ? ("\n💝 config:\n<code>" . implode("</code>\n<code>", $links) . "</code>\n") : "") .
+           ($subLink !== '' ? "\n🌐 subscription:\n<code>$subLink</code>" : "");
+    sendMessage($msg, null, 'HTML', $targetUserId);
+
+    return [true, [
+        'order_id' => $orderId,
+        'remark' => $remark,
+        'server_id' => $serverId,
+        'inbound_id' => $inboundId,
+        'sub_link' => $subLink,
+    ]];
+}
+
+function farid_findOrderIdBySearchText($input, $userId = 0, $onlyNonAgent = false){
+    global $connection;
+    $input = trim((string)$input);
+    if($input === '') return 0;
+
+    $parsed = farid_parseConfigOrSubLink($input);
+    $subId = $parsed['sub_id'];
+    $uuid = $parsed['uuid'];
+
+    $baseSql = "SELECT * FROM `orders_list` WHERE 1=1";
+    $types = '';
+    $vals = [];
+    if(intval($userId) > 0){
+        $baseSql .= " AND `userid` = ?";
+        $types .= 'i';
+        $vals[] = intval($userId);
+    }
+    if($onlyNonAgent){
+        $baseSql .= " AND `agent_bought` = 0";
+    }
+
+    if($uuid !== ''){
+        $sql = $baseSql . " AND `uuid` = ? ORDER BY `id` DESC LIMIT 1";
+        $types2 = $types . 's';
+        $vals2 = array_merge($vals, [$uuid]);
+        $stmt = $connection->prepare($sql);
+        farid_bindParamsDynamic($stmt, $types2, $vals2);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($row) return intval($row['id']);
+    }
+
+    if($subId !== ''){
+        $sql = $baseSql . " AND `token` = ? ORDER BY `id` DESC LIMIT 1";
+        $types2 = $types . 's';
+        $vals2 = array_merge($vals, [$subId]);
+        $stmt = $connection->prepare($sql);
+        farid_bindParamsDynamic($stmt, $types2, $vals2);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($row) return intval($row['id']);
+
+        $sql = $baseSql . " ORDER BY `id` DESC LIMIT 300";
+        $stmt = $connection->prepare($sql);
+        if($types !== '') farid_bindParamsDynamic($stmt, $types, $vals);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+        while($order = $res->fetch_assoc()){
+            $panelSub = wizwiz_findPanelSubId(intval($order['server_id']), $order['token'], $order['uuid'], intval($order['inbound_id']), $order['remark']);
+            if($panelSub !== '' && $panelSub === $subId) return intval($order['id']);
+        }
+    }
+
+    $sql = $baseSql . " AND `remark` LIKE CONCAT('%', ?, '%') ORDER BY `id` DESC LIMIT 1";
+    $types2 = $types . 's';
+    $vals2 = array_merge($vals, [$input]);
+    $stmt = $connection->prepare($sql);
+    farid_bindParamsDynamic($stmt, $types2, $vals2);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ? intval($row['id']) : 0;
+}
 
 // ===========================
 // فیلتر بر اساس دامنه/آدرس
