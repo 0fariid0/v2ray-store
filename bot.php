@@ -226,6 +226,40 @@ if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($f
     }
     editText($message_id,$mainValues['change_bot_settings_message'],getBotSettingKeys());
 }
+
+if($data=="adminTextSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $preview = htmlspecialchars($mainValues['start_message'] ?? '', ENT_QUOTES, 'UTF-8');
+    $msg = "📝 <b>تنظیم متن‌ها</b>\n\n" .
+           "از این بخش می‌توانید متن خوش‌آمدگویی صفحه اصلی ربات را تغییر دهید.\n" .
+           "این متن در فایل <code>settings/values.php</code> و کلید <code>start_message</code> ذخیره می‌شود.\n\n" .
+           "📌 متن فعلی:\n<pre>" . $preview . "</pre>";
+    editText($message_id, $msg, farid_textSettingsKeyboard(), "HTML");
+    exit();
+}
+if($data=="editStartWelcomeText" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("📝 متن جدید خوش‌آمدگویی صفحه اصلی را ارسال کنید.\n\nمی‌توانید متن چندخطی، ایموجی و لینک ارسال کنید.\nبرای لغو، دکمه انصراف را بزنید.", $cancelKey, "HTML");
+    setUser("editStartWelcomeText");
+    exit();
+}
+if($userInfo['step'] == "editStartWelcomeText" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $newStartText = trim((string)$text);
+    if($newStartText === ''){
+        sendMessage("⚠️ متن نمی‌تواند خالی باشد. لطفاً متن خوش‌آمدگویی را ارسال کنید.", $cancelKey, "HTML");
+        exit();
+    }
+
+    $saveResult = farid_updateMainValueInValuesFile('start_message', $newStartText);
+    if($saveResult === true){
+        $mainValues['start_message'] = $newStartText;
+        setUser();
+        sendMessage("✅ متن خوش‌آمدگویی با موفقیت ذخیره شد.\nاز این به بعد پیام صفحه اصلی با متن جدید نمایش داده می‌شود.", $removeKeyboard, "HTML");
+        sendMessage("📝 تنظیم متن‌ها", farid_textSettingsKeyboard(), "HTML");
+    }else{
+        sendMessage("❌ ذخیره متن انجام نشد.\n" . htmlspecialchars((string)$saveResult, ENT_QUOTES, 'UTF-8'), $cancelKey, "HTML");
+    }
+    exit();
+}
 if($data=="changeUpdateConfigLinkState" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $newValue = $botState['updateConnectionState']=="robot"?"site":"robot";
     setSettings('updateConnectionState', $newValue);
@@ -11496,6 +11530,61 @@ if ($text == $buttonValues['cancel']) {
    - Fixes for broadcast/forward cancel + safer keyboards
    ====================================================================== */
 
+
+function farid_textSettingsKeyboard(){
+    global $buttonValues;
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'✏️ تغییر متن خوش‌آمدگویی', 'callback_data'=>'editStartWelcomeText', 'style'=>'success']
+        ],
+        [
+            ['text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'managePanel', 'style'=>'primary']
+        ]
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function farid_valuesFilePath(){
+    return __DIR__ . '/settings/values.php';
+}
+
+function farid_updateMainValueInValuesFile($key, $value){
+    $file = farid_valuesFilePath();
+    if(!file_exists($file)) return 'فایل settings/values.php پیدا نشد.';
+    if(!is_writable($file)) return 'فایل settings/values.php قابل نوشتن نیست. دسترسی فایل را بررسی کنید.';
+
+    $content = file_get_contents($file);
+    if($content === false) return 'خواندن فایل settings/values.php ناموفق بود.';
+
+    $quotedKey = preg_quote($key, '/');
+    $pattern = '/([\'\"]' . $quotedKey . '[\'\"]\s*=>\s*)(?:\"(?:\\\\.|[^\"\\\\])*\"|\'(?:\\\\.|[^\'\\\\])*\')/s';
+    $replacement = '$1' . var_export((string)$value, true);
+    $newContent = preg_replace($pattern, $replacement, $content, 1, $count);
+
+    if($newContent === null) return 'خطا هنگام پردازش فایل values.php رخ داد.';
+    if($count < 1) return 'کلید start_message داخل values.php پیدا نشد.';
+
+    $backup = $file . '.bak_' . date('Ymd_His');
+    @copy($file, $backup);
+
+    if(file_put_contents($file, $newContent, LOCK_EX) === false){
+        return 'نوشتن فایل settings/values.php ناموفق بود.';
+    }
+
+    // بررسی سریع سینتکس فایل بعد از ذخیره، در صورتی که exec فعال باشد.
+    if(function_exists('exec')){
+        $cmd = 'php -l ' . escapeshellarg($file) . ' 2>&1';
+        $out = [];
+        $code = 0;
+        @exec($cmd, $out, $code);
+        if($code !== 0){
+            if(file_exists($backup)) @copy($backup, $file);
+            return 'متن ذخیره نشد چون فایل values.php بعد از تغییر خطای سینتکس داشت: ' . implode("\n", $out);
+        }
+    }
+
+    return true;
+}
+
 function getAdminKeysPlus(){
     global $buttonValues, $from_id, $admin;
 
@@ -11563,6 +11652,9 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['forward_to_all'], 'callback_data'=>'forwardToAll', 'style'=>'success'],
         ['text'=>$buttonValues['main_button_settings'], 'callback_data'=>'mainMenuButtons', 'style'=>'primary']
     ];
+    $keys[] = [
+        ['text'=>'📝 تنظیم متن خوش‌آمدگویی', 'callback_data'=>'adminTextSettings', 'style'=>'primary']
+    ];
 
     $keys[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
 
@@ -11587,7 +11679,7 @@ function farid_attachUpdateConfigButton($keyboardJson, $orderId){
     }
 
     $newRow = [
-        ['text' => "♻️ به‌روزرسانی کانفیگ", 'callback_data' => $cb]
+        ['text' => "♻️ به‌روزرسانی کانفیگ", 'callback_data' => $cb, 'style' => 'primary']
     ];
 
     // تلاش برای قرار دادن دکمه قبل از برگشت به منو
@@ -11639,7 +11731,7 @@ function farid_attachUpdateAllMyConfigsButton($keyboardJson){
     }
 
     array_splice($data['inline_keyboard'], $insertIndex, 0, [[
-        ['text' => "♻️ به‌روزرسانی همه کانفیگ‌ها", 'callback_data' => $cb]
+        ['text' => "♻️ به‌روزرسانی همه کانفیگ‌ها", 'callback_data' => $cb, 'style' => 'primary']
     ]]);
 
     return json_encode($data, JSON_UNESCAPED_UNICODE);
@@ -11677,7 +11769,7 @@ function farid_attachUpdateAllUserConfigsButton($keyboardJson, $userId){
     }
 
     array_splice($data['inline_keyboard'], $insertIndex, 0, [[
-        ['text' => "♻️ به‌روزرسانی همه کانفیگ‌های کاربر", 'callback_data' => $cb]
+        ['text' => "♻️ به‌روزرسانی همه کانفیگ‌های کاربر", 'callback_data' => $cb, 'style' => 'primary']
     ]]);
 
     return json_encode($data, JSON_UNESCAPED_UNICODE);

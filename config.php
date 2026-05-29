@@ -535,6 +535,97 @@ function wizwiz_arrayValue($arr, $key, $default = null){
     return $default;
 }
 
+function wizwiz_textContains($haystack, $needle){
+    $haystack = (string)$haystack;
+    $needle = (string)$needle;
+    if($needle === '') return false;
+    return stripos($haystack, $needle) !== false || strpos($haystack, $needle) !== false;
+}
+
+function wizwiz_buttonStyleByCallback($button){
+    if(!is_array($button)) return $button;
+    if(isset($button['style']) || !isset($button['text'])) return $button;
+    $haystack = (string)($button['text'] ?? '') . ' ' . (string)($button['callback_data'] ?? '');
+
+    $dangerWords = ['delete', 'del', 'remove', 'ban', 'reject', 'disable', 'decrease', 'cancel', 'لغو', 'حذف', 'بن', 'مسدود', 'رد', 'غیرفعال', 'کاهش', '❌', '🗑'];
+    foreach($dangerWords as $w){
+        if(wizwiz_textContains($haystack, $w)){
+            $button['style'] = 'danger';
+            return $button;
+        }
+    }
+
+    $successWords = ['buy', 'renew', 'increase', 'enable', 'approve', 'confirm', 'pay', 'gift', 'join', 'gettest', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'تایید', 'فعال', 'پرداخت', 'هدیه', 'عضویت', '✅'];
+    foreach($successWords as $w){
+        if(wizwiz_textContains($haystack, $w)){
+            $button['style'] = 'success';
+            return $button;
+        }
+    }
+
+    $primaryWords = ['back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک'];
+    foreach($primaryWords as $w){
+        if(wizwiz_textContains($haystack, $w)){
+            $button['style'] = 'primary';
+            return $button;
+        }
+    }
+
+    return $button;
+}
+
+function wizwiz_styleInlineKeyboard($keyboard){
+    if(!is_array($keyboard)) return $keyboard;
+    $out = [];
+    foreach($keyboard as $row){
+        if(!is_array($row) || count($row) === 0) continue;
+        $newRow = [];
+        foreach($row as $button){
+            if(is_array($button) && isset($button['text'])) $newRow[] = wizwiz_buttonStyleByCallback($button);
+        }
+        if(count($newRow) > 0) $out[] = $newRow;
+    }
+    return $out;
+}
+
+function wizwiz_inlineKeyboardJson($keyboard){
+    return json_encode(['inline_keyboard' => wizwiz_styleInlineKeyboard($keyboard)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function wizwiz_deleteLocalOrderOnly($orderId){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return false;
+    $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `id` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $affected = $stmt->affected_rows;
+    $stmt->close();
+    return $affected > 0;
+}
+
+function wizwiz_panelMissingSyncResult($syncInfo){
+    return is_array($syncInfo) && !empty($syncInfo['checked']) && empty($syncInfo['found']);
+}
+
+function wizwiz_cleanupOrderIfMissingOnPanel($order, $syncInfo = null, $notifyUser = false){
+    if(!is_array($order)) return false;
+    if($syncInfo === null && function_exists('wizwiz_syncOrderExpiryFromPanel')){
+        $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+    }
+    if(!wizwiz_panelMissingSyncResult($syncInfo)) return false;
+
+    $orderId = intval($order['id'] ?? 0);
+    if($orderId <= 0) return false;
+    $deleted = wizwiz_deleteLocalOrderOnly($orderId);
+    if($deleted && $notifyUser && !empty($order['userid'])){
+        $remark = htmlspecialchars((string)($order['remark'] ?? ''), ENT_QUOTES, 'UTF-8');
+        sendMessage("ℹ️ سرویس <b>$remark</b> دیگر داخل پنل وجود ندارد؛ برای جلوگیری از نمایش کانفیگ اضافه، از لیست ربات هم حذف شد.", null, 'HTML', intval($order['userid']));
+    }
+    return $deleted;
+}
+
 function wizwiz_panelExpiryToSeconds($value){
     if($value === null) return 0;
     if(is_string($value)){
@@ -616,19 +707,27 @@ function wizwiz_syncOrderExpiryFromPanel($order, $updateDb = true){
     $serverType = (string)($serverInfo['type'] ?? '');
     $newExpire = 0;
     $found = false;
+    $checked = false;
     $source = '';
 
     if($serverType === 'marzban'){
         if(function_exists('getMarzbanUser')){
             $info = getMarzbanUser($serverId, $remark);
             if(is_object($info) && isset($info->expire)){
+                $checked = true;
                 $found = true;
                 $newExpire = wizwiz_panelExpiryToSeconds($info->expire);
                 $source = 'marzban';
+            }elseif(is_object($info) && isset($info->detail) && stripos((string)$info->detail, 'not found') !== false){
+                $checked = true;
+                $source = 'marzban_missing';
             }
         }
     }else{
         $json = getJson($serverId);
+        if($json && isset($json->success) && $json->success){
+            $checked = true;
+        }
         $rows = wizwiz_panelListFromGetJson($json);
         foreach($rows as $row){
             $rowId = intval(wizwiz_arrayValue($row, 'id', 0));
@@ -683,6 +782,7 @@ function wizwiz_syncOrderExpiryFromPanel($order, $updateDb = true){
 
     return [
         'found' => $found,
+        'checked' => $checked,
         'expire_date' => $newExpire,
         'source' => $source,
     ];
@@ -1407,7 +1507,7 @@ function getMainKeys(){
     }
     array_push($mainKeys,$temp);
     if($from_id == $admin || $userInfo['isAdmin'] == true) array_push($mainKeys,[['text'=>"مدیریت ربات ⚙️",'callback_data'=>"managePanel"]]);
-    return json_encode(['inline_keyboard'=>$mainKeys]); 
+    return wizwiz_inlineKeyboardJson($mainKeys); 
 }
 function getAgentKeys(){
     global $buttonValues, $mainValues, $from_id, $userInfo, $connection;
@@ -2516,6 +2616,9 @@ function getUserOrderDetailKeys($id, $offset = 0){
     }else {
         $order = $order->fetch_assoc();
         $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+        if(wizwiz_cleanupOrderIfMissingOnPanel($order, $syncInfo, false)){
+            return null;
+        }
         if(is_array($syncInfo) && !empty($syncInfo['found']) && intval($syncInfo['expire_date'] ?? 0) > 0){
             $order['expire_date'] = intval($syncInfo['expire_date']);
         }
@@ -2788,9 +2891,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
     
         $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
-        return ["keyboard"=>json_encode([
-                    'inline_keyboard' => $keyboard
-                ]),
+        return ["keyboard"=>wizwiz_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }
 }
@@ -2807,6 +2908,9 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
     }else {
         $order = $order->fetch_assoc();
         $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+        if(wizwiz_cleanupOrderIfMissingOnPanel($order, $syncInfo, false)){
+            return null;
+        }
         if(is_array($syncInfo) && !empty($syncInfo['found']) && intval($syncInfo['expire_date'] ?? 0) > 0){
             $order['expire_date'] = intval($syncInfo['expire_date']);
         }
@@ -3133,9 +3237,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $keyboard[] = [['text' => $buttonValues['delete_config'], 'callback_data' => "deleteMyConfig" . $id]];
 
         $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => ($agentBought == true?"agentConfigsList":"mySubscriptions")]];
-        return ["keyboard"=>json_encode([
-                    'inline_keyboard' => $keyboard
-                ]),
+        return ["keyboard"=>wizwiz_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }
 }
