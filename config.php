@@ -535,6 +535,159 @@ function wizwiz_arrayValue($arr, $key, $default = null){
     return $default;
 }
 
+function wizwiz_panelExpiryToSeconds($value){
+    if($value === null) return 0;
+    if(is_string($value)){
+        $value = trim($value);
+        if($value === '' || $value === '0') return 0;
+        $value = preg_replace('/[^0-9\-]/', '', $value);
+        if($value === '' || $value === '-' || $value === '0') return 0;
+    }
+    $v = intval($value);
+    if($v <= 0) return 0;
+    // 3x-ui stores expiryTime in milliseconds; bot stores expire_date in seconds.
+    if($v > 9999999999) $v = intval($v / 1000);
+    return $v;
+}
+
+function wizwiz_panelClientIdentity($client){
+    $id = (string)wizwiz_arrayValue($client, 'id', '');
+    if($id === '') $id = (string)wizwiz_arrayValue($client, 'uuid', '');
+    if($id === '') $id = (string)wizwiz_arrayValue($client, 'password', '');
+    return $id;
+}
+
+function wizwiz_panelClientEmail($client){
+    return trim((string)wizwiz_arrayValue($client, 'email', ''));
+}
+
+function wizwiz_panelFindClientStat($stats, $email){
+    $email = trim((string)$email);
+    if($email === '') return null;
+    if(is_object($stats)) $stats = [$stats];
+    if(!is_array($stats)) return null;
+    foreach($stats as $stat){
+        $statEmail = trim((string)wizwiz_arrayValue($stat, 'email', ''));
+        if($statEmail !== '' && $statEmail === $email) return $stat;
+    }
+    return null;
+}
+
+function wizwiz_panelListFromGetJson($json){
+    if(!$json || !isset($json->obj)) return [];
+    $rows = $json->obj;
+    if(is_object($rows)) $rows = [$rows];
+    return is_array($rows) ? $rows : [];
+}
+
+function wizwiz_syncOrderExpiryFromPanel($order, $updateDb = true){
+    global $connection;
+
+    if(is_numeric($order)){
+        $oid = intval($order);
+        if($oid <= 0) return null;
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        if(!$stmt) return null;
+        $stmt->bind_param('i', $oid);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $order = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+        $stmt->close();
+        if(!$order) return null;
+    }
+
+    if(!is_array($order)) return null;
+    $oid = intval($order['id'] ?? 0);
+    $serverId = intval($order['server_id'] ?? 0);
+    if($oid <= 0 || $serverId <= 0) return null;
+
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $remark = trim((string)($order['remark'] ?? ''));
+    $inboundId = intval($order['inbound_id'] ?? 0);
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $serverInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$serverInfo) return null;
+
+    $serverType = (string)($serverInfo['type'] ?? '');
+    $newExpire = 0;
+    $found = false;
+    $source = '';
+
+    if($serverType === 'marzban'){
+        if(function_exists('getMarzbanUser')){
+            $info = getMarzbanUser($serverId, $remark);
+            if(is_object($info) && isset($info->expire)){
+                $found = true;
+                $newExpire = wizwiz_panelExpiryToSeconds($info->expire);
+                $source = 'marzban';
+            }
+        }
+    }else{
+        $json = getJson($serverId);
+        $rows = wizwiz_panelListFromGetJson($json);
+        foreach($rows as $row){
+            $rowId = intval(wizwiz_arrayValue($row, 'id', 0));
+            if($inboundId > 0 && $rowId !== $inboundId) continue;
+
+            $settings = wizwiz_decodeMaybeJson(wizwiz_arrayValue($row, 'settings', '{}'), true);
+            $clients = $settings['clients'] ?? [];
+            if(!is_array($clients)) $clients = [];
+
+            foreach($clients as $client){
+                $clientId = wizwiz_panelClientIdentity($client);
+                $clientEmail = wizwiz_panelClientEmail($client);
+                $match = false;
+                if($uuid !== '' && $clientId !== '' && $clientId === $uuid) $match = true;
+                if(!$match && $remark !== '' && $clientEmail !== '' && $clientEmail === $remark) $match = true;
+                if(!$match) continue;
+
+                $found = true;
+
+                $clientExp = wizwiz_panelExpiryToSeconds(wizwiz_arrayValue($client, 'expiryTime', 0));
+                $stat = wizwiz_panelFindClientStat(wizwiz_arrayValue($row, 'clientStats', []), $clientEmail);
+                $statExp = $stat ? wizwiz_panelExpiryToSeconds(wizwiz_arrayValue($stat, 'expiryTime', 0)) : 0;
+                $rowExp = wizwiz_panelExpiryToSeconds(wizwiz_arrayValue($row, 'expiryTime', 0));
+
+                // Prefer the client settings value because manual edits in 3x-ui update it first.
+                if($clientExp > 0){
+                    $newExpire = $clientExp;
+                    $source = 'client';
+                }elseif($statExp > 0){
+                    $newExpire = $statExp;
+                    $source = 'clientStats';
+                }elseif($rowExp > 0){
+                    $newExpire = $rowExp;
+                    $source = 'inbound';
+                }
+                break 2;
+            }
+        }
+    }
+
+    if($found && $newExpire > 0 && $updateDb){
+        $oldExpire = intval($order['expire_date'] ?? 0);
+        if($oldExpire !== $newExpire){
+            $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
+            if($stmt){
+                $stmt->bind_param('ii', $newExpire, $oid);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+
+    return [
+        'found' => $found,
+        'expire_date' => $newExpire,
+        'source' => $source,
+    ];
+}
+
 function wizwiz_extractSubIdFromSettings($settings, $uuid = null, $remark = null){
     $settings = wizwiz_decodeMaybeJson($settings, true);
     $clients = $settings['clients'] ?? [];
@@ -2362,6 +2515,10 @@ function getUserOrderDetailKeys($id, $offset = 0){
         return null;
     }else {
         $order = $order->fetch_assoc();
+        $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+        if(is_array($syncInfo) && !empty($syncInfo['found']) && intval($syncInfo['expire_date'] ?? 0) > 0){
+            $order['expire_date'] = intval($syncInfo['expire_date']);
+        }
         $userId = $order['userid'];
         $firstName = bot('getChat',['chat_id'=>$userId])->result->first_name ?? " ";
         $fid = $order['fileid']; 
@@ -2649,6 +2806,10 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         return null;
     }else {
         $order = $order->fetch_assoc();
+        $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+        if(is_array($syncInfo) && !empty($syncInfo['found']) && intval($syncInfo['expire_date'] ?? 0) > 0){
+            $order['expire_date'] = intval($syncInfo['expire_date']);
+        }
         $fid = $order['fileid']; 
     	$stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? AND `active`=1"); 
         $stmt->bind_param("i", $fid);

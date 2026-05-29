@@ -2264,15 +2264,16 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
     $afterMsgState = (strlen(trim($afterMsg)) > 0) ? "فعال ✅" : "خاموش 🚫";
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"♻️ به‌روزرسانی همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive"]],
-        [['text'=>"👤 به‌روزرسانی کانفیگ‌های یک کاربر",'callback_data'=>"updateConfigsUser"]],
-        [['text'=>"🧩 به‌روزرسانی یک کانفیگ",'callback_data'=>"updateConfigsOne"]],
-        [['text'=>"➕ افزودن دستی کانفیگ برای کاربر",'callback_data'=>"manualAttachConfig"]],
-        [['text'=>"🌐 به‌روزرسانی بر اساس دامنه/آدرس",'callback_data'=>"updateConfigsByDomain"]],
-        [['text'=>"🗑 پاکسازی کانفیگ‌های قدیمی",'callback_data'=>"cleanOldConfigsMenu"]],
-        [['text'=>"✉️ تنظیم پیام پس از به‌روزرسانی",'callback_data'=>"updateConfigsAfterMessage"]],
-        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
-        [['text'=>"📊 مشاهده وضعیت",'callback_data'=>"updateConfigsStatus"], ['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
+        [['text'=>"📦 عملیات گروهی", 'callback_data'=>"wizwizch", 'style'=>'primary']],
+        [['text'=>"✅ همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive", 'style'=>'success'], ['text'=>"👤 فقط یک کاربر",'callback_data'=>"updateConfigsUser", 'style'=>'primary']],
+        [['text'=>"🧩 یک کانفیگ",'callback_data'=>"updateConfigsOne", 'style'=>'primary'], ['text'=>"🌐 بر اساس دامنه/ساب",'callback_data'=>"updateConfigsByDomain", 'style'=>'primary']],
+
+        [['text'=>"🧰 ابزارها", 'callback_data'=>"wizwizch", 'style'=>'primary']],
+        [['text'=>"➕ افزودن دستی برای کاربر",'callback_data'=>"manualAttachConfig", 'style'=>'success'], ['text'=>"✉️ پیام پس از آپدیت",'callback_data'=>"updateConfigsAfterMessage", 'style'=>'primary']],
+        [['text'=>"🗑 پاکسازی قدیمی‌ها",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'danger']],
+
+        [['text'=>"🚀 شروع / ادامه",'callback_data'=>"updateConfigsRun", 'style'=>'success'], ['text'=>"📊 وضعیت",'callback_data'=>"updateConfigsStatus", 'style'=>'primary']],
+        [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop", 'style'=>'danger']],
         [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]],
     ]], JSON_UNESCAPED_UNICODE);
 
@@ -2652,10 +2653,9 @@ if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin']
            "برای دیدن تعداد و نمونه‌ها، «پیش‌نمایش» رو بزن.";
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"🔍 پیش‌نمایش",'callback_data'=>"cleanOldConfigsPreview"]],
-        [['text'=>"⏱ تغییر تعداد روز",'callback_data'=>"cleanOldConfigsSetDays"]],
-        [['text'=>"📅 تغییر معیار",'callback_data'=>"cleanOldConfigsToggleBasis"]],
-        [['text'=>"🚫 حذف خودکار: $autoTitle",'callback_data'=>"cleanOldConfigsToggleAuto"]],
+        [['text'=>"🔍 پیش‌نمایش امن",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
+        [['text'=>"⏱ تعداد روز",'callback_data'=>"cleanOldConfigsSetDays", 'style'=>'primary'], ['text'=>"📅 معیار حذف",'callback_data'=>"cleanOldConfigsToggleBasis", 'style'=>'primary']],
+        [['text'=>"🚫 حذف خودکار: $autoTitle",'callback_data'=>"cleanOldConfigsToggleAuto", 'style'=>($auto == 'on' ? 'success' : 'danger')]],
         [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE);
 
@@ -2721,6 +2721,9 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     $now = time();
     $threshold = $now - ($days * 86400);
 
+    // قبل از پیش‌نمایش، تاریخ واقعی پنل sync می‌شود تا تمدید دستی داخل پنل باعث حذف اشتباه نشود.
+    $syncedBeforePreview = farid_syncOldConfigCandidatesBeforeClean($days, $basis);
+
     // فقط کانفیگ‌های منقضی شده
     if($basis == "date"){
         $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `expire_date` < ? AND `date` < ?");
@@ -2768,13 +2771,14 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     $msg = "🔍 پیش‌نمایش پاکسازی\n\n".
            "📌 معیار: $basisTitle\n".
            "⏱ بازه: بیشتر از $days روز\n".
+           "🔄 همگام‌سازی قبل از شمارش: $syncedBeforePreview مورد\n".
            "🔢 تعداد کل موارد قابل حذف: $total\n\n".
            "نمونه (حداکثر 15 مورد):\n" . implode("\n", $lines) . "\n\n".
            "⚠️ اگر مطمئن هستی «حذف کن» رو بزن.";
 
     editText($message_id, $msg, json_encode(['inline_keyboard'=>[
-        [['text'=>"🗑 حذف کن",'callback_data'=>"cleanOldConfigsDoDelete"]],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"🗑 حذف کن",'callback_data'=>"cleanOldConfigsDoDelete", 'style'=>'danger']],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'primary']],
         [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE));
     exit();
@@ -2791,6 +2795,9 @@ if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdm
 
     $now = time();
     $threshold = $now - ($days * 86400);
+
+    // قبل از حذف، یک بار دیگر تاریخ واقعی پنل sync می‌شود تا کانفیگ تمدیدشده حذف نشود.
+    $syncedBeforeDelete = farid_syncOldConfigCandidatesBeforeClean($days, $basis);
 
     // شمارش قبل حذف
     if($basis == "date"){
@@ -2829,6 +2836,7 @@ if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdm
     $report = "🗑 گزارش پاکسازی\n\n".
               "📌 معیار: $basisTitle\n".
               "⏱ بازه: بیشتر از $days روز\n".
+              "🔄 همگام‌سازی قبل از حذف: $syncedBeforeDelete مورد\n".
               "🧾 تعداد قبل حذف: $total\n".
               "✅ حذف‌شده: $deleted\n".
               "🕒 زمان: " . jdate("Y-m-d H:i", time());
@@ -11489,34 +11497,76 @@ if ($text == $buttonValues['cancel']) {
    ====================================================================== */
 
 function getAdminKeysPlus(){
-    $keysJson = getAdminKeys();
-    $data = json_decode($keysJson, true);
-    if(!is_array($data) || !isset($data['inline_keyboard'])) return $keysJson;
+    global $buttonValues, $from_id, $admin;
 
-    $hasUpdateConfigs = false;
-    $hasXuiMsgMenu = false;
+    // منوی مدیریت بازچینی شده و دسته‌بندی شده است.
+    // فیلد style از Bot API جدید پشتیبانی می‌شود؛ کلاینت‌های قدیمی‌تر آن را نادیده می‌گیرند.
+    $keys = [];
 
-    foreach($data['inline_keyboard'] as $row){
-        foreach($row as $btn){
-            if(!isset($btn['callback_data'])) continue;
-            if($btn['callback_data'] == "updateConfigsMenu") $hasUpdateConfigs = true;
-            if($btn['callback_data'] == "xuiMsgMenu") $hasXuiMsgMenu = true;
-        }
+    $keys[] = [['text'=>'📊 گزارش‌ها و جستجو', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [
+        ['text'=>$buttonValues['bot_reports'], 'callback_data'=>'botReports', 'style'=>'primary'],
+        ['text'=>$buttonValues['user_reports'], 'callback_data'=>'userReports', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['search_admin_config'], 'callback_data'=>'searchUsersConfig', 'style'=>'primary'],
+        ['text'=>$buttonValues['message_to_user'], 'callback_data'=>'messageToSpeceficUser', 'style'=>'primary']
+    ];
+
+    $keys[] = [['text'=>'🧾 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [
+        ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu', 'style'=>'success'],
+        ['text'=>$buttonValues['create_account'], 'callback_data'=>'createMultipleAccounts', 'style'=>'success']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['gift_volume_day'], 'callback_data'=>'giftVolumeAndDay', 'style'=>'success'],
+        ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
+    ];
+
+    $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [
+        ['text'=>$buttonValues['server_settings'], 'callback_data'=>'serversSetting', 'style'=>'primary'],
+        ['text'=>$buttonValues['categories_settings'], 'callback_data'=>'categoriesSetting', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['plan_settings'], 'callback_data'=>'backplan', 'style'=>'primary'],
+        ['text'=>$buttonValues['discount_settings'], 'callback_data'=>'discount_codes', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['gateways_settings'], 'callback_data'=>'gateWays_Channels', 'style'=>'primary'],
+        ['text'=>$buttonValues['bot_settings'], 'callback_data'=>'botSettings', 'style'=>'primary']
+    ];
+
+    $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    if($from_id == $admin){
+        $keys[] = [['text'=>$buttonValues['admins_list'], 'callback_data'=>'adminsList', 'style'=>'primary']];
     }
+    $keys[] = [
+        ['text'=>$buttonValues['increase_wallet'], 'callback_data'=>'increaseUserWallet', 'style'=>'success'],
+        ['text'=>$buttonValues['decrease_wallet'], 'callback_data'=>'decreaseUserWallet', 'style'=>'danger']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['ban_user'], 'callback_data'=>'banUser', 'style'=>'danger'],
+        ['text'=>$buttonValues['unban_user'], 'callback_data'=>'unbanUser', 'style'=>'success']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['agent_list'], 'callback_data'=>'agentsList', 'style'=>'primary'],
+        ['text'=>'درخواست‌های رد شده', 'callback_data'=>'rejectedAgentList', 'style'=>'primary']
+    ];
 
-    if(!$hasUpdateConfigs){
-        $data['inline_keyboard'][] = [
-            ['text' => "♻️ به‌روزرسانی و ارسال کانفیگ‌ها", 'callback_data' => "updateConfigsMenu"]
-        ];
-    }
+    $keys[] = [['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [
+        ['text'=>$buttonValues['tickets_list'], 'callback_data'=>'ticketsList', 'style'=>'primary'],
+        ['text'=>$buttonValues['message_to_all'], 'callback_data'=>'message2All', 'style'=>'success']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['forward_to_all'], 'callback_data'=>'forwardToAll', 'style'=>'success'],
+        ['text'=>$buttonValues['main_button_settings'], 'callback_data'=>'mainMenuButtons', 'style'=>'primary']
+    ];
 
-    if(!$hasXuiMsgMenu){
-        $data['inline_keyboard'][] = [
-            ['text' => "📩 پیام به کاربران تمام/نزدیک اتمام", 'callback_data' => "xuiMsgMenu"]
-        ];
-    }
+    $keys[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
 
-    return json_encode($data, JSON_UNESCAPED_UNICODE);
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 
 function farid_attachUpdateConfigButton($keyboardJson, $orderId){
@@ -11690,6 +11740,46 @@ function farid_getUpdateAfterMessage(){
 
 function farid_setUpdateAfterMessage($msg){
     farid_setSettingValue("UPDATE_CONFIGS_AFTER_MESSAGE", strval($msg));
+}
+
+
+// ===========================
+// Sync candidates before manual/auto cleanup
+// ===========================
+function farid_syncOldConfigCandidatesBeforeClean($days, $basis, $max = 300){
+    global $connection;
+    if(!function_exists('wizwiz_syncOrderExpiryFromPanel')) return 0;
+
+    $days = intval($days);
+    if($days <= 0) $days = 10;
+    $basis = ($basis == "date") ? "date" : "expire_date";
+    $max = intval($max);
+    if($max < 1) $max = 300;
+    if($max > 1000) $max = 1000;
+
+    $now = time();
+    $threshold = $now - ($days * 86400);
+
+    if($basis == "date"){
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `expire_date` < ? AND `date` < ? ORDER BY `id` ASC LIMIT ?");
+        if(!$stmt) return 0;
+        $stmt->bind_param("iii", $now, $threshold, $max);
+    }else{
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `expire_date` < ? ORDER BY `id` ASC LIMIT ?");
+        if(!$stmt) return 0;
+        $stmt->bind_param("ii", $threshold, $max);
+    }
+
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+
+    $synced = 0;
+    while($order = $res->fetch_assoc()){
+        $info = wizwiz_syncOrderExpiryFromPanel($order, true);
+        if(is_array($info) && !empty($info['found'])) $synced++;
+    }
+    return $synced;
 }
 
 
@@ -12982,6 +13072,14 @@ function farid_generateUpdatedVrayLinks($order){
     global $connection, $botState;
 
     if(!is_array($order)) return null;
+
+    // Sync expiry time from the panel whenever configs are refreshed.
+    if(function_exists('wizwiz_syncOrderExpiryFromPanel')){
+        $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+        if(is_array($syncInfo) && !empty($syncInfo['found']) && intval($syncInfo['expire_date'] ?? 0) > 0){
+            $order['expire_date'] = intval($syncInfo['expire_date']);
+        }
+    }
 
     $server_id = intval($order['server_id'] ?? 0);
     if($server_id <= 0) return null;
