@@ -43,21 +43,66 @@ function wizwiz_normalizePlanDomainInput($domain){
     return implode("\n", $clean);
 }
 
+function wizwiz_schemaPatchDone($key){
+    global $connection;
+    $type = 'SCHEMA_PATCH_' . $key;
+    $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return $row && (($row['value'] ?? '') === 'done');
+}
+
+function wizwiz_markSchemaPatchDone($key){
+    global $connection;
+    $type = 'SCHEMA_PATCH_' . $key;
+    $value = 'done';
+    $stmt = @$connection->prepare("SELECT `id` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = ($res && $res->num_rows > 0);
+    $stmt->close();
+
+    if($exists){
+        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $value, $type);
+    }else{
+        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $type, $value);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
 function wizwiz_ensurePlanCustomDomainColumn(){
     global $connection;
+    if(wizwiz_schemaPatchDone('PLAN_CUSTOM_DOMAIN_V1')) return;
     $exists = @($connection->query("SHOW COLUMNS FROM `server_plans` LIKE 'custom_domain'"));
     if($exists && $exists->num_rows == 0){
         @($connection->query("ALTER TABLE `server_plans` ADD `custom_domain` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `custom_sni`"));
     }
+    wizwiz_markSchemaPatchDone('PLAN_CUSTOM_DOMAIN_V1');
 }
 wizwiz_ensurePlanCustomDomainColumn();
 
-function wizwiz_ensureNewMemberLockColumns(){
+function wizwiz_ensureExtraUserColumns(){
     global $connection;
+    if(wizwiz_schemaPatchDone('USERS_ACCESS_JOIN_CARD_V2')) return;
     $columns = [
         'approval_status' => "ALTER TABLE `users` ADD `approval_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci NOT NULL DEFAULT 'approved' AFTER `spam_info`",
         'approval_referrer' => "ALTER TABLE `users` ADD `approval_referrer` bigint(10) DEFAULT NULL AFTER `approval_status`",
         'approval_request_date' => "ALTER TABLE `users` ADD `approval_request_date` int(255) NOT NULL DEFAULT 0 AFTER `approval_referrer`",
+        'join_exempt' => "ALTER TABLE `users` ADD `join_exempt` tinyint(1) NOT NULL DEFAULT 0 AFTER `approval_request_date`",
+        'access_exempt' => "ALTER TABLE `users` ADD `access_exempt` tinyint(1) NOT NULL DEFAULT 0 AFTER `join_exempt`",
+        'card_info_version' => "ALTER TABLE `users` ADD `card_info_version` int(11) NOT NULL DEFAULT 0 AFTER `access_exempt`",
     ];
 
     foreach($columns as $column => $query){
@@ -66,8 +111,27 @@ function wizwiz_ensureNewMemberLockColumns(){
             @($connection->query($query));
         }
     }
+    wizwiz_markSchemaPatchDone('USERS_ACCESS_JOIN_CARD_V2');
 }
-wizwiz_ensureNewMemberLockColumns();
+wizwiz_ensureExtraUserColumns();
+
+function wizwiz_ensureAccessCodeAuditColumns(){
+    global $connection;
+    if(wizwiz_schemaPatchDone('USERS_ACCESS_CODE_AUDIT_V1')) return;
+    $columns = [
+        'access_code_used' => "ALTER TABLE `users` ADD `access_code_used` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `access_exempt`",
+        'access_code_date' => "ALTER TABLE `users` ADD `access_code_date` int(255) NOT NULL DEFAULT 0 AFTER `access_code_used`",
+        'access_code_revoked' => "ALTER TABLE `users` ADD `access_code_revoked` tinyint(1) NOT NULL DEFAULT 0 AFTER `access_code_date`",
+    ];
+    foreach($columns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `users` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0){
+            @($connection->query($query));
+        }
+    }
+    wizwiz_markSchemaPatchDone('USERS_ACCESS_CODE_AUDIT_V1');
+}
+wizwiz_ensureAccessCodeAuditColumns();
 
 function wizwiz_getUserByTelegramId($userId){
     global $connection;
@@ -117,6 +181,310 @@ function wizwiz_isUserApprovedForLock($userInfo){
     return !isset($userInfo['approval_status']) || $userInfo['approval_status'] == 'approved';
 }
 
+function wizwiz_getBotStatesArray($force = false){
+    global $connection;
+    static $cache = null;
+    if(!$force && is_array($cache)) return $cache;
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type` = 'BOT_STATES' LIMIT 1");
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    $state = $row ? json_decode((string)$row['value'], true) : [];
+    $cache = is_array($state) ? $state : [];
+    return $cache;
+}
+
+function wizwiz_saveBotStatesArray($states){
+    global $connection, $botState;
+    if(!is_array($states)) $states = [];
+    $value = json_encode($states, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `setting` WHERE `type` = 'BOT_STATES'");
+    $stmt->execute();
+    $cnt = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+    if($cnt > 0){
+        $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = 'BOT_STATES'");
+        $stmt->bind_param('s', $value);
+    }else{
+        $type = 'BOT_STATES';
+        $stmt = $connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        $stmt->bind_param('ss', $type, $value);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    $botState = $states;
+    wizwiz_getBotStatesArray(true);
+    return $ok;
+}
+
+function wizwiz_getNewMemberAccessMode($state = null){
+    if($state === null) $state = wizwiz_getBotStatesArray();
+    if(!is_array($state)) $state = [];
+    $mode = $state['newMemberAccessMode'] ?? null;
+    if(!in_array($mode, ['open','existing','buyers','approval'], true)){
+        $mode = (($state['newMemberLockState'] ?? 'off') == 'on') ? 'approval' : 'open';
+    }
+    return $mode;
+}
+
+function wizwiz_newMemberAccessModeTitle($mode){
+    switch($mode){
+        case 'approval': return '🔐 تایید دستی با معرف';
+        case 'buyers': return '🛒 فقط خریداران قبلی';
+        case 'existing': return '👥 فقط کاربران قبلی ربات';
+        default: return '🌍 آزاد برای همه';
+    }
+}
+
+function wizwiz_setNewMemberAccessMode($mode){
+    global $botState;
+    if(!in_array($mode, ['open','existing','buyers','approval'], true)) $mode = 'open';
+    $state = wizwiz_getBotStatesArray();
+    $oldMode = wizwiz_getNewMemberAccessMode($state);
+    $state['newMemberAccessMode'] = $mode;
+    $state['newMemberLockState'] = ($mode === 'approval') ? 'on' : 'off';
+    if($oldMode !== $mode || empty($state['newMemberAccessStartedAt'])){
+        $state['newMemberAccessStartedAt'] = time();
+    }
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+    return $state;
+}
+
+
+function wizwiz_getBuyersAccessCode($state = null){
+    if($state === null) $state = wizwiz_getBotStatesArray();
+    if(!is_array($state)) $state = [];
+    return trim((string)($state['buyersAccessCode'] ?? ''));
+}
+
+function wizwiz_setBuyersAccessCode($code){
+    global $botState;
+    $code = trim((string)$code);
+    // کد کوتاه/طولانی عجیب ذخیره نشود، ولی اجازه حروف، عدد، خط تیره و زیرخط داده می‌شود.
+    $code = preg_replace('/[^A-Za-z0-9_\-]/', '', $code);
+    $state = wizwiz_getBotStatesArray();
+    $state['buyersAccessCode'] = $code;
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+    return $code;
+}
+
+function wizwiz_generateBuyersAccessCode(){
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $code = 'VIP-';
+    for($i=0; $i<8; $i++){
+        $code .= $alphabet[random_int(0, strlen($alphabet)-1)];
+    }
+    return wizwiz_setBuyersAccessCode($code);
+}
+
+function wizwiz_normalizeAccessCodeText($text){
+    $text = trim((string)$text);
+    if(preg_match('/^\/start\s+(.+)$/i', $text, $m)) $text = trim($m[1]);
+    return preg_replace('/\s+/', '', $text);
+}
+
+function wizwiz_userIsAccessExempt($userInfo){
+    return !empty($userInfo) && !empty($userInfo['access_exempt']);
+}
+
+function wizwiz_setUserAccessExempt($userId, $enabled = true, $code = null){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $enabled = $enabled ? 1 : 0;
+    if($enabled){
+        $safeCode = $code === null ? null : trim((string)$code);
+        $now = time();
+        $stmt = $connection->prepare("UPDATE `users` SET `access_exempt` = 1, `approval_status` = 'approved', `step` = 'none', `access_code_used` = ?, `access_code_date` = ?, `access_code_revoked` = 0 WHERE `userid` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('sii', $safeCode, $now, $userId);
+    }else{
+        $stmt = $connection->prepare("UPDATE `users` SET `access_exempt` = 0, `access_code_revoked` = 1 WHERE `userid` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('i', $userId);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_getUserDisplayForAdmin($userId){
+    $user = wizwiz_getUserByTelegramId($userId);
+    $name = htmlspecialchars((string)($user['name'] ?? 'کاربر'), ENT_QUOTES, 'UTF-8');
+    $username = trim((string)($user['username'] ?? ''));
+    $username = $username !== '' ? '@' . ltrim($username, '@') : 'ندارد';
+    return [$user, $name, htmlspecialchars($username, ENT_QUOTES, 'UTF-8')];
+}
+
+function wizwiz_getAccessCodeAdminActionKeys($userId){
+    $userId = intval($userId);
+    return wizwiz_inlineKeyboardJson([
+        [['text'=>'🎟 مدیریت دسترسی کد ورود', 'callback_data'=>'wizwizch', 'style'=>'primary']],
+        [
+            ['text'=>'🧹 حذف دسترسی کد', 'callback_data'=>'revokeCodeAccess' . $userId, 'style'=>'danger'],
+            ['text'=>'🚫 بلاک کاربر', 'callback_data'=>'blockCodeAccess' . $userId, 'style'=>'danger']
+        ]
+    ]);
+}
+
+function wizwiz_sendAccessCodeLoginNotice($userId, $code){
+    $userId = intval($userId);
+    [$user, $name, $usernameText] = wizwiz_getUserDisplayForAdmin($userId);
+    $codeSafe = htmlspecialchars((string)$code, ENT_QUOTES, 'UTF-8');
+    $dateText = jdate('Y/m/d H:i', time());
+    $msg = "🎟 <b>ورود با کد دسترسی</b>\n\n" .
+           "کاربر زیر با استفاده از کد ورود، دسترسی خود را فعال کرد.\n\n" .
+           "👤 کاربر: <a href='tg://user?id=$userId'>$name</a>\n" .
+           "🆔 آیدی عددی: <code>$userId</code>\n" .
+           "🔸 یوزرنیم: $usernameText\n" .
+           "🎟 کد استفاده‌شده: <code>$codeSafe</code>\n" .
+           "🕒 زمان: <code>$dateText</code>\n\n" .
+           "در صورت نیاز می‌توانید دسترسی ایجادشده با این کد را حذف کنید یا کاربر را مسدود نمایید.";
+    foreach(wizwiz_getAllAdminIds() as $adminId){
+        sendMessage($msg, wizwiz_getAccessCodeAdminActionKeys($userId), 'HTML', $adminId);
+    }
+}
+
+function wizwiz_tryActivateAccessCode($userId, $text){
+    $code = wizwiz_getBuyersAccessCode();
+    if($code === '') return false;
+    $sent = wizwiz_normalizeAccessCodeText($text);
+    if($sent === '') return false;
+    if(hash_equals(strtolower($code), strtolower($sent))){
+        $ok = wizwiz_setUserAccessExempt($userId, true, $code);
+        if($ok) wizwiz_sendAccessCodeLoginNotice($userId, $code);
+        return $ok;
+    }
+    return false;
+}
+
+function wizwiz_userHasPreviousPurchase($userId){
+    global $connection;
+    $userId = (string)$userId;
+    if($userId === '') return false;
+
+    $stmt = $connection->prepare("SELECT `id` FROM `orders_list` WHERE `userid` = ? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('s', $userId);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $has = ($res && $res->num_rows > 0);
+        $stmt->close();
+        if($has) return true;
+    }
+
+    $paidStates = ['paid', 'approved'];
+    $stmt = $connection->prepare("SELECT `id` FROM `pays` WHERE `user_id` = ? AND `state` IN ('paid','approved') LIMIT 1");
+    if($stmt){
+        $uid = intval($userId);
+        $stmt->bind_param('i', $uid);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $has = ($res && $res->num_rows > 0);
+        $stmt->close();
+        if($has) return true;
+    }
+    return false;
+}
+
+function wizwiz_userIsExistingBeforeAccessMode($userInfo, $state = null){
+    if(!$userInfo) return false;
+    if($state === null) $state = wizwiz_getBotStatesArray();
+    $startedAt = intval($state['newMemberAccessStartedAt'] ?? 0);
+    $joinedAt = intval($userInfo['date'] ?? 0);
+    if($startedAt <= 0) return true;
+    return $joinedAt > 0 && $joinedAt <= $startedAt;
+}
+
+function wizwiz_newMemberAccessDeniedMessage($mode){
+    if($mode === 'buyers'){
+        return "🔒 در حال حاضر دسترسی به ربات فقط برای کاربرانی فعال است که قبلاً خرید ثبت‌شده داشته‌اند.\n\nاگر از مدیریت <b>کد ورود</b> دریافت کرده‌اید، لطفاً همان کد را در همین بخش ارسال کنید تا دسترسی شما فعال شود.\nدر صورت وجود هرگونه ابهام، لطفاً با پشتیبانی در ارتباط باشید.";
+    }
+    if($mode === 'existing'){
+        return "🔒 در حال حاضر دسترسی به ربات فقط برای کاربران قبلی فعال است.\nاگر پیش‌تر عضو ربات بوده‌اید و اکنون دسترسی ندارید، لطفاً با پشتیبانی در ارتباط باشید.";
+    }
+    return "🔒 دسترسی شما هنوز فعال نشده است.";
+}
+
+function wizwiz_getNewMemberAccessMenuKeys(){
+    $state = wizwiz_getBotStatesArray();
+    $mode = wizwiz_getNewMemberAccessMode($state);
+    $mark = function($m) use ($mode){ return $mode === $m ? '✅ ' : ''; };
+    return wizwiz_inlineKeyboardJson([
+        [['text'=>'🔖 وضعیت فعلی: ' . wizwiz_newMemberAccessModeTitle($mode), 'callback_data'=>'wizwizch', 'style'=>'primary']],
+        [
+            ['text'=>$mark('open') . '🌍 آزاد برای همه', 'callback_data'=>'setNewMemberAccessMode_open', 'style'=>'success'],
+            ['text'=>$mark('existing') . '👥 فقط کاربران قبلی', 'callback_data'=>'setNewMemberAccessMode_existing', 'style'=>'primary']
+        ],
+        [
+            ['text'=>$mark('buyers') . '🛒 فقط خریداران قبلی', 'callback_data'=>'setNewMemberAccessMode_buyers', 'style'=>'primary'],
+            ['text'=>$mark('approval') . '🔐 تایید دستی با معرف', 'callback_data'=>'setNewMemberAccessMode_approval', 'style'=>'danger']
+        ],
+        [['text'=>'🎟 کد ورود خریداران: ' . (wizwiz_getBuyersAccessCode($state) !== '' ? wizwiz_getBuyersAccessCode($state) : 'تنظیم نشده'), 'callback_data'=>'wizwizch', 'style'=>'primary']],
+        [
+            ['text'=>'🔄 ساخت کد جدید', 'callback_data'=>'generateBuyersAccessCode', 'style'=>'success'],
+            ['text'=>'✏️ تنظیم دستی کد', 'callback_data'=>'setBuyersAccessCode', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🧹 حذف کد ورود', 'callback_data'=>'clearBuyersAccessCode', 'style'=>'danger'],
+            ['text'=>'🚪 معافیت جوین اجباری کانال', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
+        ],
+        [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'managePanel', 'style'=>'primary']]
+    ]);
+}
+
+function wizwiz_setUserJoinExempt($userId, $enabled = true){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $enabled = $enabled ? 1 : 0;
+    $user = wizwiz_getUserByTelegramId($userId);
+    if(!$user){
+        $name = 'manual';
+        $username = 'manual';
+        $time = time();
+        $stmt = $connection->prepare("INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`, `step`, `approval_status`, `approval_request_date`, `join_exempt`) VALUES (?, ?, ?, 0, 0, ?, 'none', 'approved', ?, ?)");
+        if(!$stmt) return false;
+        $stmt->bind_param('issiii', $userId, $name, $username, $time, $time, $enabled);
+    }else{
+        $stmt = $connection->prepare("UPDATE `users` SET `join_exempt` = ? WHERE `userid` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('ii', $enabled, $userId);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_getJoinExemptMenuKeys(){
+    return wizwiz_inlineKeyboardJson([
+        [['text'=>'🚪 مدیریت معافیت جوین اجباری', 'callback_data'=>'wizwizch', 'style'=>'primary']],
+        [
+            ['text'=>'➕ معاف کردن کاربر', 'callback_data'=>'addJoinExemptUser', 'style'=>'success'],
+            ['text'=>'➖ حذف معافیت کاربر', 'callback_data'=>'removeJoinExemptUser', 'style'=>'danger']
+        ],
+        [['text'=>'📋 لیست کاربران معاف', 'callback_data'=>'joinExemptList', 'style'=>'primary']],
+        [['text'=>'🔙 برگشت', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary']]
+    ]);
+}
+
+function wizwiz_getJoinExemptListText(){
+    global $connection;
+    $res = $connection->query("SELECT `userid`, `name`, `username` FROM `users` WHERE `join_exempt` = 1 ORDER BY `id` DESC LIMIT 50");
+    if(!$res || $res->num_rows == 0) return "📋 هنوز هیچ کاربری از جوین اجباری کانال معاف نشده است.";
+    $msg = "📋 <b>کاربران معاف از جوین اجباری کانال</b>\n\n";
+    while($row = $res->fetch_assoc()){
+        $uid = htmlspecialchars((string)$row['userid'], ENT_QUOTES, 'UTF-8');
+        $name = htmlspecialchars((string)$row['name'], ENT_QUOTES, 'UTF-8');
+        $uname = htmlspecialchars((string)$row['username'], ENT_QUOTES, 'UTF-8');
+        $msg .= "• <code>$uid</code> - $name" . ($uname ? " (@$uname)" : "") . "\n";
+    }
+    return $msg;
+}
+
 function wizwiz_getAllAdminIds(){
     global $connection, $admin;
     $ids = [(int)$admin];
@@ -156,31 +524,59 @@ function wizwiz_sendNewMemberApprovalRequest($userId, $referrerId){
 }
 
 function wizwiz_referrerInstructionMessage($rejected = false){
-    $prefix = $rejected ? "❌ درخواست قبلی شما تایید نشد.\n\n" : "🔒 عضویت در ربات فعلاً نیاز به تایید ادمین دارد.\n\n";
+    $prefix = $rejected ? "❌ درخواست قبلی شما توسط مدیریت تایید نشد.\n\n" : "🔒 عضویت در ربات در حال حاضر نیازمند تایید مدیریت است.\n\n";
     return $prefix .
-        "برای ثبت درخواست، لطفاً <b>آیدی عددی معرف خودتان</b> را ارسال کنید.\n\n" .
-        "معرف شما می‌تواند آیدی عددی خودش را از داخل ربات، بخش <b>حساب من</b> / <b>اطلاعات حساب</b> بردارد و برای شما بفرستد.\n" .
-        "فقط عدد را ارسال کنید؛ مثال: <code>123456789</code>";
+        "برای ثبت درخواست، لطفاً <b>آیدی عددی معرف خود</b> را ارسال کنید.\n\n" .
+        "معرف شما می‌تواند آیدی عددی خود را از داخل ربات، از بخش <b>حساب من</b> / <b>اطلاعات حساب</b> دریافت کرده و برای شما ارسال کند.\n" .
+        "لطفاً فقط عدد را ارسال کنید؛ نمونه: <code>123456789</code>";
 }
 
 function wizwiz_handleNewMemberLock(){
     global $connection, $from_id, $admin, $userInfo, $botState, $text, $data, $first_name, $username;
 
-    if(($botState['newMemberLockState'] ?? 'off') != 'on') return false;
+    $mode = wizwiz_getNewMemberAccessMode($botState);
+    if($mode === 'open') return false;
     if($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin']))) return false;
 
-    $userInfo = wizwiz_createPendingUserIfNeeded($from_id, $first_name, $username);
-    if(wizwiz_isUserApprovedForLock($userInfo)) return false;
+    $state = is_array($botState) ? $botState : [];
+    $existingUser = $userInfo;
+    if(!$existingUser){
+        $existingUser = wizwiz_createPendingUserIfNeeded($from_id, $first_name, $username);
+        $userInfo = $existingUser;
+    }
 
-    $status = $userInfo['approval_status'] ?? 'pending';
     $plainText = trim((string)$text);
+    if(wizwiz_userIsAccessExempt($existingUser)) return false;
+
+    if($mode === 'existing'){
+        if(wizwiz_userIsExistingBeforeAccessMode($existingUser, $state)) return false;
+        sendMessage(wizwiz_newMemberAccessDeniedMessage('existing'), null, 'HTML');
+        exit();
+    }
+
+    if($mode === 'buyers'){
+        if(wizwiz_userHasPreviousPurchase($from_id)) return false;
+        if(wizwiz_tryActivateAccessCode($from_id, $plainText)){
+            sendMessage("✅ کد ورود با موفقیت تایید شد و دسترسی شما فعال گردید.
+
+اکنون می‌توانید از امکانات ربات استفاده کنید.", getMainKeys(), 'HTML');
+            exit();
+        }
+        sendMessage(wizwiz_newMemberAccessDeniedMessage('buyers'), null, 'HTML');
+        exit();
+    }
+
+    // حالت تایید دستی با معرف؛ سازگار با قفل قبلی اعضای جدید
+    if(wizwiz_isUserApprovedForLock($existingUser)) return false;
+
+    $status = $existingUser['approval_status'] ?? 'pending';
 
     $deepLinkReferrer = null;
     if(preg_match('/^\/start\s+(\d+)$/', $plainText, $m)){
         $deepLinkReferrer = (int)$m[1];
     }
 
-    if($status == 'pending' && ($userInfo['step'] ?? '') == 'newMemberApprovalWait' && $deepLinkReferrer === null && !preg_match('/^\d+$/', $plainText)){
+    if($status == 'pending' && ($existingUser['step'] ?? '') == 'newMemberApprovalWait' && $deepLinkReferrer === null && !preg_match('/^\d+$/', $plainText)){
         sendMessage("⏳ درخواست شما قبلاً برای ادمین ارسال شده است.\nبعد از تایید، پیام فعال شدن دسترسی برای شما ارسال می‌شود.", null, 'HTML');
         exit();
     }
@@ -544,10 +940,27 @@ function wizwiz_textContains($haystack, $needle){
 
 function wizwiz_buttonStyleByCallback($button){
     if(!is_array($button)) return $button;
-    if(isset($button['style']) || !isset($button['text'])) return $button;
-    $haystack = (string)($button['text'] ?? '') . ' ' . (string)($button['callback_data'] ?? '');
+    if(!isset($button['text'])) return $button;
 
-    $dangerWords = ['delete', 'del', 'remove', 'ban', 'reject', 'disable', 'decrease', 'cancel', 'لغو', 'حذف', 'بن', 'مسدود', 'رد', 'غیرفعال', 'کاهش', '❌', '🗑'];
+    // Telegram Bot API فقط این سه مقدار را برای style قبول می‌کند.
+    // مقدارهای دیگر مثل secondary باعث خطای reply_markup و از کار افتادن دکمه‌ها می‌شوند.
+    $allowedStyles = ['danger', 'success', 'primary'];
+    if(isset($button['style'])){
+        $button['style'] = strtolower(trim((string)$button['style']));
+        if(!in_array($button['style'], $allowedStyles, true)) $button['style'] = 'primary';
+        return $button;
+    }
+
+    $callback = (string)($button['callback_data'] ?? '');
+    $haystack = (string)($button['text'] ?? '') . ' ' . $callback;
+
+    // دکمه‌های عنوانی/غیرعملیاتی مثل wizwizch رنگ ثابت و معتبر بگیرند.
+    if($callback === 'wizwizch' || $callback === ''){
+        $button['style'] = 'primary';
+        return $button;
+    }
+
+    $dangerWords = ['delete', 'del', 'remove', 'ban', 'reject', 'disable', 'decrease', 'cancel', 'clear', 'off', 'stop', 'لغو', 'حذف', 'بن', 'مسدود', 'رد', 'غیرفعال', 'کاهش', 'پاک', 'خاموش', 'توقف', '❌', '🗑', '🧹', '➖'];
     foreach($dangerWords as $w){
         if(wizwiz_textContains($haystack, $w)){
             $button['style'] = 'danger';
@@ -555,7 +968,7 @@ function wizwiz_buttonStyleByCallback($button){
         }
     }
 
-    $successWords = ['buy', 'renew', 'increase', 'enable', 'approve', 'confirm', 'pay', 'gift', 'join', 'gettest', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'تایید', 'فعال', 'پرداخت', 'هدیه', 'عضویت', '✅'];
+    $successWords = ['buy', 'renew', 'increase', 'enable', 'approve', 'confirm', 'pay', 'gift', 'join', 'gettest', 'add', 'generate', 'on', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'تایید', 'فعال', 'پرداخت', 'هدیه', 'عضویت', 'افزودن', 'معاف', 'ساخت', 'روشن', '✅', '➕', '🔄'];
     foreach($successWords as $w){
         if(wizwiz_textContains($haystack, $w)){
             $button['style'] = 'success';
@@ -563,7 +976,7 @@ function wizwiz_buttonStyleByCallback($button){
         }
     }
 
-    $primaryWords = ['back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک'];
+    $primaryWords = ['back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'settings', 'menu', 'list', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک', 'تنظیم', 'مدیریت', 'لیست'];
     foreach($primaryWords as $w){
         if(wizwiz_textContains($haystack, $w)){
             $button['style'] = 'primary';
@@ -573,6 +986,7 @@ function wizwiz_buttonStyleByCallback($button){
 
     return $button;
 }
+
 
 function wizwiz_styleInlineKeyboard($keyboard){
     if(!is_array($keyboard)) return $keyboard;
@@ -588,8 +1002,267 @@ function wizwiz_styleInlineKeyboard($keyboard){
     return $out;
 }
 
+function wizwiz_styleReplyKeyboardButton($button){
+    if(is_string($button)) $button = ['text' => $button];
+    if(!is_array($button) || !isset($button['text'])) return $button;
+    return wizwiz_buttonStyleByCallback($button);
+}
+
+function wizwiz_styleReplyKeyboard($keyboard){
+    if(!is_array($keyboard)) return $keyboard;
+    $out = [];
+    foreach($keyboard as $row){
+        if(!is_array($row)) continue;
+        $newRow = [];
+        foreach($row as $button){
+            $newRow[] = wizwiz_styleReplyKeyboardButton($button);
+        }
+        $out[] = $newRow;
+    }
+    return $out;
+}
+
+function wizwiz_styleReplyMarkup($markup){
+    if($markup === null || $markup === '') return $markup;
+    $isString = is_string($markup);
+    $decoded = $isString ? json_decode($markup, true) : $markup;
+    if(!is_array($decoded)) return $markup;
+
+    if(isset($decoded['inline_keyboard']) && is_array($decoded['inline_keyboard'])){
+        $decoded['inline_keyboard'] = wizwiz_styleInlineKeyboard($decoded['inline_keyboard']);
+    }
+    if(isset($decoded['keyboard']) && is_array($decoded['keyboard'])){
+        $decoded['keyboard'] = wizwiz_styleReplyKeyboard($decoded['keyboard']);
+    }
+
+    return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function wizwiz_inlineKeyboardJson($keyboard){
     return json_encode(['inline_keyboard' => wizwiz_styleInlineKeyboard($keyboard)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+
+function wizwiz_defaultUserButtonVisibilityKeys(){
+    return [
+        'request_agency' => true,
+        'my_subscriptions' => true,
+        'buy_subscriptions' => true,
+        'test_account' => true,
+        'wallet_charge' => true,
+        'invite_friends' => true,
+        'my_info' => true,
+        'shared_existence' => true,
+        'individual_existence' => true,
+        'application_links' => true,
+        'my_tickets' => true,
+        'search_config' => true,
+    ];
+}
+
+function wizwiz_getUserButtonVisibility($state = null){
+    if($state === null) $state = wizwiz_getBotStatesArray();
+    $defaults = wizwiz_defaultUserButtonVisibilityKeys();
+    $saved = is_array($state) && isset($state['userButtonVisibility']) && is_array($state['userButtonVisibility']) ? $state['userButtonVisibility'] : [];
+    foreach($defaults as $key => $value){
+        if(!array_key_exists($key, $saved)) $saved[$key] = true;
+        else $saved[$key] = (bool)$saved[$key];
+    }
+    return $saved;
+}
+
+function wizwiz_userButtonVisible($key, $state = null){
+    $vis = wizwiz_getUserButtonVisibility($state);
+    return !array_key_exists($key, $vis) || $vis[$key];
+}
+
+function wizwiz_setUserButtonVisible($key, $visible){
+    global $botState;
+    $defaults = wizwiz_defaultUserButtonVisibilityKeys();
+    if(!array_key_exists($key, $defaults)) return false;
+    $state = wizwiz_getBotStatesArray();
+    $vis = wizwiz_getUserButtonVisibility($state);
+    $vis[$key] = $visible ? true : false;
+    $state['userButtonVisibility'] = $vis;
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+    return true;
+}
+
+function wizwiz_setAllUserButtonsVisible($visible){
+    global $botState;
+    $state = wizwiz_getBotStatesArray();
+    $vis = wizwiz_defaultUserButtonVisibilityKeys();
+    foreach($vis as $key => $_) $vis[$key] = $visible ? true : false;
+    $state['userButtonVisibility'] = $vis;
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+}
+
+function wizwiz_userButtonTitles(){
+    global $buttonValues;
+    return [
+        'buy_subscriptions' => $buttonValues['buy_subscriptions'] ?? 'خرید کانفیگ جدید',
+        'my_subscriptions' => $buttonValues['my_subscriptions'] ?? 'کانفیگ‌های من',
+        'test_account' => $buttonValues['test_account'] ?? 'اکانت تست',
+        'wallet_charge' => $buttonValues['sharj'] ?? 'شارژ کیف پول',
+        'invite_friends' => $buttonValues['invite_friends'] ?? 'دعوت دوستان',
+        'my_info' => $buttonValues['my_info'] ?? 'حساب کاربری',
+        'application_links' => $buttonValues['application_links'] ?? 'راهنمای اتصال',
+        'my_tickets' => $buttonValues['my_tickets'] ?? 'تیکت‌های من',
+        'search_config' => $buttonValues['search_config'] ?? 'مشخصات کانفیگ',
+        'shared_existence' => $buttonValues['shared_existence'] ?? 'موجودی اشتراکی',
+        'individual_existence' => $buttonValues['individual_existence'] ?? 'موجودی اختصاصی',
+        'request_agency' => $buttonValues['request_agency'] ?? 'درخواست نمایندگی',
+    ];
+}
+
+function wizwiz_getUserButtonSettingsKeys(){
+    $titles = wizwiz_userButtonTitles();
+    $vis = wizwiz_getUserButtonVisibility();
+    $keys = [];
+    $keys[] = [['text'=>'🎛 تنظیمات نمایش دکمه‌های کاربر', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $row = [];
+    foreach($titles as $key => $title){
+        $on = !empty($vis[$key]);
+        $row[] = [
+            'text' => ($on ? '✅ ' : '❌ ') . $title,
+            'callback_data' => 'toggleUserButtonVisibility_' . $key,
+            'style' => $on ? 'success' : 'danger'
+        ];
+        if(count($row) >= 2){
+            $keys[] = $row;
+            $row = [];
+        }
+    }
+    if(count($row) > 0) $keys[] = $row;
+    $keys[] = [
+        ['text'=>'✅ نمایش همه', 'callback_data'=>'setAllUserButtons_on', 'style'=>'success'],
+        ['text'=>'❌ مخفی کردن همه', 'callback_data'=>'setAllUserButtons_off', 'style'=>'danger']
+    ];
+    $keys[] = [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'managePanel', 'style'=>'primary']];
+    return wizwiz_inlineKeyboardJson($keys);
+}
+
+
+function wizwiz_getPaymentKeys(){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type` = 'PAYMENT_KEYS' LIMIT 1");
+    if(!$stmt) return [];
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    $keys = $row ? json_decode((string)$row['value'], true) : [];
+    return is_array($keys) ? $keys : [];
+}
+
+function wizwiz_savePaymentKeys($paymentKeys){
+    global $connection;
+    if(!is_array($paymentKeys)) $paymentKeys = [];
+    $value = json_encode($paymentKeys, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("SELECT `id` FROM `setting` WHERE `type` = 'PAYMENT_KEYS' LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = ($res && $res->num_rows > 0);
+    $stmt->close();
+
+    if($exists){
+        $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = 'PAYMENT_KEYS'");
+        if(!$stmt) return false;
+        $stmt->bind_param('s', $value);
+    }else{
+        $stmt = $connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES ('PAYMENT_KEYS', ?)");
+        if(!$stmt) return false;
+        $stmt->bind_param('s', $value);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_getCardInfoVersion($paymentKeys = null){
+    if($paymentKeys === null) $paymentKeys = wizwiz_getPaymentKeys();
+    $v = intval($paymentKeys['cardInfoVersion'] ?? 1);
+    return $v > 0 ? $v : 1;
+}
+
+function wizwiz_markCardInfoChanged(){
+    $keys = wizwiz_getPaymentKeys();
+    $keys['cardInfoVersion'] = time();
+    return wizwiz_savePaymentKeys($keys);
+}
+
+function wizwiz_cardContactRaw($paymentKeys = null){
+    global $admin;
+    if($paymentKeys === null) $paymentKeys = wizwiz_getPaymentKeys();
+    $raw = trim((string)($paymentKeys['cardContact'] ?? ''));
+    return $raw !== '' ? $raw : (string)$admin;
+}
+
+function wizwiz_cardContactUrl($paymentKeys = null){
+    $raw = wizwiz_cardContactRaw($paymentKeys);
+    if($raw === '') return '';
+    if(preg_match('/^https?:\/\//i', $raw) || preg_match('/^tg:\/\//i', $raw)) return $raw;
+    if(preg_match('/^-?\d+$/', $raw)) return 'tg://user?id=' . $raw;
+    return 'https://t.me/' . ltrim($raw, '@');
+}
+
+function wizwiz_cardContactDisplay($paymentKeys = null){
+    $raw = wizwiz_cardContactRaw($paymentKeys);
+    if($raw === '') return 'ادمین';
+    if(preg_match('/^-?\d+$/', $raw)) return '<code>' . htmlspecialchars($raw, ENT_QUOTES, 'UTF-8') . '</code>';
+    return htmlspecialchars($raw, ENT_QUOTES, 'UTF-8');
+}
+
+function wizwiz_userHasCardVersion($userInfo, $paymentKeys = null){
+    if(!$userInfo) return false;
+    return intval($userInfo['card_info_version'] ?? 0) >= wizwiz_getCardInfoVersion($paymentKeys);
+}
+
+function wizwiz_markUserCardVersion($userId, $paymentKeys = null){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $version = wizwiz_getCardInfoVersion($paymentKeys);
+    $stmt = $connection->prepare("UPDATE `users` SET `card_info_version` = ? WHERE `userid` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('ii', $version, $userId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_cartToCartKeyboard($hashId = ''){
+    $rows = [];
+    if($hashId !== ''){
+        $rows[] = [['text'=>'💳 گرفتن شماره کارت', 'callback_data'=>'requestCartToCartCard' . $hashId, 'style'=>'success']];
+    }
+    $rows[] = [['text'=>'❌ لغو', 'callback_data'=>'mainMenu', 'style'=>'danger']];
+    return wizwiz_inlineKeyboardJson($rows);
+}
+
+function wizwiz_cartToCartNoCardText($alreadyReceived = false, $paymentKeys = null){
+    $contact = wizwiz_cardContactDisplay($paymentKeys);
+    if($alreadyReceived){
+        return "💳 <b>پرداخت کارت‌به‌کارت</b>\n\nشما قبلاً شماره کارت فعلی را دریافت کرده‌اید. لطفاً مبلغ را به همان شماره کارت واریز کنید.\n\nاگر شماره کارت را دوباره لازم دارید، به ادمین $contact پیام بدهید و متن زیر را ارسال کنید:\n<code>شماره کارت جهت واریز</code>\n\nبعد از واریز، تصویر رسید را همینجا بفرستید.";
+    }
+    return "💳 <b>پرداخت کارت‌به‌کارت</b>\n\nبرای دریافت شماره کارت، روی دکمه <b>گرفتن شماره کارت</b> بزنید، به ادمین $contact پیام بدهید و متن زیر را ارسال کنید:\n<code>شماره کارت جهت واریز</code>\n\nبعد از دریافت شماره کارت و واریز، به همین ربات برگردید و تصویر رسید پرداخت را ارسال کنید.\n\nاین مرحله فقط یک‌بار برای شماره کارت فعلی لازم است؛ اگر ادمین اعلام کند شماره کارت تغییر کرده، دوباره باید شماره کارت جدید را بگیرید.";
+}
+
+function wizwiz_sendCartToCartInstructions($hashId, $templateKey, $parse = 'HTML'){
+    global $mainValues, $userInfo;
+    $paymentKeys = wizwiz_getPaymentKeys();
+    $bank = trim((string)($paymentKeys['bankAccount'] ?? ''));
+    $holder = trim((string)($paymentKeys['holderName'] ?? ''));
+    if($bank !== ''){
+        $template = $mainValues[$templateKey] ?? 'ACCOUNT-NUMBER\nHOLDER-NAME';
+        sendMessage(str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template), $GLOBALS['cancelKey'], $parse);
+        return;
+    }
+    $already = wizwiz_userHasCardVersion($userInfo, $paymentKeys);
+    sendMessage(wizwiz_cartToCartNoCardText($already, $paymentKeys), wizwiz_cartToCartKeyboard($hashId), 'HTML');
 }
 
 function wizwiz_deleteLocalOrderOnly($orderId){
@@ -1218,23 +1891,90 @@ function wizwiz_makeCustomerSubLink($server_id, $token = '', $uuid = '', $inboun
     return $token !== '' ? $botUrl . 'settings/subLink.php?token=' . urlencode($token) : '';
 }
 
+
+function wizwiz_replyMarkupHasButtonStyle($markup){
+    if($markup === null || $markup === '') return false;
+    $decoded = is_string($markup) ? json_decode($markup, true) : $markup;
+    if(!is_array($decoded)) return false;
+    $stack = [$decoded];
+    while($stack){
+        $item = array_pop($stack);
+        if(is_array($item)){
+            if(array_key_exists('style', $item)) return true;
+            foreach($item as $v){
+                if(is_array($v)) $stack[] = $v;
+            }
+        }
+    }
+    return false;
+}
+
+function wizwiz_stripButtonStylesRecursive($value){
+    if(is_array($value)){
+        unset($value['style']);
+        foreach($value as $k => $v){
+            if(is_array($v)) $value[$k] = wizwiz_stripButtonStylesRecursive($v);
+        }
+    }
+    return $value;
+}
+
+function wizwiz_stripButtonStylesFromMarkup($markup){
+    if($markup === null || $markup === '') return $markup;
+    $isString = is_string($markup);
+    $decoded = $isString ? json_decode($markup, true) : $markup;
+    if(!is_array($decoded)) return $markup;
+    $decoded = wizwiz_stripButtonStylesRecursive($decoded);
+    return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function bot($method, $datas = []){
     global $botToken;
     $url = "https://api.telegram.org/bot" . $botToken . "/" . $method;
-    $ch = curl_init(); 
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true); 
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($datas));
-    $res = curl_exec($ch);
-    if (curl_error($ch)) {
-        var_dump(curl_error($ch));
-    } else {
-        return json_decode($res);
+
+    $sendRequest = function($payload) use ($url){
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($payload));
+        $res = curl_exec($ch);
+        if (curl_error($ch)) {
+            $err = curl_error($ch);
+            curl_close($ch);
+            return [null, $err];
+        }
+        curl_close($ch);
+        return [$res, null];
+    };
+
+    [$res, $err] = $sendRequest($datas);
+    if($err){
+        var_dump($err);
+        return null;
     }
+
+    $decoded = json_decode($res);
+
+    // اگر سرور/کلاینت Bot API با style مشکل داشت، یک بار بدون style دوباره تلاش می‌کنیم
+    // تا دکمه‌ها کلاً از کار نیفتند.
+    if(isset($datas['reply_markup']) && wizwiz_replyMarkupHasButtonStyle($datas['reply_markup']) && is_object($decoded) && isset($decoded->ok) && !$decoded->ok){
+        $desc = strtolower((string)($decoded->description ?? ''));
+        if(strpos($desc, 'style') !== false || strpos($desc, 'button') !== false || strpos($desc, 'reply markup') !== false){
+            $datas['reply_markup'] = wizwiz_stripButtonStylesFromMarkup($datas['reply_markup']);
+            [$res2, $err2] = $sendRequest($datas);
+            if(!$err2){
+                $decoded2 = json_decode($res2);
+                if(is_object($decoded2)) return $decoded2;
+            }
+        }
+    }
+
+    return $decoded;
 }
 function sendMessage($txt, $key = null, $parse ="MarkDown", $ci= null, $msg = null){
     global $from_id;
     $ci = $ci??$from_id;
+    $key = wizwiz_styleReplyMarkup($key);
     return bot('sendMessage',[
         'chat_id'=>$ci,
         'text'=>$txt,
@@ -1247,6 +1987,7 @@ function editKeys($keys = null, $msgId = null, $ci = null){
     global $from_id,$message_id;
     $ci = $ci??$from_id;
     $msgId = $msgId??$message_id;
+    $keys = wizwiz_styleReplyMarkup($keys);
    
     bot('editMessageReplyMarkup',[
 		'chat_id' => $ci,
@@ -1257,6 +1998,7 @@ function editKeys($keys = null, $msgId = null, $ci = null){
 function editText($msgId, $txt, $key = null, $parse = null, $ci = null){
     global $from_id;
     $ci = $ci??$from_id;
+    $key = wizwiz_styleReplyMarkup($key);
 
     return bot('editMessageText', [
         'chat_id' => $ci,
@@ -1451,44 +2193,66 @@ function getMainKeys(){
     $mainKeys = array();
     $temp = array();
 
-    if($botState['agencyState'] == "on" && $userInfo['is_agent'] == 1){
-        $mainKeys = array_merge($mainKeys, [
-            [['text'=>$buttonValues['agency_setting'],'callback_data'=>"agencySettings"]],
-            [['text'=>$buttonValues['agent_one_buy'],'callback_data'=>"agentOneBuy"],['text'=>$buttonValues['agent_much_buy'],'callback_data'=>"agentMuchBuy"]],
-            [['text'=>$buttonValues['my_subscriptions'],'callback_data'=>"agentConfigsList"]],
-            ]);
+    $isAdminUser = ($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin'])));
+    $addRow = function($buttons) use (&$mainKeys){
+        $row = [];
+        foreach($buttons as $btn){
+            if(is_array($btn) && !empty($btn)) $row[] = $btn;
+        }
+        if(count($row) > 0) $mainKeys[] = $row;
+    };
+    $buttonIfVisible = function($key, $button) use ($botState){
+        return wizwiz_userButtonVisible($key, $botState) ? $button : null;
+    };
+
+    if(($botState['agencyState'] ?? 'off') == "on" && !empty($userInfo['is_agent']) && $userInfo['is_agent'] == 1){
+        $addRow([['text'=>$buttonValues['agency_setting'],'callback_data'=>"agencySettings"]]);
+        $addRow([
+            ['text'=>$buttonValues['agent_one_buy'],'callback_data'=>"agentOneBuy"],
+            ['text'=>$buttonValues['agent_much_buy'],'callback_data'=>"agentMuchBuy"]
+        ]);
+        $addRow([$buttonIfVisible('my_subscriptions', ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>"agentConfigsList"])]);
     }else{
-        $mainKeys = array_merge($mainKeys,[
-            (($botState['agencyState'] == "on" && $userInfo['is_agent'] == 0)?[
-                ['text'=>$buttonValues['request_agency'],'callback_data'=>"requestAgency"]
-                ]:
-                []),
-            (($botState['sellState'] == "on" || $from_id == $admin || $userInfo['isAdmin'] == true)?
-                [['text'=>$buttonValues['my_subscriptions'],'callback_data'=>'mySubscriptions'],['text'=>$buttonValues['buy_subscriptions'],'callback_data'=>"buySubscription"]]
-                :
-                [['text'=>$buttonValues['my_subscriptions'],'callback_data'=>'mySubscriptions']]
-                    )
-            ]);
+        if(($botState['agencyState'] ?? 'off') == "on" && empty($userInfo['is_agent'])){
+            $addRow([$buttonIfVisible('request_agency', ['text'=>$buttonValues['request_agency'],'callback_data'=>"requestAgency"])]);
+        }
+
+        $subRow = [];
+        if(wizwiz_userButtonVisible('my_subscriptions', $botState)){
+            $subRow[] = ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>'mySubscriptions'];
+        }
+        if((($botState['sellState'] ?? 'off') == "on" || $isAdminUser) && wizwiz_userButtonVisible('buy_subscriptions', $botState)){
+            $subRow[] = ['text'=>$buttonValues['buy_subscriptions'],'callback_data'=>"buySubscription"];
+        }
+        $addRow($subRow);
     }
-    $mainKeys = array_merge($mainKeys,[
-        (
-            ($botState['testAccount'] == "on")?[['text'=>$buttonValues['test_account'],'callback_data'=>"getTestAccount"]]:
-                []
-            ),
-        [['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"]],
-        [['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"],['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"]],
-        (($botState['sharedExistence'] == "on" && $botState['individualExistence'] == "on")?
-        [['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"],['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"]]:[]),
-        (($botState['sharedExistence'] == "on" && $botState['individualExistence'] != "on")?
-            [['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"]]:[]),
-        (($botState['sharedExistence'] != "on" && $botState['individualExistence'] == "on")?
-            [['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"]]:[]
-        ),
-        [['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"],['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"]],
-        (($botState['searchState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)?
-            [['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]]
-            :[]),
+
+    if(($botState['testAccount'] ?? 'off') == "on"){
+        $addRow([$buttonIfVisible('test_account', ['text'=>$buttonValues['test_account'],'callback_data'=>"getTestAccount"])]);
+    }
+
+    $addRow([$buttonIfVisible('wallet_charge', ['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"])]);
+    $addRow([
+        $buttonIfVisible('invite_friends', ['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"]),
+        $buttonIfVisible('my_info', ['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"])
     ]);
+
+    $sharedOn = (($botState['sharedExistence'] ?? 'off') == "on") && wizwiz_userButtonVisible('shared_existence', $botState);
+    $individualOn = (($botState['individualExistence'] ?? 'off') == "on") && wizwiz_userButtonVisible('individual_existence', $botState);
+    $addRow([
+        $sharedOn ? ['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"] : null,
+        $individualOn ? ['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"] : null
+    ]);
+
+    $addRow([
+        $buttonIfVisible('application_links', ['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"]),
+        $buttonIfVisible('my_tickets', ['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"])
+    ]);
+
+    if((($botState['searchState'] ?? 'off') == "on" || $isAdminUser) && wizwiz_userButtonVisible('search_config', $botState)){
+        $addRow([['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]]);
+    }
+
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` LIKE '%MAIN_BUTTONS%'");
     $stmt->execute();
     $buttons = $stmt->get_result();
@@ -1497,7 +2261,6 @@ function getMainKeys(){
         while($row = $buttons->fetch_assoc()){
             $rowId = $row['id'];
             $title = str_replace("MAIN_BUTTONS","",$row['type']);
-            
             $temp[] =['text'=>$title,'callback_data'=>"showMainButtonAns" . $rowId];
             if(count($temp)>=2){
                 array_push($mainKeys,$temp);
@@ -1505,8 +2268,8 @@ function getMainKeys(){
             }
         }
     }
-    array_push($mainKeys,$temp);
-    if($from_id == $admin || $userInfo['isAdmin'] == true) array_push($mainKeys,[['text'=>"مدیریت ربات ⚙️",'callback_data'=>"managePanel"]]);
+    if(count($temp) > 0) array_push($mainKeys,$temp);
+    if($isAdminUser) array_push($mainKeys,[['text'=>"مدیریت ربات ⚙️",'callback_data'=>"managePanel"]]);
     return wizwiz_inlineKeyboardJson($mainKeys); 
 }
 function getAgentKeys(){
@@ -2041,7 +2804,7 @@ function getCategoriesKeys($offset = 0){
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function getGateWaysKeys(){
-    global $connection, $mainValues, $buttonValues;
+    global $connection, $mainValues, $buttonValues, $admin;
     
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'BOT_STATES'");
     $stmt->execute();
@@ -2063,12 +2826,7 @@ function getGateWaysKeys(){
     $rewaredChannel = $botState['rewardChannel']??" ";
     $lockChannel = $botState['lockChannel']??" ";
 
-    $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
-    $stmt->execute();
-    $paymentKeys = $stmt->get_result()->fetch_assoc()['value'];
-    if(!is_null($paymentKeys)) $paymentKeys = json_decode($paymentKeys,true);
-    else $paymentKeys = array();
-    $stmt->close();
+    $paymentKeys = wizwiz_getPaymentKeys();
     return json_encode(['inline_keyboard'=>[
         [
             ['text'=>(!empty($paymentKeys['bankAccount'])?$paymentKeys['bankAccount']:" "),'callback_data'=>"changePaymentKeysbankAccount"],
@@ -2077,6 +2835,14 @@ function getGateWaysKeys(){
         [
             ['text'=>(!empty($paymentKeys['holderName'])?$paymentKeys['holderName']:" "),'callback_data'=>"changePaymentKeysholderName"],
             ['text'=>"دارنده حساب",'callback_data'=>"wizwizch"]
+        ],
+        [
+            ['text'=>(!empty($paymentKeys['cardContact'])?$paymentKeys['cardContact']:(string)$admin),'callback_data'=>"changePaymentKeyscardContact"],
+            ['text'=>"ادمین دریافت شماره کارت",'callback_data'=>"wizwizch"]
+        ],
+        [
+            ['text'=>"🔄 شماره کارت عوض شده",'callback_data'=>"markCartToCartCardChanged"],
+            ['text'=>"ریست دریافت کارت کاربران",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>(!empty($paymentKeys['nowpayment'])?$paymentKeys['nowpayment']:" "),'callback_data'=>"changePaymentKeysnowpayment"],
@@ -2208,10 +2974,6 @@ function getBotSettingKeys(){
             ['text'=> $agencyPlanDiscount,'callback_data'=>"changeBotagencyPlanDiscount"],
             ['text'=>"نوع تخفیف نمایندگی",'callback_data'=>"wizwizch"]
             ],
-        [
-            ['text'=>$newMemberLock,'callback_data'=>"changeBotnewMemberLockState"],
-            ['text'=>"قفل اعضای جدید",'callback_data'=>"wizwizch"]
-        ],
         [
             ['text'=>$individualExistence,'callback_data'=>"changeBotindividualExistence"],
             ['text'=>"موجودی اختصاصی",'callback_data'=>"wizwizch"]
@@ -3296,7 +4058,7 @@ function setUser($value = 'none', $field = 'step'){
     
     if($uinfo->num_rows == 0){
         $time = time();
-        $approvalStatus = (($botState['newMemberLockState'] ?? 'off') == 'on' && $from_id != $admin) ? 'pending' : 'approved';
+        $approvalStatus = (wizwiz_getNewMemberAccessMode($botState) === 'approval' && $from_id != $admin) ? 'pending' : 'approved';
         $stmt = $connection->prepare("INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`, `approval_status`, `approval_request_date`)
                             VALUES (?,?,?, 0,0,?,?,?)");
         $stmt->bind_param("issisi", $from_id, $first_name, $username, $time, $approvalStatus, $time);

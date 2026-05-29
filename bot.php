@@ -21,7 +21,9 @@ if(preg_match("/^haveJoined(.*)/",$data,$match)){
         $text = $match[1];
     }
 }
-if (($joniedState== "kicked" || $joniedState== "left") && $from_id != $admin){
+$wizwizJoinExempt = (!empty($userInfo) && !empty($userInfo['join_exempt']));
+$wizwizIsAdminUser = (!empty($userInfo) && !empty($userInfo['isAdmin']));
+if (($joniedState== "kicked" || $joniedState== "left") && $from_id != $admin && !$wizwizIsAdminUser && !$wizwizJoinExempt){
     sendMessage(str_replace("CHANNEL-ID", $channelLock, $mainValues['join_channel_message']), json_encode(['inline_keyboard'=>[
         [['text'=>$buttonValues['join_channel'],'url'=>"https://t.me/" . str_replace("@", "", $botState['lockChannel'])]],
         [['text'=>$buttonValues['have_joined'],'callback_data'=>'haveJoined' . $text]],
@@ -51,12 +53,12 @@ if(preg_match('/^approveNewMember(\d+)/', $data, $match) && ($from_id == $admin 
     $stmt->execute();
     $stmt->close();
 
-    sendMessage("✅ درخواست عضویت شما تایید شد.\nحالا می‌توانید از ربات استفاده کنید. برای شروع /start را بزنید.", null, 'HTML', $targetId);
+    sendMessage("✅ درخواست عضویت شما توسط مدیریت تایید شد.\n\nاکنون می‌توانید از ربات استفاده کنید. برای شروع، /start را ارسال کنید.", null, 'HTML', $targetId);
     if(!empty($referrerId)){
         sendMessage($mainValues['invited_user_joined_message'], null, null, $referrerId);
     }
 
-    editText($message_id, "✅ عضویت کاربر <code>$targetId</code> تایید شد.", null, 'HTML');
+    editText($message_id, "✅ عضویت کاربر <code>$targetId</code> با موفقیت تایید شد.", null, 'HTML');
     alert("تایید شد");
     exit();
 }
@@ -67,9 +69,78 @@ if(preg_match('/^rejectNewMember(\d+)/', $data, $match) && ($from_id == $admin |
     $stmt->execute();
     $stmt->close();
 
-    sendMessage("❌ درخواست عضویت شما توسط ادمین تایید نشد.\nدر صورت نیاز می‌توانید دوباره آیدی عددی معرف معتبر را ارسال کنید تا درخواست جدید ثبت شود.", null, 'HTML', $targetId);
+    sendMessage("❌ درخواست عضویت شما توسط مدیریت تایید نشد.\n\nدر صورت نیاز، می‌توانید دوباره آیدی عددی معرف معتبر را ارسال کنید تا درخواست جدید ثبت شود.", null, 'HTML', $targetId);
     editText($message_id, "❌ درخواست عضویت کاربر <code>$targetId</code> رد شد.", null, 'HTML');
     alert("رد شد");
+    exit();
+}
+if(preg_match('/^revokeCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = (int)$match[1];
+    $targetUser = wizwiz_getUserByTelegramId($targetId);
+    if(!$targetUser){
+        alert("کاربر مورد نظر یافت نشد.", true);
+        exit();
+    }
+    $ok = wizwiz_setUserAccessExempt($targetId, false);
+    if($ok){
+        sendMessage("🔒 دسترسی شما که از طریق کد ورود فعال شده بود، توسط مدیریت غیرفعال شد.\n\nدر صورت دریافت کد ورود جدید از مدیریت، می‌توانید دوباره آن را در ربات ارسال کنید.", null, 'HTML', $targetId);
+        $msg = "🧹 <b>دسترسی کد ورود حذف شد</b>\n\n" .
+               "دسترسی ایجادشده با کد ورود برای کاربر <code>$targetId</code> حذف شد.\n" .
+               "در صورت ارسال کد معتبر جدید، دسترسی کاربر مجدداً فعال خواهد شد.";
+        $keys = wizwiz_inlineKeyboardJson([
+            [['text'=>'🚫 بلاک کاربر', 'callback_data'=>'blockCodeAccess' . $targetId, 'style'=>'danger']]
+        ]);
+        editText($message_id, $msg, $keys, 'HTML');
+        alert("دسترسی حذف شد.");
+    }else{
+        alert("حذف دسترسی انجام نشد. دوباره تلاش کنید.", true);
+    }
+    exit();
+}
+if(preg_match('/^blockCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = (int)$match[1];
+    $targetUser = wizwiz_getUserByTelegramId($targetId);
+    if(!$targetUser){
+        alert("کاربر مورد نظر یافت نشد.", true);
+        exit();
+    }
+    $stmt = $connection->prepare("UPDATE `users` SET `step` = 'banned', `access_exempt` = 0 WHERE `userid` = ?");
+    $stmt->bind_param("i", $targetId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    if($ok){
+        sendMessage("⛔️ دسترسی شما به ربات توسط مدیریت مسدود شد.\n\nدر صورت نیاز، لطفاً با پشتیبانی در ارتباط باشید.", null, 'HTML', $targetId);
+        editText($message_id, "🚫 کاربر <code>$targetId</code> با موفقیت مسدود شد.", null, 'HTML');
+        alert("کاربر مسدود شد.");
+    }else{
+        alert("مسدودسازی انجام نشد. دوباره تلاش کنید.", true);
+    }
+    exit();
+}
+if(preg_match('/^requestCartToCartCard(.+)/', $data, $match)){
+    $paymentKeys = wizwiz_getPaymentKeys();
+    wizwiz_markUserCardVersion($from_id, $paymentKeys);
+    $url = wizwiz_cardContactUrl($paymentKeys);
+    $contact = wizwiz_cardContactDisplay($paymentKeys);
+    $msg = "💳 <b>دریافت شماره کارت</b>
+
+روی دکمه زیر بزنید و به ادمین $contact پیام بدهید.
+متن پیام:
+<code>شماره کارت جهت واریز</code>
+
+بعد از دریافت شماره کارت و واریز، به همین ربات برگردید و تصویر رسید را ارسال کنید.";
+    $keys = wizwiz_inlineKeyboardJson([
+        [['text'=>'📩 پیام به ادمین برای شماره کارت', 'url'=>$url, 'style'=>'success']],
+        [['text'=>'🔙 برگشت به منوی اصلی', 'callback_data'=>'mainMenu', 'style'=>'primary']]
+    ]);
+    editText($message_id, $msg, $keys, 'HTML');
+    exit();
+}
+if($data == 'markCartToCartCardChanged' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_markCardInfoChanged();
+    editText($message_id, "✅ وضعیت شماره کارت تغییر کرد.
+
+از این به بعد کاربران برای پرداخت کارت‌به‌کارت باید دوباره شماره کارت جدید را از ادمین دریافت کنند.", getGateWaysKeys(), 'HTML');
     exit();
 }
 wizwiz_handleNewMemberLock();
@@ -175,12 +246,12 @@ if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'
     }
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    editText($message_id,'🔘|لطفاً پیامت رو بفرست');
+    editText($message_id,'لطفاً متن پیام مورد نظر را ارسال کنید.');
     setUser($data);
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     sendMessage($text,null,null,$match[1]);
-    sendMessage("پیامت به کاربر ارسال شد",$removeKeyboard);
+    sendMessage("✅ پیام شما برای کاربر ارسال شد.",$removeKeyboard);
     sendMessage($mainValues['reached_main_menu'],getAdminKeysPlus());
     setUser();
 }
@@ -201,7 +272,7 @@ if(preg_match('/^delAdmin(\d+)/',$data,$match) && $from_id === $admin){
 }
 if($data=="addNewAdmin" && $from_id === $admin){
     delMessage();
-    sendMessage("🧑‍💻| کسی که میخوای ادمین کنی رو آیدی عددیشو بفرست ببینم:",$cancelKey);
+    sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید ادمین شود ارسال کنید.",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $buttonValues['cancel']){
@@ -211,7 +282,7 @@ if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $button
         $stmt->execute();
         $stmt->close();
         
-        sendMessage("✅ | 🥳 خب کاربر الان ادمین شد تبریک میگم",$removeKeyboard);
+        sendMessage("✅ کاربر مورد نظر با موفقیت ادمین شد.",$removeKeyboard);
         setUser();
         
         sendMessage("لیست ادمین ها",getAdminsKeys());
@@ -219,6 +290,128 @@ if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $button
         sendMessage($mainValues['send_only_number']);
     }
 }
+if($data == "newMemberAccessMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $state = wizwiz_getBotStatesArray();
+    $mode = wizwiz_getNewMemberAccessMode($state);
+    $since = intval($state['newMemberAccessStartedAt'] ?? 0);
+    $sinceText = $since > 0 ? jdate("Y/m/d H:i", $since) : 'ثبت نشده';
+    $msg = "🔐 <b>مدیریت دسترسی اعضای جدید</b>\n\n" .
+           "وضعیت فعلی: <b>" . wizwiz_newMemberAccessModeTitle($mode) . "</b>\n" .
+           "زمان اعمال وضعیت: <code>$sinceText</code>\n\n" .
+           "• آزاد برای همه: همه می‌توانند وارد ربات شوند.\n" .
+           "• فقط کاربران قبلی: فقط کسانی که قبل از فعال‌سازی این حالت داخل دیتابیس ربات بوده‌اند.\n" .
+           "• فقط خریداران قبلی: فقط کسانی که حداقل یک سفارش/پرداخت قبلی دارند.\n" .
+           "• تایید دستی با معرف: کاربر جدید باید آیدی عددی معرف را بفرستد و ادمین تایید کند.";
+    editText($message_id, $msg, wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^setNewMemberAccessMode_(open|existing|buyers|approval)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_setNewMemberAccessMode($match[1]);
+    $msg = "✅ وضعیت دسترسی اعضای جدید تغییر کرد.\n\nوضعیت جدید: <b>" . wizwiz_newMemberAccessModeTitle($match[1]) . "</b>";
+    editText($message_id, $msg, wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    exit();
+}
+if($data == "generateBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $code = wizwiz_generateBuyersAccessCode();
+    $msg = "✅ کد ورود جدید با موفقیت ساخته شد.
+
+🎟 کد: <code>$code</code>
+
+این کد را به کاربرانی بدهید که می‌خواهید در حالت «فقط خریداران قبلی» بتوانند دسترسی بگیرند.";
+    editText($message_id, $msg, wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    exit();
+}
+if($data == "clearBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_setBuyersAccessCode('');
+    editText($message_id, "✅ کد ورود خریداران با موفقیت حذف شد.", wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    exit();
+}
+if($data == "setBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("✏️ لطفاً کد ورود جدید را ارسال کنید.
+
+فقط حروف انگلیسی، عدد، خط تیره و زیرخط ذخیره می‌شود.
+نمونه: <code>VIP-2026</code>", $cancelKey, 'HTML');
+    setUser('setBuyersAccessCode');
+    exit();
+}
+if(($userInfo['step'] ?? '') == "setBuyersAccessCode" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $code = wizwiz_setBuyersAccessCode($text);
+    setUser();
+    if($code === ''){
+        sendMessage("❌ کد ارسال‌شده معتبر نیست. فقط حروف انگلیسی، عدد، خط تیره و زیرخط قابل ذخیره است.", $removeKeyboard, 'HTML');
+    }else{
+        sendMessage("✅ کد ورود با موفقیت ذخیره شد: <code>$code</code>", $removeKeyboard, 'HTML');
+    }
+    sendMessage("🔐 مدیریت دسترسی اعضای جدید", wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    exit();
+}
+if($data == "joinExemptMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $msg = "🚪 <b>معافیت جوین اجباری کانال</b>\n\n" .
+           "از این بخش می‌توانید یک کاربر را از بررسی عضویت اجباری کانال معاف کنید.\n" .
+           "کاربر معاف حتی اگر عضو کانال قفل نباشد، می‌تواند از ربات استفاده کند.";
+    editText($message_id, $msg, wizwiz_getJoinExemptMenuKeys(), 'HTML');
+    exit();
+}
+if($data == "addJoinExemptUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("➕ آیدی عددی کاربری که می‌خواهید از جوین اجباری کانال معاف شود را ارسال کنید.", $cancelKey, 'HTML');
+    setUser('addJoinExemptUser');
+    exit();
+}
+if($data == "removeJoinExemptUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("➖ آیدی عددی کاربری که می‌خواهید معافیت جوین اجباری‌اش حذف شود را ارسال کنید.", $cancelKey, 'HTML');
+    setUser('removeJoinExemptUser');
+    exit();
+}
+if($data == "joinExemptList" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getJoinExemptListText(), wizwiz_getJoinExemptMenuKeys(), 'HTML');
+    exit();
+}
+if(in_array($userInfo['step'] ?? '', ['addJoinExemptUser','removeJoinExemptUser'], true) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = trim((string)$text);
+    if(!preg_match('/^\d+$/', $targetId)){
+        sendMessage("❌ فقط آیدی عددی معتبر ارسال کنید.", $cancelKey, 'HTML');
+        exit();
+    }
+    $enableExempt = ($userInfo['step'] == 'addJoinExemptUser');
+    $ok = wizwiz_setUserJoinExempt((int)$targetId, $enableExempt);
+    setUser();
+    if($ok){
+        $msg = $enableExempt ?
+            "✅ کاربر <code>$targetId</code> از جوین اجباری کانال معاف شد." :
+            "✅ معافیت جوین اجباری کاربر <code>$targetId</code> حذف شد.";
+        sendMessage($msg, $removeKeyboard, 'HTML');
+        sendMessage("🚪 معافیت جوین اجباری کانال", wizwiz_getJoinExemptMenuKeys(), 'HTML');
+    }else{
+        sendMessage("❌ ذخیره تغییرات انجام نشد. دوباره تلاش کنید.", $removeKeyboard, 'HTML');
+        sendMessage("🚪 معافیت جوین اجباری کانال", wizwiz_getJoinExemptMenuKeys(), 'HTML');
+    }
+    exit();
+}
+
+if($data == "userButtonSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $msg = "🎛 <b>تنظیمات نمایش دکمه‌های کاربر</b>
+
+از این بخش می‌توانید دکمه‌های صفحه اصلی کاربر را مخفی یا فعال کنید.
+دکمه مدیریت ربات برای ادمین‌ها همیشه نمایش داده می‌شود.";
+    editText($message_id, $msg, wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleUserButtonVisibility_([A-Za-z0-9_]+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $key = $match[1];
+    $current = wizwiz_userButtonVisible($key);
+    wizwiz_setUserButtonVisible($key, !$current);
+    editText($message_id, "🎛 تنظیمات نمایش دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^setAllUserButtons_(on|off)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_setAllUserButtonsVisible($match[1] == 'on');
+    editText($message_id, "🎛 تنظیمات نمایش دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    exit();
+}
+
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if($data!="botSettings"){
         $newValue = $botState[$match[1]]=="on"?"off":"on";
@@ -305,29 +498,25 @@ if(preg_match('/^changePaymentKeys(\w+)/',$data,$match) && ($from_id == $admin |
         case "holderName":
             $gate = "اسم دارنده حساب";
             break;
+        case "cardContact":
+            $gate = "آیدی عددی یا یوزرنیم ادمین دریافت شماره کارت";
+            break;
         case "tronwallet":
             $gate = "آدرس والت ترون";
             break;
     }
-    sendMessage("🔘|لطفاً $gate را وارد کنید", $cancelKey);
+    sendMessage("🔘|لطفاً $gate را وارد کنید
+
+برای خالی کردن مقدار، /empty را بفرستید.", $cancelKey);
     setUser($data);
 }
 if(preg_match('/^changePaymentKeys(\w+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
 
-    $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
-    $stmt->execute();
-    $paymentInfo = $stmt->get_result();
-    $stmt->close();
-    $paymentKeys = json_decode($paymentInfo->fetch_assoc()['value'],true)??array();
-    $paymentKeys[$match[1]] = $text;
-    $paymentKeys = json_encode($paymentKeys);
-    
-    if($paymentInfo->num_rows > 0) $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = 'PAYMENT_KEYS'");
-    else $stmt = $connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES ('PAYMENT_KEYS', ?)");
-    $stmt->bind_param("s", $paymentKeys);
-    $stmt->execute(); 
-    $stmt->close();
-    
+    $paymentKeys = wizwiz_getPaymentKeys();
+    $value = trim((string)$text);
+    if(in_array(strtolower($value), ['/empty', 'empty', 'خالی'], true)) $value = '';
+    $paymentKeys[$match[1]] = $value;
+    wizwiz_savePaymentKeys($paymentKeys);
 
     sendMessage($mainValues['saved_successfuly'],$removeKeyboard);
     sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
@@ -850,19 +1039,10 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
     sendMessage("اطلاعات شارژ:\nمبلغ ". number_format($text) . " تومان\n\nلطفاً روش پرداخت را انتخاب کنید",$keys);
     setUser();
 }
-if(preg_match('/increaseWalletWithCartToCart/',$data)) {
-    $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
-    $stmt->execute();
-    $paymentKeys = $stmt->get_result()->fetch_assoc()['value'];
-    if(!is_null($paymentKeys)) $paymentKeys = json_decode($paymentKeys,true);
-    else $paymentKeys = array();
-    $stmt->close();
-
-    delMessage();  
+if(preg_match('/increaseWalletWithCartToCart(.*)/',$data, $match)) {
+    delMessage();
     setUser($data);
-    
-
-    sendMessage(str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"],[$paymentKeys['bankAccount'],$paymentKeys['holderName']], $mainValues['increase_wallet_cart_to_cart']),$cancelKey, "HTML");
+    wizwiz_sendCartToCartInstructions($match[1], 'increase_wallet_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
@@ -4319,17 +4499,9 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$data, $match)) {
         }
     }
     
-    $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
-    $stmt->execute();
-    $paymentKeys = $stmt->get_result()->fetch_assoc()['value'];
-    if(!is_null($paymentKeys)) $paymentKeys = json_decode($paymentKeys,true);
-    else $paymentKeys = array();
-    $stmt->close();
-
-    
     setUser($data);
     delMessage();
-    sendMessage(str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"],[$paymentKeys['bankAccount'],$paymentKeys['holderName']], $mainValues['buy_account_cart_to_cart']),$cancelKey, "HTML");
+    wizwiz_sendCartToCartInstructions($match[1], 'buy_account_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
@@ -4343,7 +4515,7 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
         $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
-        $stmt->execute();
+        $stmt->close();
         
         $fid = $payInfo['plan_id'];
         $volume = $payInfo['volume'];
@@ -4993,19 +5165,9 @@ if(preg_match('/payWithCartToCart(.*)/',$data,$match)) {
             }
         }
     }
-    
-    
-    $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
-    $stmt->execute();
-    $paymentKeys = $stmt->get_result()->fetch_assoc()['value'];
-    if(!is_null($paymentKeys)) $paymentKeys = json_decode($paymentKeys,true);
-    else $paymentKeys = array();
-    $stmt->close();
-
-    
     setUser($data);
     delMessage();
-    sendMessage(str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"],[$paymentKeys['bankAccount'],$paymentKeys['holderName']], $mainValues['buy_account_cart_to_cart']),$cancelKey, "HTML");
+    wizwiz_sendCartToCartInstructions($match[1], 'buy_account_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
@@ -6542,12 +6704,12 @@ if(preg_match('/^\/dlPic(\d+)/',$text,$match)){
 }
 if($data == "banUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("😡 | کی باز شلوغی کرده آیدی عددی شو بفرس تا برم ...... آرهههه:", $cancelKey);
+    sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید مسدود شود ارسال کنید.", $cancelKey);
     setUser($data);
 }
 if($data=="unbanUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("آیدی عددیشو بفرست تا آزادش کنم", $cancelKey);
+    sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید از حالت مسدود خارج شود ارسال کنید.", $cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "banUser" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -6567,9 +6729,9 @@ if($userInfo['step'] == "banUser" && ($from_id == $admin || $userInfo['isAdmin']
                 $stmt->execute();
                 $stmt->close();
                 
-                sendMessage("❌ | خب خب برید کنار که مسدودش کردم 😎😂",$removeKeyboard);
+                sendMessage("✅ کاربر مورد نظر با موفقیت مسدود شد.",$removeKeyboard);
             }else{
-                sendMessage("☑️ | این کاربر که از قبل مسدود بود چیکارش داری بدبخت و 😂🤣",$removeKeyboard);
+                sendMessage("ℹ️ این کاربر از قبل مسدود بوده است.",$removeKeyboard);
             }
         }else sendMessage("کاربری با این آیدی یافت نشد");
         setUser();
@@ -6634,9 +6796,9 @@ if($userInfo['step'] == "unbanUser" && ($from_id == $admin || $userInfo['isAdmin
                 $stmt->execute();
                 $stmt->close();
 
-                sendMessage("✅ | آزاد شدم خوشحالم ننه ، ایشالا آزادی همه 😂",$removeKeyboard);
+                sendMessage("✅ کاربر مورد نظر با موفقیت از حالت مسدود خارج شد.",$removeKeyboard);
             }else{
-                sendMessage("☑️ | این کاربری که فرستادی از قبل آزاد بود 🙁",$removeKeyboard);
+                sendMessage("ℹ️ این کاربر در حال حاضر مسدود نیست.",$removeKeyboard);
             }
         }else sendMessage("کاربری با این آیدی یافت نشد");
         setUser();
@@ -11627,6 +11789,10 @@ function getAdminKeysPlus(){
     ];
 
     $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [
+        ['text'=>'🔐 قفل و دسترسی اعضای جدید', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary'],
+        ['text'=>'🚪 معافیت جوین اجباری', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
+    ];
     if($from_id == $admin){
         $keys[] = [['text'=>$buttonValues['admins_list'], 'callback_data'=>'adminsList', 'style'=>'primary']];
     }
@@ -11653,6 +11819,7 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['main_button_settings'], 'callback_data'=>'mainMenuButtons', 'style'=>'primary']
     ];
     $keys[] = [
+        ['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'userButtonSettings', 'style'=>'primary'],
         ['text'=>'📝 تنظیم متن خوش‌آمدگویی', 'callback_data'=>'adminTextSettings', 'style'=>'primary']
     ];
 

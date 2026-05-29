@@ -209,7 +209,6 @@ $connection->query("CREATE TABLE `server_plans` (
   `custom_path` int(10) DEFAULT 1,
   `custom_port` int(255) NOT NULL DEFAULT 0,
   `custom_sni` varchar(500)  CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
-  `custom_domain` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci");
 
@@ -225,8 +224,8 @@ $connection->query("INSERT INTO `setting` (`id`, `type`, `value`) VALUES
 (1, 'TICKETS_CATEGORY', 'شکایت'),
 (2, 'INVITE_BANNER_AMOUNT', '3000'),
 (3, 'INVITE_BANNER_TEXT', '{\"type\":\"photo\",\"caption\":\"\\ud83d\\udd30\\u0628\\u0631\\u062a\\u0631\\u06cc\\u0646 \\u0648 \\u0628\\u0647\\u062a\\u0631\\u06cc\\u0646 \\u0631\\u0628\\u0627\\u062a vpn \\u0628\\u0627 \\u06a9\\u0627\\u0646\\u06a9\\u0634\\u0646 \\u0647\\u0627\\u06cc \\u0631\\u0627\\u06cc\\u06af\\u0627\\u0646\\n\\u2705 \\u062d\\u062a\\u0645\\u0627 \\u0639\\u0636\\u0648 \\u0631\\u0628\\u0627\\u062a \\u0628\\u0634\\u06cc\\u062f \\u0648 \\u0627\\u0632 \\u062a\\u062e\\u0641\\u06cc\\u0641 \\u0647\\u0627\\u06cc \\u0648\\u06cc\\u0698\\u0647 \\u0644\\u0630\\u062a \\u0628\\u0628\\u0631\\u06cc\\u0646\\n\\n\\ud83d\\udd17 LINK\",\"file_id\":\"AgACAgQAAxkBAAJRKWRtX3wObRa3qAR_gkJgyKDdkHZsAAKAuzEbRaBpU3QQ2kLLt7MVAQADAgADeAADLwQ\"}'),
-(4, 'PAYMENT_KEYS', '{\"nowpayment\":\"cccc-cccc-cccc-cccc\",\"zarinpal\":\"aaaa-aaaa-aaaa-aaaa\",\"nextpay\":\"bbbb-bbbb-bbbb-bbbb\",\"bankAccount\":\"6104-6104-6104-6104\",\"holderName\":\"\\u0648\\u06cc\\u0632\\u0648\\u06cc\\u0632\"}'),
-(5, 'BOT_STATES', '{\"requirePhone\":\"off\",\"requireIranPhone\":\"off\",\"sellState\":\"on\",\"botState\":\"on\",\"searchState\":\"on\",\"rewaredTime\":\"3\",\"cartToCartState\":\"on\",\"nextpay\":\"on\",\"zarinpal\":\"on\",\"nowPaymentWallet\":\"on\",\"nowPaymentOther\":\"on\",\"walletState\":\"on\",\"rewardChannel\":\"@wizwizdev\",\"lockChannel\":\"@wizwizch\",\"changeProtocolState\":null,\"renewAccountState\":null,\"switchLocationState\":\"on\",\"newMemberLockState\":\"off\",\"increaseTimeState\":\"on\",\"increaseVolumeState\":\"on\",\"gbPrice\":\"100\",\"dayPrice\":\"100\",\"subLinkState\":\"on\",\"plandelkhahState\":\"off\",\"weSwapState\":\"on\"}');
+(4, 'PAYMENT_KEYS', '{\"nowpayment\":\"cccc-cccc-cccc-cccc\",\"zarinpal\":\"aaaa-aaaa-aaaa-aaaa\",\"nextpay\":\"bbbb-bbbb-bbbb-bbbb\",\"bankAccount\":\"6104-6104-6104-6104\",\"holderName\":\"\\u0648\\u06cc\\u0632\\u0648\\u06cc\\u0632\",\"cardContact\":\"\",\"cardInfoVersion\":1}'),
+(5, 'BOT_STATES', '{\"requirePhone\":\"off\",\"requireIranPhone\":\"off\",\"sellState\":\"on\",\"botState\":\"on\",\"searchState\":\"on\",\"rewaredTime\":\"3\",\"cartToCartState\":\"on\",\"nextpay\":\"on\",\"zarinpal\":\"on\",\"nowPaymentWallet\":\"on\",\"nowPaymentOther\":\"on\",\"walletState\":\"on\",\"rewardChannel\":\"@wizwizdev\",\"lockChannel\":\"@wizwizch\",\"changeProtocolState\":null,\"renewAccountState\":null,\"switchLocationState\":\"on\",\"increaseTimeState\":\"on\",\"increaseVolumeState\":\"on\",\"gbPrice\":\"100\",\"dayPrice\":\"100\",\"subLinkState\":\"on\",\"plandelkhahState\":\"off\",\"weSwapState\":\"on\",\"newMemberAccessMode\":\"open\",\"newMemberLockState\":\"off\",\"newMemberAccessStartedAt\":0,\"buyersAccessCode\":\"\",\"userButtonVisibility\":{}}');
 ");
 
 
@@ -253,6 +252,12 @@ $connection->query("CREATE TABLE `users` (
   `approval_status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci NOT NULL DEFAULT 'approved',
   `approval_referrer` bigint(10) DEFAULT NULL,
   `approval_request_date` int(255) NOT NULL DEFAULT 0,
+  `join_exempt` tinyint(1) NOT NULL DEFAULT 0,
+  `access_exempt` tinyint(1) NOT NULL DEFAULT 0,
+  `access_code_used` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
+  `access_code_date` int(255) NOT NULL DEFAULT 0,
+  `access_code_revoked` tinyint(1) NOT NULL DEFAULT 0,
+  `card_info_version` int(11) NOT NULL DEFAULT 0,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci");
 
