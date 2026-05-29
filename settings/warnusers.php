@@ -212,6 +212,31 @@ function wizwiz_warn_delete_order_by_id($orderId){
     $stmt->close();
 }
 
+function wizwiz_warn_setting_value($type, $default = null){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return $default;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+    if($res && $res->num_rows > 0) return $res->fetch_assoc()['value'];
+    return $default;
+}
+
+function wizwiz_warn_remove_orphan_if_checked($order, $state, $notify = true){
+    if(!is_array($order) || !is_array($state)) return false;
+    if(!empty($state['found']) || empty($state['logged_in'])) return false;
+    $orderId = intval($order['id'] ?? 0);
+    if($orderId <= 0) return false;
+    wizwiz_warn_delete_order_by_id($orderId);
+    if($notify && !empty($order['userid'])){
+        $remark = htmlspecialchars((string)($order['remark'] ?? ''), ENT_QUOTES, 'UTF-8');
+        sendMessage("ℹ️ سرویس <b>$remark</b> دیگر داخل پنل وجود ندارد؛ از لیست ربات هم پاک شد.", null, 'HTML', intval($order['userid']));
+    }
+    return true;
+}
+
 $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND (`notif`=0 OR `notif` = -1) ORDER BY `id` ASC LIMIT ? OFFSET ?");
 $stmt->bind_param("ii", $limit, $warnOffset);
 $stmt->execute();
@@ -227,7 +252,11 @@ if($orders){
             $orderId = intval($order['id']);
 
             $state = wizwiz_warn_order_state($order);
-            if(empty($state['found'])) continue;
+            if(empty($state['found'])){
+                // اگر پنل در دسترس بود و کلاینت دیگر وجود نداشت، فقط رکورد اضافه ربات را پاک می‌کنیم.
+                wizwiz_warn_remove_orphan_if_checked($order, $state, true);
+                continue;
+            }
 
             $expiryTime = intval($state['expiry_time'] ?? 0);
             $total = intval($state['total'] ?? 0);
@@ -263,7 +292,8 @@ if($orders){
     }
 }
 
-// مرحله حذف خودکار: فقط بعد از sync با پنل تصمیم می‌گیریم.
+// مرحله حذف خودکار: فقط وقتی گزینه حذف خودکار روشن است. پاکسازی رکوردهای حذف‌شده از پنل مستقل از این گزینه انجام می‌شود.
+$autoDeleteConfigs = wizwiz_warn_setting_value('CLEAN_OLD_CONFIGS_AUTO', 'off') === 'on';
 $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `notif` > 0 AND `notif` < ? LIMIT 50");
 $stmt->bind_param("i", $time);
 $stmt->execute();
@@ -281,7 +311,15 @@ if($orders){
             $orderId = intval($order['id']);
 
             $state = wizwiz_warn_order_state($order);
-            if(empty($state['found'])) continue;
+            if(empty($state['found'])){
+                wizwiz_warn_remove_orphan_if_checked($order, $state, true);
+                continue;
+            }
+
+            if(!$autoDeleteConfigs){
+                // حذف به دلیل پایان حجم/تاریخ تا وقتی حذف خودکار خاموش است انجام نمی‌شود.
+                continue;
+            }
 
             $expiryTime = intval($state['expiry_time'] ?? 0);
             $total = intval($state['total'] ?? 0);
@@ -310,5 +348,26 @@ if($orders){
                 wizwiz_warn_update_notif_by_order($orderId, 0);
             }
         }
+    }
+}
+
+// پاکسازی مستقل رکوردهایی که از پنل حذف شده‌اند؛ این بخش به گزینه حذف خودکار وابسته نیست.
+if(file_exists("orphanOffset.txt")) $orphanOffset = intval(file_get_contents("orphanOffset.txt"));
+else $orphanOffset = 0;
+$stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 ORDER BY `id` ASC LIMIT ? OFFSET ?");
+$stmt->bind_param("ii", $limit, $orphanOffset);
+$stmt->execute();
+$orphanOrders = $stmt->get_result();
+$stmt->close();
+
+if($orphanOrders){
+    if($orphanOrders->num_rows > 0){
+        while($order = $orphanOrders->fetch_assoc()){
+            $state = wizwiz_warn_order_state($order);
+            if(empty($state['found'])) wizwiz_warn_remove_orphan_if_checked($order, $state, true);
+        }
+        file_put_contents("orphanOffset.txt", $orphanOffset + $limit);
+    }else{
+        if(file_exists('orphanOffset.txt')) unlink('orphanOffset.txt');
     }
 }
