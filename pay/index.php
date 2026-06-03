@@ -80,6 +80,13 @@ if(mysqli_num_rows($payInfo)==0){
     elseif($payType == "INCREASE_WALLET") $type ="شارژ کیف پول";
     elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType)) $type = "افزایش زمان اکانت";
     elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $type = "افزایش حجم اکانت";
+
+    $GLOBALS['payParam'] = $payParam;
+    $salesBlockReason = function_exists('wizwiz_salesBlockReasonForPayType') ? wizwiz_salesBlockReasonForPayType($payType) : '';
+    if($salesBlockReason !== ''){
+        showForm(strip_tags(function_exists('wizwiz_purchaseBlockedMessage') ? wizwiz_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'));
+        exit();
+    }
     
     
     

@@ -198,6 +198,17 @@ elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $payDescription = 
 
 if($gateType == "zarinpal" || $gateType == "nextpay") $payDescription = "خرید اشتراک";
 
+$GLOBALS['payParam'] = $payParam;
+$salesBlockReason = function_exists('wizwiz_salesBlockReasonForPayType') ? wizwiz_salesBlockReasonForPayType($payType) : '';
+if($salesBlockReason !== ''){
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `id` = ?");
+    $stmt->bind_param("i", $payRowId);
+    $stmt->execute();
+    $stmt->close();
+    showForm(strip_tags(function_exists('wizwiz_purchaseBlockedMessage') ? wizwiz_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'), $payDescription);
+    exit();
+}
+
 $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'paid' WHERE `id` =?");
 $stmt->bind_param("i", $payRowId);
 $stmt->execute();
