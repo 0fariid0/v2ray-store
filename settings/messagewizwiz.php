@@ -39,10 +39,15 @@ if($list->num_rows > 0){
     $chat_id = $info['chat_id'];
     $text = $info['text'];
     $message_id = $info['message_id'];
+    $targetType = function_exists('farid_normalizeBroadcastTarget') ? farid_normalizeBroadcastTarget($info['target_type'] ?? 'all') : 'all';
+    $targetTitle = function_exists('farid_getBroadcastTargetTitle') ? farid_getBroadcastTargetTitle($targetType) : 'همه کاربران';
+    $targetCount = function_exists('farid_countBroadcastTargets') ? farid_countBroadcastTargets($targetType) : 0;
+    $condition = function_exists('farid_getBroadcastTargetCondition') ? farid_getBroadcastTargetCondition($targetType, 'u') : '1=1';
     
     if($offset == '0'){
-        if($type == "forwardall") $msg = "عملیات هدایت همگانی شروع شد";
+        if($type == "forwardall") $msg = "عملیات فوروارد همگانی شروع شد";
         else $msg = "عملیات ارسال پیام همگانی شروع شد";
+        $msg .= "\n\n🎯 گروه مخاطب: " . $targetTitle . "\n👥 تعداد مخاطبان: " . $targetCount;
         
         bot('sendMessage',[
             'chat_id'=>$admin,
@@ -50,7 +55,8 @@ if($list->num_rows > 0){
             ]);
     }
     
-    $stmt = $connection->prepare("SELECT * FROM `users`ORDER BY `id` LIMIT 50 OFFSET ?");
+    $sql = "SELECT * FROM `users` u WHERE $condition ORDER BY u.`id` LIMIT 50 OFFSET ?";
+    $stmt = $connection->prepare($sql);
     $stmt->bind_param("i", $offset);
     $stmt->execute();
     $usersList = $stmt->get_result();
@@ -118,12 +124,13 @@ if($list->num_rows > 0){
         $stmt->execute();
         $stmt->close();
     }else{
-        if($type == "forwardall") $msg = "عملیات هدایت همگانی با موفقیت انجام شد";
+        if($type == "forwardall") $msg = "عملیات فوروارد همگانی با موفقیت انجام شد";
         else $msg = "عملیات ارسال پیام همگانی با موفقیت انجام شد";
+        $doneCount = function_exists('farid_countBroadcastTargets') ? farid_countBroadcastTargets($targetType) : $offset;
         
         bot('sendMessage',[
             'chat_id'=>$admin,
-            'text'=>$msg . "\nبه " . $offset . " نفر پیامتو فرستادم"
+            'text'=>$msg . "\n\n🎯 گروه مخاطب: " . $targetTitle . "\n👥 تعداد مخاطبان: " . $doneCount . "\n✅ تعداد پردازش‌شده: " . $offset
             ]);
             
         $stmt = $connection->prepare("DELETE FROM `send_list` WHERE `id` = ?");
