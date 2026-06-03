@@ -34,6 +34,9 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
+if(wizwiz_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
+    exit();
+}
 if(preg_match('/^approveNewMember(\d+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $targetId = (int)$match[1];
     $targetUser = wizwiz_getUserByTelegramId($targetId);
@@ -117,6 +120,116 @@ if(preg_match('/^blockCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin 
     }
     exit();
 }
+if($data == "testAccountManagement" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $msg = "🧪 <b>مدیریت اکانت تست</b>\n\n" .
+           "از این بخش می‌توانید سقف دریافت اکانت تست را برای کاربران مدیریت کنید، سابقه استفاده یک کاربر را ریست کنید یا استفاده همه کاربران از تست را پاک کنید.";
+    editText($message_id, $msg, wizwiz_getTestAccountManageKeys(), "HTML");
+    exit();
+}
+if($data == "resetAllTestAccountsAsk" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id,
+        "⚠️ <b>تایید ریست اکانت تست</b>\n\nبا تایید این گزینه، سابقه استفاده از اکانت تست برای همه کاربران پاک می‌شود و همه می‌توانند دوباره طبق سقف مجازشان از تست استفاده کنند.\n\nآیا مطمئن هستید؟",
+        json_encode(['inline_keyboard'=>[
+            [['text'=>'✅ بله، ریست شود', 'callback_data'=>'resetAllTestAccountsConfirm', 'style'=>'success']],
+            [['text'=>'⬅️ بازگشت', 'callback_data'=>'testAccountManagement', 'style'=>'primary']]
+        ]], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+if($data == "resetAllTestAccountsConfirm" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $connection->query("UPDATE `users` SET `freetrial` = NULL, `test_account_count` = 0");
+    editText($message_id, "✅ سابقه استفاده از اکانت تست برای همه کاربران با موفقیت ریست شد.", wizwiz_getTestAccountManageKeys(), "HTML");
+    exit();
+}
+if($data == "resetOneTestAccount" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید سابقه اکانت تست او ریست شود ارسال کنید.", $cancelKey, "HTML");
+    setUser("resetOneTestAccount");
+    exit();
+}
+if($data == "setTestAccountLimit" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("لطفاً آیدی عددی کاربری را ارسال کنید که می‌خواهید سقف اکانت تست او تغییر کند.", $cancelKey, "HTML");
+    setUser("setTestAccountLimitUser");
+    exit();
+}
+if($data == "removeTestAccountLimit" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("لطفاً آیدی عددی کاربری را ارسال کنید که می‌خواهید سقف اختصاصی اکانت تست او حذف و به حالت پیش‌فرض بازگردد.", $cancelKey, "HTML");
+    setUser("removeTestAccountLimit");
+    exit();
+}
+if($data == "testAccountLimitList" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getTestAccountLimitsListText(), json_encode(['inline_keyboard'=>[
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'testAccountManagement', 'style'=>'primary']]
+    ]], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setTestAccountLimitValue' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $limitText = trim((string)$text);
+    if(!preg_match('/^\d+$/', $limitText)){
+        sendMessage("❌ لطفاً فقط عدد وارد کنید. عدد <code>0</code> یعنی نامحدود.", $cancelKey, "HTML");
+        exit();
+    }
+    $limit = intval($limitText);
+    $targetId = intval($userInfo['temp'] ?? 0);
+    if($targetId <= 0){
+        setUser('', 'temp');
+        setUser();
+        sendMessage("❌ آیدی کاربر در حافظه مرحله پیدا نشد. لطفاً دوباره از منوی مدیریت اکانت تست اقدام کنید.", wizwiz_getTestAccountManageKeys(), "HTML");
+        exit();
+    }
+    wizwiz_ensureBasicUserRecord($targetId);
+    if($limit === 0){
+        $stmt = $connection->prepare("UPDATE `users` SET `test_account_exempt` = 1, `test_account_limit` = NULL WHERE `userid` = ?");
+        $stmt->bind_param("i", $targetId);
+        $stmt->execute();
+        $stmt->close();
+        $resultMsg = "✅ سقف اکانت تست کاربر <code>{$targetId}</code> روی حالت نامحدود تنظیم شد.";
+    }else{
+        $stmt = $connection->prepare("UPDATE `users` SET `test_account_exempt` = 0, `test_account_limit` = ? WHERE `userid` = ?");
+        $stmt->bind_param("ii", $limit, $targetId);
+        $stmt->execute();
+        $stmt->close();
+        $resultMsg = "✅ سقف اکانت تست کاربر <code>{$targetId}</code> روی <b>{$limit}</b> بار تنظیم شد.";
+    }
+    setUser('', 'temp');
+    setUser();
+    sendMessage($resultMsg, $removeKeyboard, "HTML");
+    sendMessage("🧪 مدیریت اکانت تست", wizwiz_getTestAccountManageKeys(), "HTML");
+    exit();
+}
+if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimitUser','removeTestAccountLimit'], true) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = trim((string)$text);
+    if(!preg_match('/^\d{5,20}$/', $targetId)){
+        sendMessage("❌ لطفاً یک آیدی عددی معتبر ارسال کنید.", $cancelKey, "HTML");
+        exit();
+    }
+    $targetId = intval($targetId);
+    wizwiz_ensureBasicUserRecord($targetId);
+    if($userInfo['step'] == 'resetOneTestAccount'){
+        $stmt = $connection->prepare("UPDATE `users` SET `freetrial` = NULL, `test_account_count` = 0 WHERE `userid` = ?");
+        $stmt->bind_param("i", $targetId);
+        $stmt->execute();
+        $stmt->close();
+        setUser();
+        sendMessage("✅ سابقه اکانت تست کاربر <code>{$targetId}</code> با موفقیت ریست شد.", $removeKeyboard, "HTML");
+        sendMessage("🧪 مدیریت اکانت تست", wizwiz_getTestAccountManageKeys(), "HTML");
+    }elseif($userInfo['step'] == 'setTestAccountLimitUser'){
+        setUser((string)$targetId, 'temp');
+        setUser('setTestAccountLimitValue');
+        sendMessage("لطفاً سقف دریافت اکانت تست برای کاربر <code>{$targetId}</code> را ارسال کنید.\n\nمثلاً عدد <code>2</code> یعنی این کاربر دو بار می‌تواند اکانت تست دریافت کند.\nعدد <code>0</code> یعنی نامحدود.", $cancelKey, "HTML");
+    }elseif($userInfo['step'] == 'removeTestAccountLimit'){
+        $stmt = $connection->prepare("UPDATE `users` SET `test_account_exempt` = 0, `test_account_limit` = NULL WHERE `userid` = ?");
+        $stmt->bind_param("i", $targetId);
+        $stmt->execute();
+        $stmt->close();
+        setUser();
+        sendMessage("✅ سقف اختصاصی اکانت تست کاربر <code>{$targetId}</code> حذف شد و محدودیت او به حالت پیش‌فرض بازگشت.", $removeKeyboard, "HTML");
+        sendMessage("🧪 مدیریت اکانت تست", wizwiz_getTestAccountManageKeys(), "HTML");
+    }
+    exit();
+}
+
 if(preg_match('/^requestCartToCartCard(.+)/', $data, $match)){
     $paymentKeys = wizwiz_getPaymentKeys();
     wizwiz_markUserCardVersion($from_id, $paymentKeys);
@@ -527,6 +640,49 @@ if(($data == "agentsList" || preg_match('/^nextAgentList(\d+)/',$data,$match)) &
     if($keys != null) editText($message_id,$mainValues['agents_list'], $keys);
     else alert("نماینده ای یافت نشد");
 }
+
+if($data == "addAgentManual" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("➕ <b>افزودن نماینده دستی</b>\n\nلطفاً آیدی عددی تلگرام کاربر را ارسال کنید.\nاگر کاربر هنوز /start نزده باشد، یک رکورد ساده برای او ساخته می‌شود و پنل نمایندگی برایش ارسال خواهد شد.", $cancelKey, "HTML");
+    setUser("addAgentManualUserId");
+    exit();
+}
+if($userInfo['step'] == "addAgentManualUserId" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = trim((string)$text);
+    if(!preg_match('/^\d{5,20}$/', $targetId)){
+        sendMessage("⚠️ آیدی عددی معتبر نیست. لطفاً فقط آیدی عددی تلگرام کاربر را ارسال کنید.", $cancelKey, "HTML");
+        exit();
+    }
+    setUser("addAgentManualDiscount_" . $targetId);
+    sendMessage("✅ آیدی کاربر دریافت شد.\n\nلطفاً درصد تخفیف عمومی نماینده را فقط به عدد وارد کنید. مثال: <code>10</code>", $cancelKey, "HTML");
+    exit();
+}
+if(preg_match('/^addAgentManualDiscount_(\d+)$/', $userInfo['step'], $m) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = (int)$m[1];
+    if(!is_numeric($text) || floatval($text) < 0 || floatval($text) > 100){
+        sendMessage("⚠️ درصد تخفیف باید عددی بین 0 تا 100 باشد.", $cancelKey, "HTML");
+        exit();
+    }
+    $discountValue = (string)(0 + $text);
+    wizwiz_ensureBasicUserRecord($targetId);
+    $discount = json_encode(['normal'=>$discountValue], JSON_UNESCAPED_UNICODE);
+    $now = time();
+    $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 1, `discount_percent` = ?, `agent_date` = ?, `step` = 'none' WHERE `userid` = ?");
+    $stmt->bind_param('sii', $discount, $now, $targetId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    setUser();
+    if($ok){
+        sendMessage("✅ نماینده با موفقیت به‌صورت دستی اضافه شد.\n\nآیدی عددی: <code>$targetId</code>\nدرصد تخفیف عمومی: <code>$discountValue%</code>", $removeKeyboard, "HTML");
+        sendMessage("👤 پنل نمایندگی شما توسط مدیریت فعال شد.\n\nبرای مشاهده امکانات، از دکمه زیر استفاده کنید.", getMainKeys(), "HTML", $targetId);
+        $keys = getAgentsList();
+        if($keys != null) sendMessage($mainValues['agents_list'], $keys, "HTML");
+    }else{
+        sendMessage("❌ افزودن نماینده انجام نشد. لطفاً دوباره تلاش کنید.", $removeKeyboard, "HTML");
+    }
+    exit();
+}
+
 if(preg_match('/^agentDetails(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $userDetail = bot('getChat',['chat_id'=>$match[1]])->result;
     $userUserName = $userDetail->username;
@@ -927,15 +1083,15 @@ if($data=="myInfo"){
     
     $myWallet = number_format($userInfo['wallet']) . " تومان";
     
-    $keys = json_encode(['inline_keyboard'=>[
-        [
+    $accountKeys = [];
+    if(wizwiz_isWalletOpenForCurrentUser()){
+        $accountKeys[] = [
             ['text'=>"شارژ کیف پول 💰",'callback_data'=>"increaseMyWallet"],
             ['text'=>"انتقال موجودی",'callback_data'=>"transferMyWallet"]
-        ],
-        [
-            ['text'=>$buttonValues['back_button'],'callback_data'=>"mainMenu"]
-            ]
-        ]]);
+        ];
+    }
+    $accountKeys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"mainMenu"]];
+    $keys = json_encode(['inline_keyboard'=>$accountKeys], JSON_UNESCAPED_UNICODE);
     editText($message_id, "
 💞 اطلاعات حساب شما:
     
@@ -951,6 +1107,10 @@ if($data=="myInfo"){
             $keys,"html");
 }
 if($data=="transferMyWallet"){
+    if(!wizwiz_isWalletOpenForCurrentUser()){
+        alert("کیف پول در حال حاضر برای حساب شما غیرفعال است.", true);
+        exit();
+    }
     if($userInfo['wallet'] > 0 ){
         delMessage();
         sendMessage("لطفاً آیدی عددی کاربر مورد نظر رو وارد کن",$cancelKey);
@@ -958,6 +1118,11 @@ if($data=="transferMyWallet"){
     }else alert("موجودی حساب شما کم است");
 }
 if($userInfo['step'] =="transferMyWallet" && $text != $buttonValues['cancel']){
+    if(!wizwiz_isWalletOpenForCurrentUser()){
+        setUser();
+        sendMessage("کیف پول در حال حاضر برای حساب شما غیرفعال است.", $removeKeyboard);
+        exit();
+    }
     if(is_numeric($text)){
         if($text != $from_id){
             $stmt= $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
@@ -996,11 +1161,20 @@ if(preg_match('/^tranfserUserAmount(\d+)/',$userInfo['step'],$match) && $text !=
     }else sendMessage($mainValues['send_only_number']);
 }
 if($data=="increaseMyWallet"){
+    if(!wizwiz_isWalletOpenForCurrentUser()){
+        alert("کیف پول در حال حاضر برای حساب شما غیرفعال است.", true);
+        exit();
+    }
     delMessage();
-    sendMessage("🙂 عزیزم مقدار شارژ مورد نظر خود را به تومان وارد کن (بیشتر از 5000 تومان)",$cancelKey);
+    sendMessage("لطفاً مبلغ شارژ کیف پول را به تومان وارد کنید. حداقل مبلغ قابل ثبت ۵۰۰۰ تومان است.",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
+    if(!wizwiz_isWalletOpenForCurrentUser()){
+        setUser();
+        sendMessage("کیف پول در حال حاضر برای حساب شما غیرفعال است.", $removeKeyboard);
+        exit();
+    }
     if(!is_numeric($text)){
         sendMessage($mainValues['send_only_number']);
         exit();
@@ -1564,7 +1738,15 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
             $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
             $vray_link = json_encode($vraylink);
         }
-        foreach($vraylink as $link){
+        $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__wizwizSubLink = isset($subLink) ? $subLink : '';
+        $__wizwizServerType = isset($serverType) ? $serverType : '';
+        $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizLoopLinks = $vraylink;
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+            $__wizwizLoopLinks = [];
+        }
+        foreach($__wizwizLoopLinks as $link){
             $acc_text = "
     
         🔮 $remark \n " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"<code>$link</code>":"");
@@ -1996,7 +2178,15 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink);
         }
-        foreach($vraylink as $link){
+        $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__wizwizSubLink = isset($subLink) ? $subLink : '';
+        $__wizwizServerType = isset($serverType) ? $serverType : '';
+        $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizLoopLinks = $vraylink;
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+            $__wizwizLoopLinks = [];
+        }
+        foreach($__wizwizLoopLinks as $link){
         $acc_text = "
         
 😍 سفارش جدید شما
@@ -2395,51 +2585,32 @@ if($userInfo['step'] == "messageToSpeceficUser" && $text != $buttonValues['cance
 }
 
 if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    // بررسی صف ارسال پیام/فوروارد همگانی (به جز عملیات به‌روزرسانی کانفیگ‌ها)
-    $stmt = $connection->prepare("SELECT * FROM `send_list` WHERE `state` = 1 AND `type` != 'updateConfigs' LIMIT 1");
-    $stmt->execute();
-    $info = $stmt->get_result();
-    $stmt->close();
-
-    if($info->num_rows > 0){
-        $sendInfo = $info->fetch_assoc();
-
-        $offset = intval($sendInfo['offset']??0);
-        $type = $sendInfo['type'];
-
-        $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `users`");
-        $stmt->execute();
-        $usersCount = intval($stmt->get_result()->fetch_assoc()['cnt']??0);
-        $stmt->close();
-
-        $leftMessages = max(0, $usersCount - $offset);
-
-        if($type == "forwardall"){
-            sendMessage("
-            ❗️ یک فروارد همگانی در صف انتشار می باشد لطفاً صبور باشید ...
-
-            🔰 تعداد کاربران : $usersCount
-            ☑️ فروارد شده : $offset
-            📣 باقیمانده : $leftMessages
-            ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
-            ");
-        }else{
-            sendMessage("
-            ❗️ یک پیام همگانی در صف انتشار می باشد لطفاً صبور باشید ...
-
-            🔰 تعداد کاربران : $usersCount
-            ☑️ ارسال شده : $offset
-            📣 باقیمانده : $leftMessages
-            ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
-            ");
-        }
+    $queueText = function_exists('farid_getActiveBroadcastQueueText') ? farid_getActiveBroadcastQueueText() : null;
+    if($queueText !== null){
+        sendMessage($queueText);
         exit();
     }
 
-    // شروع ارسال پیام همگانی
+    setUser();
+    // پیام منوی مدیریت قبلی حذف می‌شود؛ بعد از حذف دیگر نمی‌توان همان message_id را edit کرد.
+    // بنابراین منوی انتخاب مخاطب باید با sendMessage ارسال شود تا دکمه "ارسال همگانی" بی‌پاسخ نماند.
     delMessage();
-    setUser('s2a');
-    sendMessage("لطفاً پیامت رو بنویس ، میخوام برا همه بفرستمش: 🙂",$cancelKey);
+    sendMessage("📨 ارسال پیام همگانی\n\nلطفاً مشخص کنید پیام برای کدام گروه از کاربران ارسال شود.", farid_getBroadcastTargetKeyboard('message'), 'HTML');
+    exit();
+}
+
+if(preg_match('/^broadcastTargetMessage_(all|approved)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $target = farid_normalizeBroadcastTarget($match[1]);
+    $count = farid_countBroadcastTargets($target);
+    $title = farid_getBroadcastTargetTitle($target);
+    if($count <= 0){
+        editText($message_id, "⚠️ برای گروه انتخاب‌شده کاربری پیدا نشد.\n\n🎯 گروه مخاطب: <b>$title</b>", farid_getBroadcastTargetKeyboard('message'), 'HTML');
+        exit();
+    }
+
+    delMessage();
+    setUser('s2a|' . $target);
+    sendMessage("✉️ لطفاً متن یا فایل پیام همگانی را ارسال کنید.\n\n🎯 گروه مخاطب: <b>$title</b>\n👥 تعداد مخاطبان: <b>$count</b>\n\nپس از دریافت پیام، پیش‌نمایش تعداد مخاطبان دوباره برای تایید نمایش داده می‌شود.", $cancelKey, 'HTML');
     exit();
 }
 
@@ -3502,25 +3673,36 @@ if($userInfo['step'] == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['is
 
 
 
-if($userInfo['step'] == 's2a' and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $target = farid_normalizeBroadcastTarget($broadcastStepMatch[1] ?? 'all');
+    $targetTitle = farid_getBroadcastTargetTitle($target);
+    $targetCount = farid_countBroadcastTargets($target);
+
+    if($targetCount <= 0){
+        setUser();
+        sendMessage("⚠️ پیام همگانی ثبت نشد، چون برای گروه انتخاب‌شده هیچ مخاطبی وجود ندارد.\n\n🎯 گروه مخاطب: <b>$targetTitle</b>", getAdminKeysPlus(), 'HTML');
+        exit();
+    }
+
     setUser();
 
     if($fileid !== null) {
-        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `file_id`) VALUES (?, ?, ?)");
-        $stmt->bind_param('sss', $filetype, $caption, $fileid);
+        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `file_id`, `target_type`) VALUES (?, ?, ?, ?)");
+        $stmt->bind_param('ssss', $filetype, $caption, $fileid, $target);
     }
     else{
-        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`) VALUES ('text', ?)");
-        $stmt->bind_param("s", $text);
+        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `target_type`) VALUES ('text', ?, ?)");
+        $stmt->bind_param("ss", $text, $target);
     }
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();
-    
-    sendMessage('⏳ مرسی از پیامت  ...  ',$removeKeyboard);
-    sendMessage("برای همه بفرستم؟",json_encode(['inline_keyboard'=>[
-    [['text'=>"بفرست",'callback_data'=>"yesSend2All" . $id],['text'=>"نه نفرست",'callback_data'=>"noDontSend2all" . $id]]
-    ]]));
+
+    sendMessage('⏳ پیام دریافت شد و آماده بررسی است.', $removeKeyboard);
+    sendMessage("📨 پیش‌نمایش ارسال همگانی\n\n🎯 گروه مخاطب: <b>$targetTitle</b>\n👥 تعداد مخاطبان: <b>$targetCount</b>\n\nآیا ارسال پیام برای این گروه آغاز شود؟", json_encode(['inline_keyboard'=>[
+        [['text'=>"✅ بله، ارسال شود", 'callback_data'=>"yesSend2All" . $id, 'style'=>'success'], ['text'=>"❌ لغو ارسال", 'callback_data'=>"noDontSend2all" . $id, 'style'=>'danger']]
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
 }
 if(preg_match('/^noDontSend2all(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("DELETE FROM `send_list` WHERE `id` = ?");
@@ -3528,71 +3710,78 @@ if(preg_match('/^noDontSend2all(\d+)/',$data,$match) && ($from_id == $admin || $
     $stmt->execute();
     $stmt->close();
     
-    editText($message_id,'ارسال همگانی لغو شد ✅',getAdminKeysPlus());
+    editText($message_id,'✅ ارسال همگانی لغو شد.',getAdminKeysPlus());
+    exit();
 }
 if(preg_match('/^yesSend2All(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $stmt = $connection->prepare("SELECT `target_type` FROM `send_list` WHERE `id` = ? LIMIT 1");
+    $stmt->bind_param('i', $match[1]);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $target = farid_normalizeBroadcastTarget($row['target_type'] ?? 'all');
+    $targetTitle = farid_getBroadcastTargetTitle($target);
+    $targetCount = farid_countBroadcastTargets($target);
+
     $stmt = $connection->prepare("UPDATE `send_list` SET `state` = 1, `offset` = 0 WHERE `id` = ?") ;
     $stmt->bind_param('i', $match[1]);
     $stmt->execute();
     $stmt->close();
     
-    editText($message_id,'⏳ کم کم برا همه ارسال میشه ...',getAdminKeysPlus());
+    editText($message_id,"⏳ ارسال همگانی آغاز شد.\n\n🎯 گروه مخاطب: <b>$targetTitle</b>\n👥 تعداد مخاطبان: <b>$targetCount</b>\n\nارسال به‌صورت مرحله‌ای انجام می‌شود.",getAdminKeysPlus(), 'HTML');
+    exit();
 }
 if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `send_list` WHERE `state` = 1 AND `type` != 'updateConfigs' LIMIT 1");
-    $stmt->execute();
-    $info = $stmt->get_result();
-    $stmt->close();
-    
-    if($info->num_rows > 0){
-        $sendInfo = $info->fetch_assoc();
-        $offset = intval($sendInfo['offset']??0);
-        $type = $sendInfo['type'];
-        
-        $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `users`");
-        $stmt->execute();
-        $usersCount = intval($stmt->get_result()->fetch_assoc()['cnt']??0);
-        $stmt->close();
-
-        $leftMessages = max(0, $usersCount - $offset);
-        
-        if($type == "forwardall"){
-            sendMessage("
-            ❗️ یک فروارد همگانی در صف انتشار می باشد لطفاً صبور باشید ...
-            
-            🔰 تعداد کاربران : $usersCount
-            ☑️ فروارد شده : $offset
-            📣 باقیمانده : $leftMessages
-            ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
-            ");
-        }else{
-            sendMessage("
-            ❗️ یک پیام همگانی در صف انتشار می باشد لطفاً صبور باشید ...
-            
-            🔰 تعداد کاربران : $usersCount
-            ☑️ ارسال شده : $offset
-            📣 باقیمانده : $leftMessages
-            ⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
-            ");
-        }
-    }else{
-        delMessage();
-        sendMessage($mainValues['forward_your_message'], $cancelKey);
-        setUser($data);
+    $queueText = function_exists('farid_getActiveBroadcastQueueText') ? farid_getActiveBroadcastQueueText() : null;
+    if($queueText !== null){
+        sendMessage($queueText);
+        exit();
     }
+
+    setUser();
+    // بعد از حذف پیام قبلی، editText روی همان message_id شکست می‌خورد؛ پس منوی جدید را جدا ارسال می‌کنیم.
+    delMessage();
+    sendMessage("📤 فوروارد همگانی\n\nلطفاً مشخص کنید پیام فورواردی برای کدام گروه از کاربران ارسال شود.", farid_getBroadcastTargetKeyboard('forward'), 'HTML');
+    exit();
 }
-if($userInfo['step'] == "forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `message_id`, `chat_id`) VALUES ('forwardall', ?, ?)");
-    $stmt->bind_param('ss', $message_id, $chat_id);
+if(preg_match('/^broadcastTargetForward_(all|approved)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $target = farid_normalizeBroadcastTarget($match[1]);
+    $count = farid_countBroadcastTargets($target);
+    $title = farid_getBroadcastTargetTitle($target);
+    if($count <= 0){
+        editText($message_id, "⚠️ برای گروه انتخاب‌شده کاربری پیدا نشد.\n\n🎯 گروه مخاطب: <b>$title</b>", farid_getBroadcastTargetKeyboard('forward'), 'HTML');
+        exit();
+    }
+
+    delMessage();
+    setUser('forwardToAll|' . $target);
+    sendMessage("📤 لطفاً پیامی را که می‌خواهید فوروارد شود ارسال کنید.\n\n🎯 گروه مخاطب: <b>$title</b>\n👥 تعداد مخاطبان: <b>$count</b>", $cancelKey, 'HTML');
+    exit();
+}
+if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $target = farid_normalizeBroadcastTarget($forwardStepMatch[1] ?? 'all');
+    $targetTitle = farid_getBroadcastTargetTitle($target);
+    $targetCount = farid_countBroadcastTargets($target);
+
+    if($targetCount <= 0){
+        setUser();
+        sendMessage("⚠️ فوروارد همگانی ثبت نشد، چون برای گروه انتخاب‌شده هیچ مخاطبی وجود ندارد.\n\n🎯 گروه مخاطب: <b>$targetTitle</b>", getAdminKeysPlus(), 'HTML');
+        exit();
+    }
+
+    $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `message_id`, `chat_id`, `target_type`) VALUES ('forwardall', ?, ?, ?)");
+    $stmt->bind_param('sss', $message_id, $chat_id, $target);
     $stmt->execute();
     $id = $stmt->insert_id;
     $stmt->close();
 
     setUser();
-    sendMessage('⏳ مرسی از پیامت  ...  ',$removeKeyboard);
-    sendMessage("برای همه فروارد کنم؟",json_encode(['inline_keyboard'=>[
-    [['text'=>"بفرست",'callback_data'=>"yesSend2All" . $id],['text'=>"نه نفرست",'callback_data'=>"noDontSend2all" . $id]]
-    ]]));
+    sendMessage('⏳ پیام فورواردی دریافت شد و آماده بررسی است.', $removeKeyboard);
+    sendMessage("📤 پیش‌نمایش فوروارد همگانی\n\n🎯 گروه مخاطب: <b>$targetTitle</b>\n👥 تعداد مخاطبان: <b>$targetCount</b>\n\nآیا فوروارد برای این گروه آغاز شود؟", json_encode(['inline_keyboard'=>[
+        [['text'=>"✅ بله، فوروارد شود", 'callback_data'=>"yesSend2All" . $id, 'style'=>'success'], ['text'=>"❌ لغو", 'callback_data'=>"noDontSend2all" . $id, 'style'=>'danger']]
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
 }
 if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true)) ) {
     $sid = $match['serverId'];
@@ -3921,37 +4110,42 @@ if(preg_match('/^haveDiscount(.+?)_(.*)/',$data,$match)){
     elseif($match[1] == "Renew") setUser('discountRenew' . $match[2]);
 }
 if($data=="getTestAccount"){
-    if($userInfo['freetrial'] != null && $from_id != $admin && $userInfo['isAdmin'] != true){
-        alert("شما اکانت تست را قبلا استفاده کرده اید");
+    if(function_exists('wizwiz_canUserGetTestAccount') && !wizwiz_canUserGetTestAccount($userInfo, $from_id)){
+        $used = function_exists('wizwiz_getUserTestAccountUsedCount') ? wizwiz_getUserTestAccountUsedCount($userInfo) : 1;
+        $limit = function_exists('wizwiz_getTestAccountLimitText') ? wizwiz_getTestAccountLimitText($userInfo) : '1 بار';
+        alert("شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}. در صورت نیاز، لطفاً با پشتیبانی در ارتباط باشید.");
+        exit();
+    }elseif(!function_exists('wizwiz_canUserGetTestAccount') && $userInfo['freetrial'] != null && $from_id != $admin && $userInfo['isAdmin'] != true){
+        alert("شما اکانت تست را قبلاً استفاده کرده‌اید.");
         exit();
     }
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `price`=0");
-    $stmt->execute();
-    $respd = $stmt->get_result();
-    $stmt->close();
-    
-    if($respd->num_rows > 0){
-        alert($mainValues['receving_information']);
-    	$keyboard = array();
-        while ($row = $respd->fetch_assoc()){
-            $id = $row['id'];
-            $catInfo = $connection->prepare("SELECT * FROM `server_categories` WHERE `id`=?");
-            $catInfo->bind_param("i", $row['catid']);
-            $catInfo->execute();
-            $catname = $catInfo->get_result()->fetch_assoc()['title'];
-            $catInfo->close();
-            
-            $name = $catname." ".$row['title'];
-            $price =  $row['price'];
-            $desc = $row['descr'];
-        	$sid = $row['server_id'];
 
-            $keyboard[] = [['text' => $name, 'callback_data' => "freeTrial{$id}_normal"]];
+    $testPlanId = 0;
+    $stmt = $connection->prepare("SELECT `id` FROM `server_plans` WHERE `price` = 0 AND `active` = 1 ORDER BY `id` ASC LIMIT 1");
+    if($stmt){
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!empty($row['id'])) $testPlanId = intval($row['id']);
+    }
 
+    if($testPlanId == 0){
+        $stmt = $connection->prepare("SELECT `id` FROM `server_plans` WHERE `price` = 0 ORDER BY `id` ASC LIMIT 1");
+        if($stmt){
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if(!empty($row['id'])) $testPlanId = intval($row['id']);
         }
-    	$keyboard[] = [['text' => $buttonValues['back_to_main'], 'callback_data' => "mainMenu"]];
-        editText($message_id,"لطفاً یکی از کلید های زیر را انتخاب کنید", json_encode(['inline_keyboard'=>$keyboard]), "HTML");
-    }else alert("این بخش موقتا غیر فعال است");
+    }
+
+    if($testPlanId > 0){
+        alert($mainValues['receving_information'] ?? "در حال آماده‌سازی اکانت تست...");
+        $data = "freeTrial{$testPlanId}_normal";
+    }else{
+        alert("در حال حاضر اکانت تست فعال نیست.");
+        exit();
+    }
 }
 if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match) || 
     preg_match('/selectPlan(\d+)_(\d+)_(?<buyType>\w+)/',$userInfo['step'], $match) || 
@@ -4309,7 +4503,15 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     delMessage();
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
-    foreach($vraylink as $link){
+    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__wizwizSubLink = isset($subLink) ? $subLink : '';
+        $__wizwizServerType = isset($serverType) ? $serverType : '';
+        $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizLoopLinks = $vraylink;
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+            $__wizwizLoopLinks = [];
+        }
+        foreach($__wizwizLoopLinks as $link){
         $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -4716,7 +4918,16 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
 
-    foreach($vraylink as $vray_link){
+    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+    $__wizwizSubLink = isset($subLink) ? $subLink : '';
+    $__wizwizServerType = isset($serverType) ? $serverType : '';
+    $__wizwizRemark = isset($remark) ? $remark : '';
+    $__wizwizLoopLinks = $vraylink;
+    if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+        $__wizwizLoopLinks = [];
+    }
+
+    foreach($__wizwizLoopLinks as $vray_link){
         $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -5035,7 +5246,15 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
             }
 
-            foreach($vraylink as $link){
+            $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__wizwizSubLink = isset($subLink) ? $subLink : '';
+        $__wizwizServerType = isset($serverType) ? $serverType : '';
+        $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizLoopLinks = $vraylink;
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+            $__wizwizLoopLinks = [];
+        }
+        foreach($__wizwizLoopLinks as $link){
                 $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -5556,7 +5775,15 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link = json_encode($vraylink);
             }
-            foreach($vraylink as $link){
+            $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__wizwizSubLink = isset($subLink) ? $subLink : '';
+        $__wizwizServerType = isset($serverType) ? $serverType : '';
+        $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizLoopLinks = $vraylink;
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+            $__wizwizLoopLinks = [];
+        }
+        foreach($__wizwizLoopLinks as $link){
                 $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -6868,7 +7095,12 @@ if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin 
 if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $id = $match[1];
  
-    if($userInfo['freetrial'] == 'used' and !($from_id == $admin) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
+    if(function_exists('wizwiz_canUserGetTestAccount') && !wizwiz_canUserGetTestAccount($userInfo, $from_id) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
+        $used = function_exists('wizwiz_getUserTestAccountUsedCount') ? wizwiz_getUserTestAccountUsedCount($userInfo) : 1;
+        $limit = function_exists('wizwiz_getTestAccountLimitText') ? wizwiz_getTestAccountLimitText($userInfo) : '1 بار';
+        alert("⚠️ شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}");
+        exit;
+    }elseif(!function_exists('wizwiz_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
         alert('⚠️شما قبلا هدیه رایگان خود را دریافت کردید');
         exit;
     }
@@ -7022,7 +7254,15 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     }
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
-    foreach($vraylink as $link){
+    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__wizwizSubLink = isset($subLink) ? $subLink : '';
+        $__wizwizServerType = isset($serverType) ? $serverType : '';
+        $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizLoopLinks = $vraylink;
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+            $__wizwizLoopLinks = [];
+        }
+        foreach($__wizwizLoopLinks as $link){
         $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -7076,7 +7316,11 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         $stmt->close();
     }
 
-    setUser('used','freetrial');    
+    if(function_exists('wizwiz_markTestAccountUsed')){
+        wizwiz_markTestAccountUsed($from_id);
+    }else{
+        setUser('used','freetrial');
+    }    
 }
 if(preg_match('/^showMainButtonAns(\d+)/',$data,$match)){
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `id` = ?");
@@ -7646,7 +7890,15 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
     include 'phpqrcode/qrlib.php';  
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
-    foreach($vraylink as $vray_link){
+    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+    $__wizwizSubLink = isset($subLink) ? $subLink : '';
+    $__wizwizServerType = isset($serverType) ? $serverType : '';
+    $__wizwizRemark = isset($remark) ? $remark : '';
+    $__wizwizLoopLinks = $vraylink;
+    if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+        $__wizwizLoopLinks = [];
+    }
+    foreach($__wizwizLoopLinks as $vray_link){
         $acc_text = $botState['configLinkState'] != "off"?"<code>$vray_link</code>":".";
     
         $ecc = 'L';
@@ -8410,58 +8662,71 @@ if(preg_match('/^wizwizplanrial(\d+)/',$userInfo['step'], $match) && ($from_id =
         sendMessage("بهت میگم قیمت وارد کن برداشتی یه چیز دیگه نوشتی 🫤 ( عدد وارد کن ) عجبا");
     }
 }
-if(($data == 'mySubscriptions' || $data == "agentConfigsList" or preg_match('/(changeAgentOrder|changeOrdersPage)(\d+)/',$data, $match) )&& ($botState['sellState']=="on" || $from_id ==$admin)){
+if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(changeAgentOrder|changeOrdersPage)(\d+)$/',$data, $match)){
+    // نمایش کانفیگ‌های کاربر/نماینده نباید به روشن بودن فروش وابسته باشد.
+    // فروش ممکن است بسته باشد، اما کاربر باید بتواند سرویس‌های قبلی خود را ببیند.
     $results_per_page = 50;
-    if($data == "agentConfigsList" || $match[1] == "changeAgentOrder") $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `status`=1");  
-    else $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `status`=1 AND `agent_bought` = 0");  
+    $isAgentConfigList = ($data == "agentConfigsList") || (isset($match[1]) && $match[1] == "changeAgentOrder");
+    $page = isset($match[2]) ? intval($match[2]) : 1;
+    if($page < 1) $page = 1;
+
+    if($isAgentConfigList){
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `userid`=? AND `status`=1");
+    }else{
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `userid`=? AND `status`=1 AND `agent_bought` = 0");
+    }
     $stmt->bind_param("i", $from_id);
     $stmt->execute();
-    $number_of_result= $stmt->get_result()->num_rows;
+    $number_of_result = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
     $stmt->close();
 
-    $number_of_page = ceil ($number_of_result / $results_per_page);
-    $page = $match[2] ??1;
-    $page_first_result = ($page-1) * $results_per_page;  
-    
-    if($data == "agentConfigsList" || $match[1] == "changeAgentOrder") $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `status`=1 ORDER BY `id` DESC LIMIT ?, ?");
-    else $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `status`=1 AND `agent_bought` = 0 ORDER BY `id` DESC LIMIT ?, ?");
+    if($number_of_result <= 0){
+        alert($mainValues['you_dont_have_config']);
+        exit;
+    }
+
+    $number_of_page = max(1, ceil($number_of_result / $results_per_page));
+    if($page > $number_of_page) $page = $number_of_page;
+    $page_first_result = ($page - 1) * $results_per_page;
+
+    if($isAgentConfigList){
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `status`=1 ORDER BY `id` DESC LIMIT ?, ?");
+    }else{
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `status`=1 AND `agent_bought` = 0 ORDER BY `id` DESC LIMIT ?, ?");
+    }
     $stmt->bind_param("iii", $from_id, $page_first_result, $results_per_page);
     $stmt->execute();
     $orders = $stmt->get_result();
     $stmt->close();
 
-
-    if($orders->num_rows==0){
+    if($orders->num_rows == 0){
         alert($mainValues['you_dont_have_config']);
         exit;
     }
+
     $keyboard = [];
     while($cat = $orders->fetch_assoc()){
-        $id = $cat['id'];
+        $id = intval($cat['id']);
         $remark = $cat['remark'];
-        $keyboard[] = ['text' => "$remark", 'callback_data' => "orderDetails$id"];
+        $keyboard[] = [['text' => "$remark", 'callback_data' => "orderDetails$id"]];
     }
-    $keyboard = array_chunk($keyboard,1);
-    
+
     $prev = $page - 1;
     $next = $page + 1;
-    $lastpage = ceil($number_of_page/$results_per_page);
-    $lpm1 = $lastpage - 1;
-    
     $buttons = [];
-    if ($prev > 0) $buttons[] = ['text' => "◀", 'callback_data' => (($data=="agentConfigsList" || $match[1] == "changeAgentOrder") ? "changeAgentOrder$prev":"changeOrdersPage$prev")];
+    if($prev > 0){
+        $buttons[] = ['text' => "◀", 'callback_data' => ($isAgentConfigList ? "changeAgentOrder$prev" : "changeOrdersPage$prev")];
+    }
+    if($next <= $number_of_page){
+        $buttons[] = ['text' => "➡", 'callback_data' => ($isAgentConfigList ? "changeAgentOrder$next" : "changeOrdersPage$next")];
+    }
+    if(!empty($buttons)) $keyboard[] = $buttons;
 
-    if ($next > 0 and $page != $number_of_page) $buttons[] = ['text' => "➡", 'callback_data' => (($data=="agentConfigsList" || $match[1] == "changeAgentOrder")?"changeAgentOrder$next":"changeOrdersPage$next")];   
-    $keyboard[] = $buttons;
-    if($data == "agentConfigsList" || $match[1] == "changeAgentOrder") $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchAgentConfig"]];
+    if($isAgentConfigList) $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchAgentConfig"]];
     else $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchMyConfig"]];
     $keyboard[] = [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]];
-    
-    if(isset($data)) {
-        editText($message_id, $mainValues['select_one_to_show_detail'], json_encode(['inline_keyboard'=>$keyboard]));
-    }else { sendAction('typing');
-        sendMessage($mainValues['select_one_to_show_detail'], json_encode(['inline_keyboard'=>$keyboard]));
-    }
+
+    editText($message_id, $mainValues['select_one_to_show_detail'], json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE));
     exit;
 }
 if($data=="searchAgentConfig" || $data == "searchMyConfig" || $data=="searchUsersConfig"){
@@ -8519,7 +8784,7 @@ if(($userInfo['step'] == "searchUsersConfig" && $text != $buttonValues['cancel']
         }
     }
 }
-if(preg_match('/^orderDetails(\d+)(_|)(?<offset>\d+|)/', $data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true))){
+if(preg_match('/^orderDetails(\d+)(_|)(?<offset>\d+|)/', $data, $match)){
     $keys = getOrderDetailKeys($from_id, $match[1], !empty($match['offset'])?$match['offset']:0);
     if($keys != null){
         $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $match[1]);
@@ -11773,6 +12038,9 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['gift_volume_day'], 'callback_data'=>'giftVolumeAndDay', 'style'=>'success'],
         ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
     ];
+    $keys[] = [
+        ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement', 'style'=>'primary']
+    ];
 
     $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'wizwizch', 'style'=>'primary']];
     $keys[] = [
@@ -13453,60 +13721,77 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage =
 
     if($links == null) return;
 
-    // تبدیل به آرایه
-    if(is_string($links)){
-        $links = [$links];
-    }elseif(is_object($links)){
-        $links = (array)$links;
-    }elseif(!is_array($links)){
-        return;
+    if(function_exists('wizwiz_normalizeConfigLinksArray')){
+        $links = wizwiz_normalizeConfigLinksArray($links);
+    }else{
+        if(is_string($links)) $links = [$links];
+        elseif(is_object($links)) $links = (array)$links;
+        elseif(!is_array($links)) return;
+        $links = array_values(array_filter(array_map('strval', $links)));
     }
+    if(empty($links)) return;
 
-    include_once "phpqrcode/qrlib.php";
-
-    foreach($links as $link){
-        if(empty($link)) continue;
-
-        $text = ($botState['configLinkState'] ?? '') != "off"
-            ? ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>\n\n<code>$link</code>")
-            : ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>");
-
-        $file = RandomString() . ".png";
-        $ecc = 'L';
-        $pixel_Size = 11;
-        $frame_Size = 0;
-
-        QRcode::png($link, $file, $ecc, $pixel_Size, $frame_Size);
-
-        if(function_exists("addBorderImage")){
-            addBorderImage($file);
-        }
-
-        // اگر بک‌گراند مخصوص QR وجود داشت، روی آن بیندازیم
-        if(file_exists("settings/QRCode.jpg")){
-            $backgroundImage = @imagecreatefromjpeg("settings/QRCode.jpg");
-            $qrImage = @imagecreatefrompng($file);
-            if($backgroundImage && $qrImage){
-                $qrSize = ['width'=>imagesx($qrImage), 'height'=>imagesy($qrImage)];
-                imagecopy($backgroundImage, $qrImage, 300, 300, 0, 0, $qrSize['width'], $qrSize['height']);
-                imagepng($backgroundImage, $file);
-                imagedestroy($backgroundImage);
-                imagedestroy($qrImage);
-            }else{
-                if($backgroundImage) imagedestroy($backgroundImage);
-                if($qrImage) imagedestroy($qrImage);
+    // اگر چند دامنه/چند لینک وجود دارد، همه را در یک پیام واحد ارسال کن.
+    if(count($links) > 1 && ($botState['configLinkState'] ?? '') != 'off'){
+        if(function_exists('wizwiz_buildMultiDomainConfigMessage')){
+            $text = wizwiz_buildMultiDomainConfigMessage($remark, $links, '', '✅ کانفیگ‌های سرویس شما به‌روزرسانی شد');
+        }else{
+            $safeRemark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
+            $text = "✅ کانفیگ‌های سرویس شما به‌روزرسانی شد
+🔮 نام سرویس: <b>{$safeRemark}</b>
+";
+            foreach($links as $link){
+                $text .= "
+<code>" . htmlspecialchars($link, ENT_QUOTES, 'UTF-8') . "</code>
+";
             }
         }
+        sendMessage($text, null, 'HTML', $userId);
+    }else{
+        include_once "phpqrcode/qrlib.php";
 
-        sendPhoto($botUrl . $file, $text, null, "HTML", $userId);
+        foreach($links as $link){
+            if(empty($link)) continue;
 
-        if(file_exists($file)) unlink($file);
+            $text = ($botState['configLinkState'] ?? '') != "off"
+                ? ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>
 
-        // کمی تاخیر برای جلوگیری از محدودیت تلگرام
-        usleep(350000);
+<code>$link</code>")
+                : ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>");
+
+            $file = RandomString() . ".png";
+            $ecc = 'L';
+            $pixel_Size = 11;
+            $frame_Size = 0;
+
+            QRcode::png($link, $file, $ecc, $pixel_Size, $frame_Size);
+
+            if(function_exists("addBorderImage")){
+                addBorderImage($file);
+            }
+
+            if(file_exists("settings/QRCode.jpg")){
+                $backgroundImage = @imagecreatefromjpeg("settings/QRCode.jpg");
+                $qrImage = @imagecreatefrompng($file);
+                if($backgroundImage && $qrImage){
+                    $qrSize = ['width'=>imagesx($qrImage), 'height'=>imagesy($qrImage)];
+                    imagecopy($backgroundImage, $qrImage, 300, 300, 0, 0, $qrSize['width'], $qrSize['height']);
+                    imagepng($backgroundImage, $file);
+                    imagedestroy($backgroundImage);
+                    imagedestroy($qrImage);
+                }else{
+                    if($backgroundImage) imagedestroy($backgroundImage);
+                    if($qrImage) imagedestroy($qrImage);
+                }
+            }
+
+            sendPhoto($botUrl . $file, $text, null, "HTML", $userId);
+
+            if(file_exists($file)) unlink($file);
+            usleep(350000);
+        }
     }
 
-    // پیام پس از به‌روزرسانی (اختیاری)
     $msg = $afterMessage;
     if($msg === null){
         $msg = farid_getUpdateAfterMessage();

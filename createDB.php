@@ -209,6 +209,7 @@ $connection->query("CREATE TABLE `server_plans` (
   `custom_path` int(10) DEFAULT 1,
   `custom_port` int(255) NOT NULL DEFAULT 0,
   `custom_sni` varchar(500)  CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
+  `custom_domain` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci");
 
@@ -242,6 +243,9 @@ $connection->query("CREATE TABLE `users` (
   `refered_by` bigint(10) DEFAULT NULL,
   `step` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
   `freetrial` varchar(10) DEFAULT NULL,
+  `test_account_exempt` tinyint(1) NOT NULL DEFAULT 0,
+  `test_account_limit` int(11) DEFAULT NULL,
+  `test_account_count` int(11) NOT NULL DEFAULT 0,
   `isAdmin` tinyint(1) NOT NULL DEFAULT 0,
   `first_start` varchar(10) DEFAULT NULL,
   `temp` text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,
@@ -309,6 +313,7 @@ $connection->query("CREATE TABLE  `send_list` (
         `message_id` int(255),
         `file_id` varchar(500),
         `state` int(1) NOT NULL DEFAULT 0,
+        `target_type` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci NOT NULL DEFAULT 'all',
         PRIMARY KEY (`id`)
         )");
 

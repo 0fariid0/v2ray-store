@@ -43,6 +43,66 @@ function wizwiz_normalizePlanDomainInput($domain){
     return implode("\n", $clean);
 }
 
+
+function wizwiz_pickHostValue($value){
+    if($value === null) return '';
+    if(is_string($value) || is_numeric($value)){
+        $value = trim((string)$value);
+        return ($value === '' || strtolower($value) === 'null') ? '' : $value;
+    }
+    if(is_object($value)) $value = get_object_vars($value);
+    if(is_array($value)){
+        foreach(['Host','host','HOST'] as $key){
+            if(array_key_exists($key, $value)){
+                $picked = wizwiz_pickHostValue($value[$key]);
+                if($picked !== '') return $picked;
+            }
+        }
+        if(isset($value['name']) && isset($value['value']) && strtolower(trim((string)$value['name'])) === 'host'){
+            $picked = wizwiz_pickHostValue($value['value']);
+            if($picked !== '') return $picked;
+        }
+        foreach($value as $item){
+            $picked = wizwiz_pickHostValue($item);
+            if($picked !== '') return $picked;
+        }
+    }
+    return '';
+}
+
+function wizwiz_extractWsSettings($streamSettings, $fallbackHost = ''){
+    if(is_string($streamSettings)){
+        $decoded = json_decode($streamSettings);
+        if(json_last_error() === JSON_ERROR_NONE) $streamSettings = $decoded;
+    }
+    $wsSettings = null;
+    if(is_object($streamSettings) && isset($streamSettings->wsSettings)) $wsSettings = $streamSettings->wsSettings;
+    elseif(is_array($streamSettings) && isset($streamSettings['wsSettings'])) $wsSettings = $streamSettings['wsSettings'];
+
+    $path = '/';
+    $host = '';
+    $headerType = 'none';
+
+    if($wsSettings !== null){
+        if(is_string($wsSettings)){
+            $decodedWs = json_decode($wsSettings);
+            if(json_last_error() === JSON_ERROR_NONE) $wsSettings = $decodedWs;
+        }
+        $wsArr = is_object($wsSettings) ? get_object_vars($wsSettings) : (is_array($wsSettings) ? $wsSettings : []);
+        if(isset($wsArr['path']) && trim((string)$wsArr['path']) !== '') $path = (string)$wsArr['path'];
+        if(isset($wsArr['host'])) $host = wizwiz_pickHostValue($wsArr['host']);
+        if($host === '' && isset($wsArr['headers'])) $host = wizwiz_pickHostValue($wsArr['headers']);
+        if($host === '' && isset($wsArr['header'])) $host = wizwiz_pickHostValue($wsArr['header']);
+        if(isset($wsArr['header'])){
+            $headerArr = is_object($wsArr['header']) ? get_object_vars($wsArr['header']) : (is_array($wsArr['header']) ? $wsArr['header'] : []);
+            if(isset($headerArr['type']) && trim((string)$headerArr['type']) !== '') $headerType = trim((string)$headerArr['type']);
+        }
+    }
+
+    if($host === '') $host = wizwiz_cleanSingleDomainHost($fallbackHost);
+    return ['path' => ($path !== '' ? $path : '/'), 'host' => $host, 'header_type' => $headerType];
+}
+
 function wizwiz_schemaPatchDone($key){
     global $connection;
     $type = 'SCHEMA_PATCH_' . $key;
@@ -133,6 +193,137 @@ function wizwiz_ensureAccessCodeAuditColumns(){
 }
 wizwiz_ensureAccessCodeAuditColumns();
 
+
+function wizwiz_ensureTestAccountManagementColumns(){
+    global $connection;
+    if(function_exists('wizwiz_schemaPatchDone') && wizwiz_schemaPatchDone('USERS_TEST_ACCOUNT_MGMT_V1')) return;
+    $columns = [
+        'test_account_exempt' => "ALTER TABLE `users` ADD `test_account_exempt` tinyint(1) NOT NULL DEFAULT 0 AFTER `freetrial`",
+        'test_account_limit' => "ALTER TABLE `users` ADD `test_account_limit` int(11) DEFAULT NULL AFTER `test_account_exempt`",
+        'test_account_count' => "ALTER TABLE `users` ADD `test_account_count` int(11) NOT NULL DEFAULT 0 AFTER `test_account_limit`",
+    ];
+    foreach($columns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `users` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0){
+            @($connection->query($query));
+        }
+    }
+    if(function_exists('wizwiz_markSchemaPatchDone')) wizwiz_markSchemaPatchDone('USERS_TEST_ACCOUNT_MGMT_V1');
+}
+wizwiz_ensureTestAccountManagementColumns();
+
+
+function wizwiz_ensureBroadcastTargetColumn(){
+    global $connection;
+    if(wizwiz_schemaPatchDone('SEND_LIST_TARGET_TYPE_V1')) return;
+    $exists = @($connection->query("SHOW COLUMNS FROM `send_list` LIKE 'target_type'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `send_list` ADD `target_type` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci NOT NULL DEFAULT 'all' AFTER `state`"));
+    }
+    wizwiz_markSchemaPatchDone('SEND_LIST_TARGET_TYPE_V1');
+}
+wizwiz_ensureBroadcastTargetColumn();
+
+function farid_normalizeBroadcastTarget($target){
+    $target = trim((string)$target);
+    // برای سازگاری با صف‌های قدیمی، targetهای قبلی هنوز شناخته می‌شوند؛
+    // اما در منوی جدید فقط all و approved نمایش داده می‌شوند.
+    $allowed = ['all', 'approved', 'buyers', 'access_code'];
+    return in_array($target, $allowed, true) ? $target : 'all';
+}
+
+function farid_getBroadcastTargetTitle($target){
+    $target = farid_normalizeBroadcastTarget($target);
+    $titles = [
+        'all' => 'همه کاربران ثبت‌شده در ربات',
+        'approved' => 'کاربرانی که دسترسی فعال به ربات دارند',
+        'buyers' => 'فقط کاربرانی که سابقه خرید دارند',
+        'access_code' => 'فقط کاربرانی که با کد ورود آزاد شده‌اند',
+    ];
+    return $titles[$target] ?? $titles['all'];
+}
+
+function farid_getBroadcastTargetCondition($target, $userAlias = 'u'){
+    global $admin;
+    $target = farid_normalizeBroadcastTarget($target);
+    $u = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$userAlias);
+    if($u === '') $u = 'u';
+    $adminId = intval($admin ?? 0);
+
+    $buyerCondition = "(EXISTS (SELECT 1 FROM `orders_list` o WHERE o.`userid` = {$u}.`userid` AND o.`status` = 1) OR EXISTS (SELECT 1 FROM `pays` p WHERE p.`user_id` = {$u}.`userid` AND p.`state` IN ('paid','approved')))";
+    $accessCodeCondition = "(COALESCE({$u}.`access_code_used`, '') != '' AND COALESCE({$u}.`access_code_revoked`, 0) = 0)";
+    $manualApprovalCondition = "(COALESCE({$u}.`approval_status`, '') = 'approved' AND COALESCE({$u}.`approval_request_date`, 0) > 0)";
+
+    switch($target){
+        // این دو حالت برای صف‌های قدیمی نگه داشته شده‌اند.
+        case 'buyers':
+            return $buyerCondition;
+        case 'access_code':
+            return $accessCodeCondition;
+        case 'approved':
+            // این گزینه نباید همه کاربران قدیمی را حساب کند. مقدار پیش‌فرض approval_status در نصب‌های قدیمی
+            // برای خیلی از کاربران approved است، بنابراین فقط approvalهایی حساب می‌شوند که واقعاً درخواست تایید داشته‌اند.
+            // معیار دسترسی فعال: ادمین‌ها، خریداران قبلی، کاربران آزادشده با کد ورود، معافیت دسترسی، یا تایید دستی واقعی.
+            return "({$u}.`userid` = '{$adminId}' OR {$u}.`isAdmin` = 1 OR COALESCE({$u}.`access_exempt`, 0) = 1 OR $accessCodeCondition OR $buyerCondition OR $manualApprovalCondition)";
+        case 'all':
+        default:
+            return "1=1";
+    }
+}
+
+function farid_countBroadcastTargets($target){
+    global $connection;
+    $target = farid_normalizeBroadcastTarget($target);
+    $condition = farid_getBroadcastTargetCondition($target, 'u');
+    $sql = "SELECT COUNT(*) AS `cnt` FROM `users` u WHERE $condition";
+    $res = @$connection->query($sql);
+    if(!$res) return 0;
+    $row = $res->fetch_assoc();
+    return intval($row['cnt'] ?? 0);
+}
+
+function farid_getBroadcastTargetKeyboard($mode = 'message'){
+    $mode = ($mode === 'forward') ? 'forward' : 'message';
+    $prefix = ($mode === 'forward') ? 'broadcastTargetForward_' : 'broadcastTargetMessage_';
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>'🎯 انتخاب گروه مخاطب', 'callback_data'=>'wizwizch', 'style'=>'primary']],
+        [['text'=>'🌍 پیام برای همه کاربران', 'callback_data'=>$prefix.'all', 'style'=>'success']],
+        [['text'=>'✅ پیام برای کاربران دارای دسترسی', 'callback_data'=>$prefix.'approved', 'style'=>'primary']],
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']],
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function farid_getActiveBroadcastQueueText(){
+    global $connection;
+    $stmt = $connection->prepare("SELECT * FROM `send_list` WHERE `state` = 1 AND `type` != 'updateConfigs' LIMIT 1");
+    $stmt->execute();
+    $info = $stmt->get_result();
+    $stmt->close();
+
+    if($info->num_rows <= 0) return null;
+    $sendInfo = $info->fetch_assoc();
+    $offset = intval($sendInfo['offset'] ?? 0);
+    $type = $sendInfo['type'] ?? 'text';
+    $target = farid_normalizeBroadcastTarget($sendInfo['target_type'] ?? 'all');
+    $usersCount = farid_countBroadcastTargets($target);
+    $leftMessages = max(0, $usersCount - $offset);
+    $targetTitle = farid_getBroadcastTargetTitle($target);
+
+    if($type == 'forwardall'){
+        return "❗️ یک فوروارد همگانی در صف انتشار است. لطفاً تا پایان عملیات صبور باشید.\n\n" .
+               "🎯 گروه مخاطب: $targetTitle\n" .
+               "🔰 تعداد مخاطبان: $usersCount\n" .
+               "☑️ فوروارد شده: $offset\n" .
+               "📣 باقی‌مانده: $leftMessages";
+    }
+
+    return "❗️ یک پیام همگانی در صف انتشار است. لطفاً تا پایان عملیات صبور باشید.\n\n" .
+           "🎯 گروه مخاطب: $targetTitle\n" .
+           "🔰 تعداد مخاطبان: $usersCount\n" .
+           "☑️ ارسال شده: $offset\n" .
+           "📣 باقی‌مانده: $leftMessages";
+}
+
 function wizwiz_getUserByTelegramId($userId){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
@@ -215,6 +406,71 @@ function wizwiz_saveBotStatesArray($states){
     $stmt->close();
     $botState = $states;
     wizwiz_getBotStatesArray(true);
+    return $ok;
+}
+
+
+function wizwiz_isAgentUser($user = null){
+    if($user === null) $user = $GLOBALS['userInfo'] ?? null;
+    return is_array($user) && !empty($user['is_agent']) && intval($user['is_agent']) === 1;
+}
+
+function wizwiz_effectiveRoleState($state, $baseKey, $agentKey, $user = null){
+    if(!is_array($state)) $state = [];
+    if(wizwiz_isAgentUser($user)){
+        if(array_key_exists($agentKey, $state) && in_array($state[$agentKey], ['on','off'], true)){
+            return $state[$agentKey];
+        }
+    }
+    return (isset($state[$baseKey]) && $state[$baseKey] === 'on') ? 'on' : 'off';
+}
+
+function wizwiz_applyRoleSpecificStates($state, $user = null){
+    if(!is_array($state)) $state = [];
+    // برای جلوگیری از تغییر زیاد در سورس قدیمی، فقط در زمان اجرای درخواست همان کاربر
+    // مقدارهای عمومی sellState/walletState با مقدار مخصوص نقش او جایگزین می‌شود.
+    // برای ادمین‌ها و کاربران عادی رفتار قبلی حفظ می‌شود؛ برای نماینده‌ها می‌توان فروش/کیف پول جداگانه داشت.
+    if(wizwiz_isAgentUser($user)){
+        if(array_key_exists('agentSellState', $state) && in_array($state['agentSellState'], ['on','off'], true)){
+            $state['sellState'] = $state['agentSellState'];
+        }
+        if(array_key_exists('agentWalletState', $state) && in_array($state['agentWalletState'], ['on','off'], true)){
+            $state['walletState'] = $state['agentWalletState'];
+        }
+    }
+    return $state;
+}
+
+function wizwiz_isWalletOpenForCurrentUser(){
+    global $botState, $from_id, $admin, $userInfo;
+    if($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin']))) return true;
+    return (($botState['walletState'] ?? 'off') === 'on');
+}
+
+function wizwiz_ensureBasicUserRecord($userId, $name = '', $username = ''){
+    global $connection;
+    $userId = (int)$userId;
+    if($userId <= 0) return false;
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ? LIMIT 1");
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = ($res && $res->num_rows > 0);
+    $stmt->close();
+    if($exists) return true;
+
+    $name = trim((string)$name);
+    if($name === '') $name = 'کاربر ' . $userId;
+    $username = trim((string)$username);
+    if($username === '') $username = 'ندارد';
+    $time = time();
+    $step = 'none';
+    $discount = json_encode(['normal'=>0], JSON_UNESCAPED_UNICODE);
+    $stmt = $connection->prepare("INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`, `step`, `is_agent`, `discount_percent`, `agent_date`) VALUES (?, ?, ?, 0, 0, ?, ?, 0, ?, 0)");
+    if(!$stmt) return false;
+    $stmt->bind_param('ississ', $userId, $name, $username, $time, $step, $discount);
+    $ok = $stmt->execute();
+    $stmt->close();
     return $ok;
 }
 
@@ -1099,12 +1355,187 @@ function wizwiz_setAllUserButtonsVisible($visible){
     $botState = $state;
 }
 
+
+function wizwiz_salesStateBlockReason($kind = 'new', $agentContext = null){
+    global $botState, $userInfo;
+    $state = wizwiz_getBotStatesArray();
+    if(!is_array($state) || empty($state)) $state = is_array($botState) ? $botState : [];
+
+    if($agentContext === null){
+        $agentContext = wizwiz_isAgentUser($userInfo);
+        if(!$agentContext && isset($GLOBALS['payParam']) && is_array($GLOBALS['payParam'])){
+            $agentContext = !empty($GLOBALS['payParam']['agent_bought']);
+        }
+    }
+
+    if($agentContext){
+        $sellState = $state['agentSellState'] ?? ($state['sellState'] ?? 'off');
+    }else{
+        $sellState = $state['sellState'] ?? 'off';
+    }
+
+    if($sellState !== 'on') return 'sales_off';
+
+    // خاموش بودن دکمه خرید فقط برای خرید کاربران عادی اعمال شود.
+    // نماینده‌ها دکمه‌های خرید جداگانه خودشان را دارند.
+    if(!$agentContext && $kind === 'new' && !wizwiz_userButtonVisible('buy_subscriptions', $state)) return 'buy_button_off';
+    return '';
+}
+
+function wizwiz_purchaseBlockedMessage($reason = ''){
+    if($reason === 'buy_button_off'){
+        return "🔒 بخش خرید کانفیگ جدید در حال حاضر توسط مدیریت غیرفعال شده است.\n\nدر صورت نیاز، لطفاً از بخش پشتیبانی با مدیریت در ارتباط باشید.";
+    }
+    return "🔒 فروش خدمات در حال حاضر توسط مدیریت غیرفعال شده است.\n\nتا زمان فعال‌سازی مجدد فروش، امکان ثبت خرید، تمدید یا افزایش حجم و زمان وجود ندارد.";
+}
+
+function wizwiz_isConfigPayType($payType){
+    $payType = (string)$payType;
+    if($payType === 'BUY_SUB' || $payType === 'RENEW_ACCOUNT' || $payType === 'RENEW_SCONFIG') return true;
+    if(preg_match('/^INCREASE_(DAY|VOLUME)_/', $payType)) return true;
+    return false;
+}
+
+function wizwiz_purchaseKindFromPayType($payType){
+    $payType = (string)$payType;
+    if($payType === 'BUY_SUB') return 'new';
+    if(wizwiz_isConfigPayType($payType)) return 'paid';
+    return 'none';
+}
+
+function wizwiz_getPayTypeByHash($hash){
+    global $connection;
+    $hash = trim((string)$hash);
+    if($hash === '') return '';
+    $stmt = @$connection->prepare("SELECT `type` FROM `pays` WHERE `hash_id` = ? OR `payid` = ? ORDER BY `id` DESC LIMIT 1");
+    if(!$stmt) return '';
+    $stmt->bind_param('ss', $hash, $hash);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return $row['type'] ?? '';
+}
+
+function wizwiz_salesBlockReasonForPayType($payType){
+    $kind = wizwiz_purchaseKindFromPayType($payType);
+    if($kind === 'none') return '';
+    return wizwiz_salesStateBlockReason($kind);
+}
+
+function wizwiz_extractPaymentHashFromAction($value){
+    $value = trim((string)$value);
+    if($value === '') return '';
+    $patterns = [
+        '/^(?:payCustomWithWallet|payWithWallet|payCustomWithCartToCart|payWithCartToCart|payRenewWithCartToCart|payRenewWithWallet|payIncreaseDayWithCartToCart|payIncraseDayWithWallet|payIncreaseWithCartToCart|payIncraseWithWallet|payWithWeSwap|payWithTronWallet)(.+)$/',
+    ];
+    foreach($patterns as $pattern){
+        if(preg_match($pattern, $value, $m)) return trim($m[1]);
+    }
+    return '';
+}
+
+function wizwiz_purchaseActionBlockReason($callbackData = '', $userStep = ''){
+    global $from_id, $admin, $userInfo;
+    $isAdmin = ($from_id == $admin) || (!empty($userInfo['isAdmin']));
+    if($isAdmin) return '';
+
+    $callbackData = (string)$callbackData;
+    $userStep = (string)$userStep;
+
+    $newPatterns = [
+        '/^(buySubscription|agentOneBuy|agentMuchBuy)$/',
+        '/^selectServer\d+_/',
+        '/^selectCategory\d+_\d+_/',
+        '/^selectPlan\d+_\d+_/',
+        '/^selectCustomPlan\d+_\d+_/',
+        '/^selectCustomePlan\d+_\d+_/',
+        '/^freeTrial\d+_/',
+        '/^haveDiscountSelectPlan_/',
+        '/^haveDiscountCustom_/',
+    ];
+    $newStepPatterns = [
+        '/^discountSelectPlan\d+_\d+_\d+/',
+        '/^selectPlan\d+_\d+_\w+$/',
+        '/^enterAccountName\d+_\d+_\w+$/',
+        '/^selectCustomPlanGB\d+_\d+_\w+$/',
+        '/^selectCustomPlanDay\d+_\d+_\d+_\w+$/',
+        '/^discountCustomPlanDay\d+/',
+        '/^enterCustomPlanName\d+_\d+_\d+_\d+_\w+$/',
+    ];
+    foreach($newPatterns as $pattern){
+        if($callbackData !== '' && preg_match($pattern, $callbackData)) return wizwiz_salesStateBlockReason('new');
+    }
+    foreach($newStepPatterns as $pattern){
+        if($userStep !== '' && preg_match($pattern, $userStep)) return wizwiz_salesStateBlockReason('new');
+    }
+
+    $paidPatterns = [
+        '/^sConfigRenewPlan\d+_\d+/',
+        '/^renewAccount\d+/',
+        '/^haveDiscountRenew_/',
+        '/^payRenewWithCartToCart.+/',
+        '/^payRenewWithWallet.+/',
+        '/^increaseADay.+/',
+        '/^selectPlanDayIncrease.+_\d+/',
+        '/^payIncreaseDayWithCartToCart.+/',
+        '/^payIncraseDayWithWallet.+/',
+        '/^increaseAVolume.+/',
+        '/^increaseVolumePlan.+_\d+/',
+        '/^payIncreaseWithCartToCart.+/',
+        '/^payIncraseWithWallet.+/',
+    ];
+    $paidStepPatterns = [
+        '/^discountRenew\d+_\d+/',
+        '/^payRenewWithCartToCart.+/',
+        '/^payIncreaseDayWithCartToCart.+/',
+        '/^payIncreaseWithCartToCart.+/',
+    ];
+    foreach($paidPatterns as $pattern){
+        if($callbackData !== '' && preg_match($pattern, $callbackData)) return wizwiz_salesStateBlockReason('paid');
+    }
+    foreach($paidStepPatterns as $pattern){
+        if($userStep !== '' && preg_match($pattern, $userStep)) return wizwiz_salesStateBlockReason('paid');
+    }
+
+    foreach([$callbackData, $userStep] as $value){
+        $hash = wizwiz_extractPaymentHashFromAction($value);
+        if($hash === '') continue;
+        $payType = wizwiz_getPayTypeByHash($hash);
+        if($payType !== ''){
+            $reason = wizwiz_salesBlockReasonForPayType($payType);
+            if($reason !== '') return $reason;
+        }else{
+            if(preg_match('/^(payCustomWithWallet|payCustomWithCartToCart)/', $value)) return wizwiz_salesStateBlockReason('new');
+            if(preg_match('/^(payRenew|payIncrease|payIncrase)/', $value)) return wizwiz_salesStateBlockReason('paid');
+        }
+    }
+
+    return '';
+}
+
+function wizwiz_stopPurchaseIfBlocked($callbackData = '', $userStep = ''){
+    global $message_id, $removeKeyboard, $buttonValues;
+    $reason = wizwiz_purchaseActionBlockReason($callbackData, $userStep);
+    if($reason === '') return false;
+    setUser();
+    $msg = wizwiz_purchaseBlockedMessage($reason);
+    if(trim((string)$callbackData) !== ''){
+        alert($msg, true);
+        if(!empty($message_id)) editText($message_id, $msg, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'] ?? 'بازگشت', 'callback_data'=>'mainMenu', 'style'=>'primary']]]], JSON_UNESCAPED_UNICODE), 'HTML');
+    }else{
+        sendMessage($msg, $removeKeyboard, 'HTML');
+        sendMessage($GLOBALS['mainValues']['reached_main_menu'] ?? 'منوی اصلی', getMainKeys(), 'HTML');
+    }
+    return true;
+}
+
 function wizwiz_userButtonTitles(){
     global $buttonValues;
     return [
         'buy_subscriptions' => $buttonValues['buy_subscriptions'] ?? 'خرید کانفیگ جدید',
         'my_subscriptions' => $buttonValues['my_subscriptions'] ?? 'کانفیگ‌های من',
-        'test_account' => $buttonValues['test_account'] ?? 'اکانت تست',
+        'test_account' => 'اکانت تست',
         'wallet_charge' => $buttonValues['sharj'] ?? 'شارژ کیف پول',
         'invite_friends' => $buttonValues['invite_friends'] ?? 'دعوت دوستان',
         'my_info' => $buttonValues['my_info'] ?? 'حساب کاربری',
@@ -2156,6 +2587,9 @@ if(!is_null($botState)) $botState = json_decode($botState,true);
 else $botState = array();
 $stmt->close();
 
+// اعمال تنظیمات جداگانه فروش و کیف پول برای نماینده‌ها بدون تغییر رفتار کاربران عادی.
+$botState = wizwiz_applyRoleSpecificStates($botState, $userInfo);
+
 $channelLock = $botState['lockChannel'];
 $joniedState= bot('getChatMember', ['chat_id' => $channelLock,'user_id' => $from_id])->result->status;
 
@@ -2207,10 +2641,12 @@ function getMainKeys(){
 
     if(($botState['agencyState'] ?? 'off') == "on" && !empty($userInfo['is_agent']) && $userInfo['is_agent'] == 1){
         $addRow([['text'=>$buttonValues['agency_setting'],'callback_data'=>"agencySettings"]]);
-        $addRow([
-            ['text'=>$buttonValues['agent_one_buy'],'callback_data'=>"agentOneBuy"],
-            ['text'=>$buttonValues['agent_much_buy'],'callback_data'=>"agentMuchBuy"]
-        ]);
+        if((($botState['sellState'] ?? 'off') == "on" || $isAdminUser)){
+            $addRow([
+                ['text'=>$buttonValues['agent_one_buy'],'callback_data'=>"agentOneBuy"],
+                ['text'=>$buttonValues['agent_much_buy'],'callback_data'=>"agentMuchBuy"]
+            ]);
+        }
         $addRow([$buttonIfVisible('my_subscriptions', ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>"agentConfigsList"])]);
     }else{
         if(($botState['agencyState'] ?? 'off') == "on" && empty($userInfo['is_agent'])){
@@ -2228,10 +2664,12 @@ function getMainKeys(){
     }
 
     if(($botState['testAccount'] ?? 'off') == "on"){
-        $addRow([$buttonIfVisible('test_account', ['text'=>$buttonValues['test_account'],'callback_data'=>"getTestAccount"])]);
+        $addRow([$buttonIfVisible('test_account', ['text'=>'اکانت تست','callback_data'=>"getTestAccount"])]);
     }
 
-    $addRow([$buttonIfVisible('wallet_charge', ['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"])]);
+    if(wizwiz_isWalletOpenForCurrentUser()){
+        $addRow([$buttonIfVisible('wallet_charge', ['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"])]);
+    }
     $addRow([
         $buttonIfVisible('invite_friends', ['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"]),
         $buttonIfVisible('my_info', ['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"])
@@ -2252,6 +2690,8 @@ function getMainKeys(){
     if((($botState['searchState'] ?? 'off') == "on" || $isAdminUser) && wizwiz_userButtonVisible('search_config', $botState)){
         $addRow([['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]]);
     }
+
+    $addRow([['text'=>'🔄 بروزرسانی پنل', 'callback_data'=>'mainMenu']]);
 
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` LIKE '%MAIN_BUTTONS%'");
     $stmt->execute();
@@ -2315,6 +2755,116 @@ function getAdminKeys(){
         [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]],
     ]]);
     
+}
+
+
+
+function wizwiz_isTestAccountExempt($user){
+    return !empty($user) && isset($user['test_account_exempt']) && intval($user['test_account_exempt']) === 1;
+}
+
+function wizwiz_getUserTestAccountLimit($user){
+    if(wizwiz_isTestAccountExempt($user)) return 0;
+    if(!empty($user) && array_key_exists('test_account_limit', $user) && $user['test_account_limit'] !== null && $user['test_account_limit'] !== ''){
+        $limit = intval($user['test_account_limit']);
+        if($limit >= 0) return $limit;
+    }
+    return 1;
+}
+
+function wizwiz_getUserTestAccountUsedCount($user){
+    if(empty($user)) return 0;
+    $count = 0;
+    if(array_key_exists('test_account_count', $user)) $count = max(0, intval($user['test_account_count']));
+    if(!empty($user['freetrial'])) $count = max($count, 1);
+    return $count;
+}
+
+function wizwiz_canUserGetTestAccount($user, $userId = null){
+    global $admin;
+    if(!empty($userId) && intval($userId) === intval($admin)) return true;
+    if(!empty($user) && !empty($user['isAdmin'])) return true;
+    $limit = wizwiz_getUserTestAccountLimit($user);
+    if($limit === 0) return true;
+    return wizwiz_getUserTestAccountUsedCount($user) < $limit;
+}
+
+function wizwiz_getTestAccountLimitText($user){
+    $limit = wizwiz_getUserTestAccountLimit($user);
+    return $limit === 0 ? 'نامحدود' : ($limit . ' بار');
+}
+
+function wizwiz_markTestAccountUsed($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $userId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_getTestAccountManageKeys(){
+    global $connection, $buttonValues;
+    $totalUsers = 0;
+    $usedUsers = 0;
+    $customUsers = 0;
+    $res = @($connection->query("SELECT COUNT(*) AS c FROM `users`"));
+    if($res) $totalUsers = intval(($res->fetch_assoc())['c'] ?? 0);
+    $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `freetrial` IS NOT NULL OR COALESCE(`test_account_count`,0) > 0"));
+    if($res) $usedUsers = intval(($res->fetch_assoc())['c'] ?? 0);
+    $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `test_account_exempt` = 1 OR (`test_account_limit` IS NOT NULL AND `test_account_limit` >= 0)"));
+    if($res) $customUsers = intval(($res->fetch_assoc())['c'] ?? 0);
+
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'👥 کاربران: ' . $totalUsers, 'callback_data'=>'wizwizch', 'style'=>'primary'],
+            ['text'=>'🧪 استفاده‌کرده: ' . $usedUsers, 'callback_data'=>'wizwizch', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'⚙️ سقف اختصاصی: ' . $customUsers, 'callback_data'=>'wizwizch', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'♻️ ریست تست یک کاربر', 'callback_data'=>'resetOneTestAccount', 'style'=>'primary'],
+            ['text'=>'✏️ تنظیم سقف یک کاربر', 'callback_data'=>'setTestAccountLimit', 'style'=>'success']
+        ],
+        [
+            ['text'=>'🔴 بازگشت به سقف پیش‌فرض', 'callback_data'=>'removeTestAccountLimit', 'style'=>'danger'],
+            ['text'=>'📋 لیست سقف‌های اختصاصی', 'callback_data'=>'testAccountLimitList', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🧹 ریست استفاده تست برای همه', 'callback_data'=>'resetAllTestAccountsAsk', 'style'=>'danger']
+        ],
+        [
+            ['text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'mainMenu', 'style'=>'primary']
+        ]
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_getTestAccountLimitsListText(){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `userid`, `name`, `username`, `test_account_exempt`, `test_account_limit`, `test_account_count`, `freetrial` FROM `users` WHERE `test_account_exempt` = 1 OR (`test_account_limit` IS NOT NULL AND `test_account_limit` >= 0) ORDER BY `id` DESC LIMIT 80");
+    if(!$stmt) return "📋 لیست محدودیت‌های اختصاصی اکانت تست در حال حاضر قابل دریافت نیست.";
+    $stmt->execute();
+    $list = $stmt->get_result();
+    $stmt->close();
+    if(!$list || $list->num_rows == 0){
+        return "📋 در حال حاضر برای هیچ کاربری سقف اختصاصی اکانت تست ثبت نشده است.";
+    }
+    $msg = "📋 <b>سقف‌های اختصاصی اکانت تست</b>\n\n";
+    while($row = $list->fetch_assoc()){
+        $uid = htmlspecialchars((string)$row['userid'], ENT_QUOTES, 'UTF-8');
+        $name = trim((string)($row['name'] ?? ''));
+        $username = trim((string)($row['username'] ?? ''));
+        $display = $name ?: ($username ? '@' . ltrim($username, '@') : 'بدون نام');
+        $display = htmlspecialchars($display, ENT_QUOTES, 'UTF-8');
+        $limitText = (intval($row['test_account_exempt'] ?? 0) === 1) ? 'نامحدود' : (intval($row['test_account_limit'] ?? 1) . ' بار');
+        $usedText = wizwiz_getUserTestAccountUsedCount($row);
+        $msg .= "• <code>{$uid}</code> - {$display}\n  سقف: <b>{$limitText}</b> | استفاده‌شده: <b>{$usedText}</b>\n\n";
+    }
+    return $msg;
 }
 
 function setSettings($field, $value){
@@ -2450,8 +3000,13 @@ function getAgentsList($offset = 0){
     $stmt->close();
     
     $keys = array();
-    if($agentList->num_rows == 0 && $offset == 0) return null;
+    if($agentList->num_rows == 0 && $offset == 0){
+        $keys[] = [['text'=>'➕ افزودن نماینده دستی', 'callback_data'=>'addAgentManual', 'style'=>'success']];
+        $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+        return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    }
     
+    if($offset == 0) $keys[] = [['text'=>'➕ افزودن نماینده دستی', 'callback_data'=>'addAgentManual', 'style'=>'success']];
     $keys[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"درصد تخفیف",'callback_data'=>"wizwizch"],['text'=>"تاریخ نمایندگی",'callback_data'=>"wizwizch"],['text'=>"اسم نماینده",'callback_data'=>"wizwizch"],['text'=>"آیدی عددی",'callback_data'=>"wizwizch"]];
     if($agentList->num_rows > 0){
         while($row = $agentList->fetch_assoc()){
@@ -2815,6 +3370,7 @@ function getGateWaysKeys(){
     
     $cartToCartState = $botState['cartToCartState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $walletState = $botState['walletState']=="on"?$buttonValues['on']:$buttonValues['off'];
+    $agentWalletState = (($botState['agentWalletState'] ?? ($botState['walletState'] ?? 'off'))=="on")?$buttonValues['on']:$buttonValues['off'];
     $sellState = $botState['sellState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $weSwapState = $botState['weSwapState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $robotState = $botState['botState']=="on"?$buttonValues['on']:$buttonValues['off'];
@@ -2890,7 +3446,11 @@ function getGateWaysKeys(){
         ],
         [
             ['text'=>$walletState,'callback_data'=>"changeGateWayswalletState"],
-            ['text'=>"کیف پول",'callback_data'=>"wizwizch"]
+            ['text'=>"کیف پول کاربران",'callback_data'=>"wizwizch"]
+        ],
+        [
+            ['text'=>$agentWalletState,'callback_data'=>"changeGateWaysagentWalletState"],
+            ['text'=>"کیف پول نماینده‌ها",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>$rewaredChannel,'callback_data'=>'editRewardChannel'],
@@ -2936,6 +3496,7 @@ function getBotSettingKeys(){
     $requirePhone = $botState['requirePhone']=="on"?$buttonValues['on']:$buttonValues['off'];
     $requireIranPhone = $botState['requireIranPhone']=="on"?$buttonValues['on']:$buttonValues['off'];
     $sellState = $botState['sellState']=="on"?$buttonValues['on']:$buttonValues['off'];
+    $agentSellState = (($botState['agentSellState'] ?? ($botState['sellState'] ?? 'off'))=="on")?$buttonValues['on']:$buttonValues['off'];
     $robotState = $botState['botState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $searchState = $botState['searchState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $updateConnectionState = $botState['updateConnectionState']=="robot"?"از روی ربات":"از روی سایت";
@@ -3020,7 +3581,11 @@ function getBotSettingKeys(){
         ],
         [
             ['text'=>$sellState,'callback_data'=>"changeBotsellState"],
-            ['text'=>"فروش",'callback_data'=>"wizwizch"]
+            ['text'=>"فروش کاربران",'callback_data'=>"wizwizch"]
+        ],
+        [
+            ['text'=>$agentSellState,'callback_data'=>"changeBotagentSellState"],
+            ['text'=>"فروش نماینده‌ها",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>$robotState,'callback_data'=>"changeBotbotState"],
@@ -3288,6 +3853,130 @@ function getMainMenuButtonsKeys(){
     $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
+
+
+if(!function_exists('wizwiz_base64UrlDecodeLoose')){
+function wizwiz_base64UrlDecodeLoose($data){
+    $data = strtr((string)$data, '-_', '+/');
+    $pad = strlen($data) % 4;
+    if($pad) $data .= str_repeat('=', 4 - $pad);
+    return base64_decode($data);
+}
+}
+
+if(!function_exists('wizwiz_configLinkDomainLabel')){
+function wizwiz_configLinkDomainLabel($link, $index = 0){
+    $link = trim((string)$link);
+    $domain = '';
+
+    if(stripos($link, 'vmess://') === 0){
+        $raw = substr($link, 8);
+        $decoded = wizwiz_base64UrlDecodeLoose($raw);
+        $json = @json_decode($decoded, true);
+        if(is_array($json)){
+            $domain = trim((string)($json['add'] ?? $json['host'] ?? ''));
+        }
+    }elseif(preg_match('#^(vless|trojan|ss)://#i', $link)){
+        $parts = @parse_url($link);
+        if(is_array($parts)){
+            $domain = trim((string)($parts['host'] ?? ''));
+        }
+    }elseif(preg_match('#^https?://#i', $link)){
+        $parts = @parse_url($link);
+        if(is_array($parts)){
+            $domain = trim((string)($parts['host'] ?? ''));
+        }
+    }
+
+    if($domain === '') $domain = 'دامنه ' . (intval($index) + 1);
+    return $domain;
+}
+}
+
+if(!function_exists('wizwiz_normalizeConfigLinksArray')){
+function wizwiz_normalizeConfigLinksArray($links){
+    if($links === null) return [];
+    if(is_string($links)){
+        $decoded = @json_decode($links, true);
+        if(is_array($decoded)) $links = $decoded;
+        else $links = [$links];
+    }elseif(is_object($links)){
+        $links = (array)$links;
+    }elseif(!is_array($links)){
+        return [];
+    }
+
+    $out = [];
+    foreach($links as $link){
+        if(is_array($link) || is_object($link)) continue;
+        $link = trim((string)$link);
+        if($link !== '') $out[] = $link;
+    }
+    return array_values($out);
+}
+}
+
+if(!function_exists('wizwiz_formatConfigLinksBlock')){
+function wizwiz_formatConfigLinksBlock($links, $titlePrefix = 'کانفیگ با دامنه', $includeAdvice = true){
+    $links = wizwiz_normalizeConfigLinksArray($links);
+    if(empty($links)) return '';
+
+    if(count($links) === 1){
+        return "\n <code>" . htmlspecialchars($links[0], ENT_QUOTES, 'UTF-8') . "</code>";
+    }
+
+    $text = "";
+    foreach($links as $i => $link){
+        $domain = wizwiz_configLinkDomainLabel($link, $i);
+        $text .= "\n🌐 {$titlePrefix} " . htmlspecialchars($domain, ENT_QUOTES, 'UTF-8') . ":\n";
+        $text .= "<code>" . htmlspecialchars($link, ENT_QUOTES, 'UTF-8') . "</code>\n";
+    }
+
+    if($includeAdvice){
+        $text .= "\nℹ️ لطفاً همه کانفیگ‌ها را در برنامه خود اضافه کنید و هرکدام کیفیت و پایداری بهتری داشت، از همان استفاده کنید.";
+    }
+    return $text;
+}
+}
+
+if(!function_exists('wizwiz_buildMultiDomainConfigMessage')){
+function wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink = '', $heading = '✅ کانفیگ‌های سرویس شما آماده شد'){
+    $links = wizwiz_normalizeConfigLinksArray($links);
+    if(count($links) <= 1) return '';
+
+    $remark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
+    $msg = $heading . "\n";
+    if($remark !== '') $msg .= "🔮 نام سرویس: <b>{$remark}</b>\n";
+    $msg .= wizwiz_formatConfigLinksBlock($links, 'کانفیگ با دامنه', true);
+
+    $subLink = trim((string)$subLink);
+    if($subLink !== ''){
+        $msg .= "\n\n🌐 لینک اشتراک:\n<code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>";
+    }
+    return $msg;
+}
+}
+
+if(!function_exists('wizwiz_sendMultiDomainConfigMessage')){
+function wizwiz_sendMultiDomainConfigMessage($chatId, $remark, $links, $subLink = '', $serverType = '', $keyboard = null){
+    global $botState, $buttonValues;
+    $links = wizwiz_normalizeConfigLinksArray($links);
+    if(count($links) <= 1) return false;
+    if(($botState['configLinkState'] ?? '') == 'off') return false;
+    if($serverType === 'marzban') return false;
+
+    $msg = wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink);
+    if(trim($msg) === '') return false;
+
+    if($keyboard === null){
+        $backText = $buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی';
+        $keyboard = json_encode(['inline_keyboard'=>[[['text'=>$backText,'callback_data'=>'mainMenu']]]]);
+    }
+    sendMessage($msg, $keyboard, 'HTML', $chatId);
+    return true;
+}
+}
+
 function getPlanDetailsKeys($planId){
     global $connection, $mainValues, $buttonValues;
     $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
@@ -3481,16 +4170,20 @@ function getUserOrderDetailKeys($id, $offset = 0){
             }
             $leftgb = round( ($total - $up - $down) / 1073741824, 2) . " GB";
         }
+        $acc_link = wizwiz_normalizeConfigLinksArray($acc_link);
         $configLinks = "";
-    
+        
         $limit = 5;
         $count = 0;
+        $pagedLinks = [];
         foreach($acc_link as $accLink){
             $count++;
             if($count <= $offset) continue;
-            $configLinks .= ($botState['configLinkState'] != "off"?"\n <code>$accLink</code>":"");
-            
+            $pagedLinks[] = $accLink;
             if($count >= $offset + $limit) break;
+        }
+        if($botState['configLinkState'] != "off"){
+            $configLinks = wizwiz_formatConfigLinksBlock($pagedLinks);
         }
 
         $keyboard = array();
@@ -3800,16 +4493,20 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                 $leftgb = round( ($total - $up - $down) / 1073741824, 2) . " GB";
             }else $leftgb = "⚠️";
         }
+        $acc_link = wizwiz_normalizeConfigLinksArray($acc_link);
         $configLinks = "";
         
         $limit = 5;
         $count = 0;
+        $pagedLinks = [];
         foreach($acc_link as $accLink){
             $count++;
             if($count <= $offset) continue;
-            $configLinks .= ($botState['configLinkState'] != "off"?"\n <code>$accLink</code>":"");
-            
+            $pagedLinks[] = $accLink;
             if($count >= $offset + $limit) break;
+        }
+        if($botState['configLinkState'] != "off"){
+            $configLinks = wizwiz_formatConfigLinksBlock($pagedLinks);
         }
         $keyboard = array();
         
@@ -5954,9 +6651,10 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     }
                 }
                 if($netType == 'ws') {
-                    $header_type = json_decode($row->streamSettings)->wsSettings->header->type;
-                    $path = json_decode($row->streamSettings)->wsSettings->path;
-                    $host = json_decode($row->streamSettings)->wsSettings->headers->Host;
+                    $wsData = wizwiz_extractWsSettings($row->streamSettings, $server_ip);
+                    $header_type = $wsData['header_type'];
+                    $path = $wsData['path'];
+                    $host = $wsData['host'];
                 }
                 if($netType == 'httpupgrade') {
                     $httpupgradeSettings = json_decode($row->streamSettings)->httpupgradeSettings;
@@ -6040,9 +6738,10 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                         $sid = $realitySettings->shortIds[0];
                     }
                 }elseif($netType == 'ws') {
-                    $header_type = json_decode($row->streamSettings)->wsSettings->header->type;
-                    $path = json_decode($row->streamSettings)->wsSettings->path;
-                    $host = json_decode($row->streamSettings)->wsSettings->headers->Host;
+                    $wsData = wizwiz_extractWsSettings($row->streamSettings, $server_ip);
+                    $header_type = $wsData['header_type'];
+                    $path = $wsData['path'];
+                    $host = $wsData['host'];
                 }elseif($netType == 'httpupgrade') {
                     $httpupgradeSettings = json_decode($row->streamSettings)->httpupgradeSettings;
                     $path = $httpupgradeSettings->path ?? '/';
@@ -6112,13 +6811,13 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                 }
                 $psting = '';
                 if(($header_type == 'http' && $rahgozar != true && $netType != "grpc" && $netType != "httpupgrade")) $psting .= "&path=/&host=$host";
-                if($netType == "ws" && !empty($host) && $rahgozar != true) $psting .= "&path=" . rawurlencode($path ?: '/') . "&host=$host";
+                if($netType == "ws" && $rahgozar != true) $psting .= "&encryption=none&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"");
                 if($netType == "httpupgrade" && $rahgozar != true){
                     $psting .= "&path=" . rawurlencode($path ?: '/');
                     if(!empty($host)) $psting .= "&host=$host";
                 }
                 if($netType == 'tcp' and $header_type == 'http') $psting .= '&headerType=http';
-                if(strlen($sni) > 1 && $tlsStatus != "reality") $psting .= "&sni=$sni";
+                if(strlen($sni) > 1 && in_array($tlsStatus, ["tls", "xtls"], true)) $psting .= "&sni=$sni";
                 if(strlen($serverName)>1 && $tlsStatus=="xtls") $server_ip = $serverName;
                 if($tlsStatus == "xtls" && $netType == "tcp") $psting .= "&flow=xtls-rprx-direct";
                 if($tlsStatus=="reality") $psting .= "&fp=$fp&pbk=$pbk&sni=$sni" . ($flow != ""?"&flow=$flow":"") . "&sid=$sid&spx=$spiderX";
@@ -6136,7 +6835,8 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
     
             if($protocol == 'trojan'){
                 $psting = '';
-                if($header_type == 'http' && $netType != 'httpupgrade') $psting .= "&path=/&host=$host";
+                if($netType == 'ws') $psting .= "&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"");
+                if($header_type == 'http' && $netType != 'httpupgrade' && $netType != 'ws') $psting .= "&path=/&host=$host";
                 if($netType == 'httpupgrade'){
                     $psting = "&path=" . rawurlencode($path ?: '/');
                     if(!empty($host)) $psting .= "&host=$host";
@@ -6221,7 +6921,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     }
                 }
                 
-                if(strlen($sni) > 1 && $tlsStatus != "reality") $psting = "&sni=$sni"; else $psting = '';
+                if(strlen($sni) > 1 && in_array($tlsStatus, ["tls", "xtls"], true)) $psting = "&sni=$sni"; else $psting = '';
                 if($netType == 'tcp'){
                     if($netType == 'tcp' and $header_type == 'http') $psting .= '&headerType=http';
                     if($tlsStatus=="xtls") $psting .= "&flow=xtls-rprx-direct";
@@ -6230,7 +6930,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus{$psting}#$remark";
                 }elseif($netType == 'ws'){
                     if($rahgozar == true)$outputlink = "$protocol://$uniqid@$server_ip:" . ($customPort!=0?$customPort:"443") . "?type=$netType&security=tls&path=" . rawurlencode($path . ($customPath == true?"?ed=2048":"")) . "&encryption=none&host=$host{$psting}#$remark";
-                    else $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=" . rawurlencode($path ?: '/') . "&host=$host{$psting}#$remark";
+                    else $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=none&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"") . "{$psting}#$remark";
                 }elseif($netType == 'httpupgrade'){
                     $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"") . "{$psting}#$remark";
                 }
@@ -6249,7 +6949,8 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                 }
             }elseif($protocol == 'trojan'){                
                 $psting = '';
-                if($header_type == 'http' && $netType != 'httpupgrade') $psting .= "&path=/&host=$host";
+                if($netType == 'ws') $psting .= "&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"");
+                if($header_type == 'http' && $netType != 'httpupgrade' && $netType != 'ws') $psting .= "&path=/&host=$host";
                 if($netType == 'httpupgrade'){
                     $psting = "&path=" . rawurlencode($path ?: '/');
                     if(!empty($host)) $psting .= "&host=$host";
