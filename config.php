@@ -9027,4 +9027,1027 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
     return json_decode($response);
 }
 
+
+// ===== WizWiz extra realtime reports + auto order approval =====
+function wizwiz_ensureAutoOrderColumns(){
+    global $connection;
+    if(function_exists('wizwiz_schemaPatchDone') && wizwiz_schemaPatchDone('AUTO_ORDER_REPORTS_V3')) return;
+
+    $payColumns = [
+        'sent_date' => "ALTER TABLE `pays` ADD `sent_date` int(255) NOT NULL DEFAULT 0 AFTER `request_date`",
+        'auto_approved' => "ALTER TABLE `pays` ADD `auto_approved` tinyint(1) NOT NULL DEFAULT 0 AFTER `state`",
+        'auto_approved_date' => "ALTER TABLE `pays` ADD `auto_approved_date` int(255) NOT NULL DEFAULT 0 AFTER `auto_approved`",
+        'auto_approved_orders' => "ALTER TABLE `pays` ADD `auto_approved_orders` text DEFAULT NULL AFTER `auto_approved_date`",
+        'cancel_reason' => "ALTER TABLE `pays` ADD `cancel_reason` text DEFAULT NULL AFTER `auto_approved_orders`",
+        'admin_chat_id' => "ALTER TABLE `pays` ADD `admin_chat_id` bigint(30) NOT NULL DEFAULT 0 AFTER `cancel_reason`",
+        'admin_message_id' => "ALTER TABLE `pays` ADD `admin_message_id` int(20) NOT NULL DEFAULT 0 AFTER `admin_chat_id`",
+        'approval_error' => "ALTER TABLE `pays` ADD `approval_error` text DEFAULT NULL AFTER `admin_message_id`",
+        'approval_error_date' => "ALTER TABLE `pays` ADD `approval_error_date` int(255) NOT NULL DEFAULT 0 AFTER `approval_error`"
+    ];
+    foreach($payColumns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `pays` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0) @($connection->query($query));
+    }
+
+    $orderColumns = [
+        'auto_approved' => "ALTER TABLE `orders_list` ADD `auto_approved` tinyint(1) NOT NULL DEFAULT 0 AFTER `agent_bought`",
+        'auto_pay_hash' => "ALTER TABLE `orders_list` ADD `auto_pay_hash` varchar(120) DEFAULT NULL AFTER `auto_approved`",
+        'cancel_reason' => "ALTER TABLE `orders_list` ADD `cancel_reason` text DEFAULT NULL AFTER `auto_pay_hash`"
+    ];
+    foreach($orderColumns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `orders_list` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0) @($connection->query($query));
+    }
+
+    if(function_exists('wizwiz_markSchemaPatchDone')) wizwiz_markSchemaPatchDone('AUTO_ORDER_REPORTS_V3');
+}
+wizwiz_ensureAutoOrderColumns();
+
+function wizwiz_h($value){
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function wizwiz_userPrivateUrl($userId){
+    return 'tg://user?id=' . intval($userId);
+}
+
+function wizwiz_userPrivateButton($userId, $text = '👤 رفتن به پی وی مشتری'){
+    return ['text' => $text, 'url' => wizwiz_userPrivateUrl($userId), 'style' => 'primary'];
+}
+
+function wizwiz_formatUserLine($userId, $name = '', $username = ''){
+    $userId = intval($userId);
+    $name = trim((string)$name) !== '' ? trim((string)$name) : ('کاربر ' . $userId);
+    $username = trim((string)$username);
+    $username = ($username !== '' && $username !== 'ندارد' && $username !== ' ندارد ') ? '@' . ltrim($username, '@') : 'ندارد';
+    return "👤 کاربر: <a href='tg://user?id={$userId}'>" . wizwiz_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . wizwiz_h($username);
+}
+
+function wizwiz_getIncomeReportChatId(){
+    global $botState, $admin;
+    $chat = trim((string)($botState['rewardChannel'] ?? ''));
+    return $chat !== '' ? $chat : $admin;
+}
+
+function wizwiz_reportEventItems(){
+    return [
+        'purchase_started' => '🛒 شروع خرید',
+        'test_account' => '🧪 دریافت اکانت تست',
+        'auto_approved' => '🤖 تأیید خودکار سفارش',
+        'approval_failed' => '⚠️ خطای تأیید خودکار',
+        'daily_stats' => '📊 آمار روزانه'
+    ];
+}
+
+function wizwiz_reportStatItems(){
+    return [
+        'users_total' => '👥 کل کاربران',
+        'users_today' => '👤 کاربران جدید امروز',
+        'users_month' => '👥 کاربران جدید ماه',
+        'agents_total' => '🤝 تعداد نماینده‌ها',
+        'active_services' => '🧾 سرویس‌های فعال',
+        'expired_services' => '⌛ سرویس‌های منقضی فعال',
+        'total_orders' => '📦 کل سفارش‌ها',
+        'today_orders' => '🛒 سفارش‌های امروز',
+        'month_orders' => '📆 سفارش‌های ماه',
+        'pending_pays' => '⏳ پرداخت‌های در انتظار',
+        'approved_pays_today' => '✅ پرداخت‌های تأیید امروز',
+        'declined_pays_today' => '❌ پرداخت‌های رد امروز',
+        'today_income' => '💰 درآمد امروز',
+        'yesterday_income' => '💵 درآمد دیروز',
+        'week_income' => '🗓 درآمد هفته',
+        'month_income' => '📆 درآمد ماه',
+        'total_income' => '🏦 درآمد کل',
+        'auto_approved_today' => '🤖 تأیید خودکار امروز',
+        'auto_approved_total' => '🤖 کل تأیید خودکار',
+        'test_accounts_today' => '🧪 تست‌های امروز',
+        'test_accounts_total' => '🧪 کل تست‌ها',
+        'wallet_total' => '👛 مجموع کیف پول کاربران',
+        'servers_total' => '🖥 تعداد سرورها',
+        'plans_total' => '📋 تعداد پلن‌ها'
+    ];
+}
+
+function wizwiz_reportDetailItems(){
+    return [
+        'user_info' => '👤 اطلاعات کاربر داخل اعلان‌ها',
+        'private_button' => '🔗 دکمه رفتن به پی‌وی مشتری',
+        'payment_hash' => '🔖 کد پرداخت',
+        'plan_info' => '📦 مشخصات پلن/سرویس',
+        'amount' => '💰 مبلغ خرید',
+        'order_ids' => '🧾 شماره سفارش/کانفیگ ساخته‌شده',
+        'cancel_button' => '❌ دکمه لغو سفارش خودکار',
+        'timestamp' => '🕒 زمان گزارش'
+    ];
+}
+
+function wizwiz_reportSetting($key, $default = 'on'){
+    global $botState;
+    $value = $botState[$key] ?? $default;
+    return ((string)$value === 'on') ? 'on' : 'off';
+}
+
+function wizwiz_reportIsEnabled($key, $default = 'on'){
+    return wizwiz_reportSetting($key, $default) === 'on';
+}
+
+function wizwiz_reportTime(){
+    global $botState;
+    $time = trim((string)($botState['wizReportDailyTime'] ?? '21:00'));
+    if(!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $time)) $time = '21:00';
+    return $time;
+}
+
+function wizwiz_reportToggleSetting($key, $default = 'on'){
+    $new = wizwiz_reportIsEnabled($key, $default) ? 'off' : 'on';
+    setSettings($key, $new);
+    return $new;
+}
+
+function wizwiz_reportStatKey($item){
+    return 'wizReportStat_' . $item;
+}
+
+function wizwiz_reportEventKey($item){
+    return 'wizReportEvent_' . $item;
+}
+
+function wizwiz_reportDetailKey($item){
+    return 'wizReportDetail_' . $item;
+}
+
+function wizwiz_reportDetailEnabled($item, $default = 'on'){
+    return wizwiz_reportIsEnabled(wizwiz_reportDetailKey($item), $default);
+}
+
+function wizwiz_reportTimeLine(){
+    if(!wizwiz_reportDetailEnabled('timestamp', 'on')) return '';
+    $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time()) : date('Y/m/d H:i');
+    return "\n🕒 زمان: <b>" . wizwiz_h($nowTxt) . "</b>";
+}
+
+function wizwiz_liveStatsSnapshot($forDaily = false){
+    global $connection;
+    $now = time();
+    $today = strtotime(date('Y-m-d 00:00:00'));
+    $yesterday = strtotime(date('Y-m-d 00:00:00', strtotime('-1 day')));
+    $week = strtotime(date('Y-m-d 00:00:00', strtotime('-6 day')));
+    $month = strtotime(date('Y-m-01 00:00:00'));
+    $q = function($sql) use ($connection){
+        $res = @($connection->query($sql));
+        if(!$res) return 0;
+        $row = $res->fetch_assoc();
+        return intval($row['c'] ?? $row['s'] ?? 0);
+    };
+
+    $values = [
+        'users_total' => ['👥 کاربران', $q("SELECT COUNT(*) c FROM `users`"), ''],
+        'users_today' => ['👤 کاربران جدید امروز', $q("SELECT COUNT(*) c FROM `users` WHERE CAST(`date` AS UNSIGNED) >= $today"), ''],
+        'users_month' => ['👥 کاربران جدید ماه', $q("SELECT COUNT(*) c FROM `users` WHERE CAST(`date` AS UNSIGNED) >= $month"), ''],
+        'agents_total' => ['🤝 نماینده‌ها', $q("SELECT COUNT(*) c FROM `users` WHERE COALESCE(`is_agent`,0) = 1"), ''],
+        'active_services' => ['🧾 سرویس‌های فعال', $q("SELECT COUNT(*) c FROM `orders_list` WHERE `status` = 1"), ''],
+        'expired_services' => ['⌛ سرویس‌های منقضی فعال', $q("SELECT COUNT(*) c FROM `orders_list` WHERE `status` = 1 AND CAST(`expire_date` AS UNSIGNED) > 0 AND CAST(`expire_date` AS UNSIGNED) < $now"), ''],
+        'total_orders' => ['📦 کل سفارش‌ها', $q("SELECT COUNT(*) c FROM `orders_list`"), ''],
+        'today_orders' => ['🛒 سفارش امروز', $q("SELECT COUNT(*) c FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $today"), ''],
+        'month_orders' => ['📆 سفارش ماه', $q("SELECT COUNT(*) c FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $month"), ''],
+        'pending_pays' => ['⏳ پرداخت‌های در انتظار', $q("SELECT COUNT(*) c FROM `pays` WHERE `state` IN ('pending','sent','processing','auto_processing')"), ''],
+        'approved_pays_today' => ['✅ پرداخت‌های تأیید امروز', $q("SELECT COUNT(*) c FROM `pays` WHERE `state` = 'approved' AND CAST(COALESCE(NULLIF(`auto_approved_date`,0), `request_date`) AS UNSIGNED) >= $today"), ''],
+        'declined_pays_today' => ['❌ پرداخت‌های رد امروز', $q("SELECT COUNT(*) c FROM `pays` WHERE `state` IN ('declined','auto_cancelled') AND CAST(`request_date` AS UNSIGNED) >= $today"), ''],
+        'today_income' => ['💰 درآمد امروز', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $today"), ' تومان'],
+        'yesterday_income' => ['💵 درآمد دیروز', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $yesterday AND CAST(`date` AS UNSIGNED) < $today"), ' تومان'],
+        'week_income' => ['🗓 درآمد هفته', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $week"), ' تومان'],
+        'month_income' => ['📆 درآمد ماه', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $month"), ' تومان'],
+        'total_income' => ['🏦 درآمد کل', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list`"), ' تومان'],
+        'auto_approved_today' => ['🤖 تأیید خودکار امروز', $q("SELECT COUNT(*) c FROM `pays` WHERE `auto_approved` = 1 AND CAST(`auto_approved_date` AS UNSIGNED) >= $today"), ''],
+        'auto_approved_total' => ['🤖 کل تأیید خودکار', $q("SELECT COUNT(*) c FROM `pays` WHERE `auto_approved` = 1"), ''],
+        'test_accounts_today' => ['🧪 تست‌های امروز', $q("SELECT COUNT(*) c FROM `orders_list` WHERE `status` = 1 AND CAST(`amount` AS UNSIGNED) = 0 AND CAST(`date` AS UNSIGNED) >= $today"), ''],
+        'test_accounts_total' => ['🧪 کل تست‌ها', $q("SELECT COUNT(*) c FROM `orders_list` WHERE CAST(`amount` AS UNSIGNED) = 0"), ''],
+        'wallet_total' => ['👛 مجموع کیف پول', $q("SELECT COALESCE(SUM(`wallet`),0) s FROM `users`"), ' تومان'],
+        'servers_total' => ['🖥 سرورها', $q("SELECT COUNT(*) c FROM `server_config`"), ''],
+        'plans_total' => ['📋 پلن‌ها', $q("SELECT COUNT(*) c FROM `server_plans`"), '']
+    ];
+
+    $lines = [];
+    foreach($values as $key => $item){
+        if(!wizwiz_reportIsEnabled(wizwiz_reportStatKey($key), 'on')) continue;
+        [$label, $value, $suffix] = $item;
+        $lines[] = $label . ': <b>' . number_format($value) . $suffix . '</b>';
+    }
+    if(count($lines) == 0) return '';
+    $title = $forDaily ? "📊 <b>آمار روزانه</b>" : "📊 <b>آمار لحظه‌ای</b>";
+    return "\n\n" . $title . "\n" . implode("\n", $lines);
+}
+
+function wizwiz_reportEvent($title, $body, $keyboard = null, $eventKey = null){
+    if($eventKey !== null && !wizwiz_reportIsEnabled(wizwiz_reportEventKey($eventKey), 'on')) return null;
+    $chat = wizwiz_getIncomeReportChatId();
+    if($chat === null || $chat === '') return null;
+    // اعلان‌ها جدا از آمار هستند؛ آمار فقط در گزارش روزانه/ارسال دستی ارسال می‌شود.
+    $msg = $title . "\n\n" . $body;
+    return sendMessage($msg, $keyboard, 'HTML', $chat);
+}
+
+function wizwiz_buildDailyChannelStatsText($manual = false){
+    $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time()) : date('Y/m/d H:i');
+    $title = $manual ? '📊 <b>ارسال دستی آمار کانال</b>' : '📊 <b>گزارش روزانه آمار ربات</b>';
+    $stats = wizwiz_liveStatsSnapshot(true);
+    if(trim($stats) === '') $stats = "\n\nهیچ آیتم آماری برای ارسال فعال نیست.";
+    return $title . "\n\n🕒 زمان گزارش: <b>" . wizwiz_h($nowTxt) . "</b>" . $stats;
+}
+
+function wizwiz_sendDailyChannelStats($manual = false){
+    if(!wizwiz_reportIsEnabled(wizwiz_reportEventKey('daily_stats'), 'on') && !$manual) return false;
+    $chat = wizwiz_getIncomeReportChatId();
+    if($chat === null || $chat === '') return false;
+    sendMessage(wizwiz_buildDailyChannelStatsText($manual), null, 'HTML', $chat);
+    return true;
+}
+
+function wizwiz_processDailyChannelStats($force = false){
+    if(!$force && !wizwiz_reportIsEnabled('wizReportDailyState', 'off')) return false;
+    $today = date('Y-m-d');
+    $time = wizwiz_reportTime();
+    global $botState;
+    $last = (string)($botState['wizReportLastDailyDate'] ?? '');
+    if(!$force){
+        if($last === $today) return false;
+        if(date('H:i') < $time) return false;
+    }
+    $sent = wizwiz_sendDailyChannelStats($force);
+    if($sent && !$force) setSettings('wizReportLastDailyDate', $today);
+    return $sent;
+}
+
+function wizwiz_getReportSettingsMenuText(){
+    $dailyState = wizwiz_reportIsEnabled('wizReportDailyState', 'off') ? 'روشن ✅' : 'خاموش ❌';
+    $time = wizwiz_reportTime();
+    global $botState;
+    $last = trim((string)($botState['wizReportLastDailyDate'] ?? ''));
+    if($last === '') $last = 'ارسال نشده';
+    return "📊 <b>تنظیمات آمار و اعلان کانال</b>\n\n" .
+           "🔔 آمار روزانه: <b>$dailyState</b>\n" .
+           "🕘 ساعت ارسال روزانه: <b>$time</b>\n" .
+           "📌 آخرین ارسال روزانه: <b>" . wizwiz_h($last) . "</b>\n" .
+           "📎 آمار داخل اعلان‌ها: <b>جدا شده ✅</b>\n\n" .
+           "اعلان خرید، تست و تأیید خودکار هرکدام پیام مخصوص خودشان را دارند. از دکمه‌های پایین می‌توانی خود اعلان‌ها، جزئیات داخل اعلان‌ها و آیتم‌های آمار را روشن/خاموش کنی.";
+}
+
+function wizwiz_getReportSettingsMenuKeys(){
+    global $buttonValues;
+    $rows = [];
+    $rows[] = [
+        ['text'=>(wizwiz_reportIsEnabled('wizReportDailyState', 'off') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success'],
+        ['text'=>'🕘 تنظیم ساعت', 'callback_data'=>'setDailyChannelStatsTime', 'style'=>'primary']
+    ];
+    $rows[] = [
+        ['text'=>'📤 ارسال آمار الان', 'callback_data'=>'sendDailyChannelStatsNow', 'style'=>'success']
+    ];
+    $rows[] = [[ 'text'=>'🔔 نوع اعلان‌هایی که به کانال بروند', 'callback_data'=>'wizwizch', 'style'=>'primary' ]];
+    foreach(wizwiz_reportEventItems() as $key => $title){
+        $state = wizwiz_reportIsEnabled(wizwiz_reportEventKey($key), 'on') ? '✅' : '❌';
+        $rows[] = [[ 'text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportEvent_' . $key, 'style'=>'primary' ]];
+    }
+    $rows[] = [[ 'text'=>'🧩 جزئیات داخل پیام‌های اعلان', 'callback_data'=>'wizwizch', 'style'=>'primary' ]];
+    foreach(wizwiz_reportDetailItems() as $key => $title){
+        $state = wizwiz_reportDetailEnabled($key, 'on') ? '✅' : '❌';
+        $rows[] = [[ 'text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportDetail_' . $key, 'style'=>'primary' ]];
+    }
+    $rows[] = [[ 'text'=>'📊 آیتم‌های داخل آمار روزانه/دستی', 'callback_data'=>'wizwizch', 'style'=>'primary' ]];
+    $pair = [];
+    foreach(wizwiz_reportStatItems() as $key => $title){
+        $state = wizwiz_reportIsEnabled(wizwiz_reportStatKey($key), 'on') ? '✅' : '❌';
+        $pair[] = ['text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportStat_' . $key, 'style'=>'primary'];
+        if(count($pair) == 2){ $rows[] = $pair; $pair = []; }
+    }
+    if(count($pair) > 0) $rows[] = $pair;
+    $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'managePanel', 'style'=>'primary' ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_reportPrivateKeyboard($userId, $extraRows = []){
+    $rows = [];
+    foreach($extraRows as $row){
+        if(!empty($row)) $rows[] = $row;
+    }
+    if(wizwiz_reportDetailEnabled('private_button', 'on')) $rows[] = [wizwiz_userPrivateButton($userId)];
+    if(count($rows) == 0) return null;
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_notifyPurchaseStarted($hashId, $source = 'انتخاب پلن'){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return;
+    $stmt = $connection->prepare("SELECT p.*, u.`name`, u.`username`, sp.`title` AS plan_title FROM `pays` p LEFT JOIN `users` u ON u.`userid` = p.`user_id` LEFT JOIN `server_plans` sp ON sp.`id` = p.`plan_id` WHERE p.`hash_id` = ? LIMIT 1");
+    if(!$stmt) return;
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $pay = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$pay) return;
+    $uid = intval($pay['user_id']);
+    $lines = ["🟡 <b>شروع فرایند خرید</b>"];
+    if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = wizwiz_formatUserLine($uid, $pay['name'] ?? '', $pay['username'] ?? '');
+    if(wizwiz_reportDetailEnabled('plan_info', 'on')){
+        $lines[] = "📦 پلن/نوع: <b>" . wizwiz_h($pay['plan_title'] ?? $pay['type']) . "</b>";
+        $lines[] = "💳 روش/مرحله: <b>" . wizwiz_h($source) . "</b>";
+    }
+    if(wizwiz_reportDetailEnabled('amount', 'on')) $lines[] = "💰 مبلغ: <b>" . number_format(intval($pay['price'])) . " تومان</b>";
+    if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hashId) . "</code>";
+    $body = implode("\n", $lines) . wizwiz_reportTimeLine();
+    wizwiz_reportEvent('🛒 گزارش خرید جدید', $body, wizwiz_reportPrivateKeyboard($uid), 'purchase_started');
+}
+
+function wizwiz_notifyTestAccountTaken($orderId, $userId, $planTitle = '', $remark = '', $volume = '', $days = ''){
+    global $connection;
+    $userId = intval($userId);
+    $stmt = $connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+    $user = null;
+    if($stmt){
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+    $lines = ["🧪 <b>اکانت تست دریافت شد</b>"];
+    if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = wizwiz_formatUserLine($userId, $user['name'] ?? '', $user['username'] ?? '');
+    if(wizwiz_reportDetailEnabled('order_ids', 'on')) $lines[] = "🧾 شماره سفارش: <code>" . intval($orderId) . "</code>";
+    if(wizwiz_reportDetailEnabled('plan_info', 'on')){
+        $lines[] = "📦 پلن: <b>" . wizwiz_h($planTitle) . "</b>";
+        $lines[] = "🔮 ریمارک: <code>" . wizwiz_h($remark) . "</code>";
+        $lines[] = "🔋 حجم: <b>" . wizwiz_h($volume) . " گیگ</b>";
+        $lines[] = "⏰ مدت: <b>" . wizwiz_h($days) . " روز</b>";
+    }
+    $body = implode("\n", $lines) . wizwiz_reportTimeLine();
+    wizwiz_reportEvent('🧪 گزارش اکانت تست', $body, wizwiz_reportPrivateKeyboard($userId), 'test_account');
+}
+
+function wizwiz_getAutoApproveState(){
+    global $botState;
+    $minutes = intval($botState['autoApproveMinutes'] ?? 5);
+    if($minutes < 1) $minutes = 5;
+    return [
+        'enabled' => (($botState['autoApproveState'] ?? 'off') === 'on'),
+        'minutes' => $minutes
+    ];
+}
+
+function wizwiz_getAutoApproveMenuText(){
+    [$enabled, $minutes] = array_values(wizwiz_getAutoApproveState());
+    $state = $enabled ? 'روشن ✅' : 'خاموش ❌';
+    return "⏱ <b>تأیید خودکار سفارش‌ها</b>\n\n" .
+           "وضعیت فعلی: <b>$state</b>\n" .
+           "زمان تأیید خودکار: <b>$minutes دقیقه بعد از ارسال رسید</b>\n\n" .
+           "وقتی کاربر رسید کارت‌به‌کارت خرید سرویس را ارسال کند، اگر این بخش روشن باشد و سفارش تا زمان تعیین‌شده تأیید/رد نشود، ربات آن را خودکار تأیید می‌کند. گزارش سفارش خودکار داخل کانال گزارش درآمد ارسال می‌شود و از همان‌جا قابل لغو است.";
+}
+
+function wizwiz_getAutoApproveMenuKeys(){
+    $s = wizwiz_getAutoApproveState();
+    $toggle = $s['enabled'] ? 'خاموش کردن ❌' : 'روشن کردن ✅';
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>$toggle, 'callback_data'=>'toggleAutoApproveOrders', 'style'=>$s['enabled'] ? 'danger' : 'success'],
+            ['text'=>'⏱ تنظیم دقیقه', 'callback_data'=>'setAutoApproveMinutes', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🚀 بررسی و اجرای الان', 'callback_data'=>'runAutoApproveOrdersNow', 'style'=>'success']
+        ],
+        [
+            ['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel', 'style'=>'primary']
+        ]
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_markPayReceiptSent($hashId){
+    global $connection;
+    $now = time();
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `sent_date` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent')");
+    if(!$stmt) return false;
+    $stmt->bind_param('is', $now, $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_storeAdminPayMessage($hashId, $chatId, $messageId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    $chatId = intval($chatId);
+    $messageId = intval($messageId);
+    if($hashId === '' || $chatId == 0 || $messageId <= 0) return false;
+    $stmt = $connection->prepare("UPDATE `pays` SET `admin_chat_id` = ?, `admin_message_id` = ? WHERE `hash_id` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('iis', $chatId, $messageId, $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_getAdminPayMessage($hashId){
+    global $connection, $admin;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return [0, 0, 0];
+    $stmt = $connection->prepare("SELECT `user_id`, `admin_chat_id`, `admin_message_id` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return [0, 0, 0];
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return [0, 0, 0];
+    $chat = intval($row['admin_chat_id'] ?? 0);
+    if($chat == 0) $chat = intval($admin);
+    return [intval($chat), intval($row['admin_message_id'] ?? 0), intval($row['user_id'] ?? 0)];
+}
+
+function wizwiz_shortButtonText($text, $max = 56){
+    $text = trim((string)$text);
+    if($text === '') return '';
+    if(function_exists('mb_strlen') && mb_strlen($text, 'UTF-8') > $max) return mb_substr($text, 0, $max - 1, 'UTF-8') . '…';
+    if(!function_exists('mb_strlen') && strlen($text) > $max) return substr($text, 0, $max - 3) . '...';
+    return $text;
+}
+
+function wizwiz_approvalStatusTextFromResult($result, $auto = false){
+    $remarks = $result['remarks'] ?? [];
+    if(!is_array($remarks)) $remarks = [];
+    $prefix = $auto ? '🤖 تأیید خودکار شد' : '✅ تأیید شد';
+    if(!empty($result['renew_remark'])) return wizwiz_shortButtonText($prefix . ': ' . $result['renew_remark']);
+    if(count($remarks) == 1) return wizwiz_shortButtonText($prefix . ': ' . $remarks[0]);
+    if(count($remarks) > 1) return $prefix . ' | ' . count($remarks) . ' کانفیگ ساخته شد';
+    return $prefix;
+}
+
+function wizwiz_updateAdminPayMessageStatus($hashId, $statusText, $style = 'success', $userId = 0){
+    [$chat, $msg, $storedUser] = wizwiz_getAdminPayMessage($hashId);
+    if($userId <= 0) $userId = $storedUser;
+    if($chat == 0 || $msg <= 0) return false;
+    editKeys(wizwiz_orderStatusKeyboard($statusText, $userId, $style), $msg, $chat);
+    return true;
+}
+
+function wizwiz_setPayApprovalError($hashId, $message){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return false;
+    $message = trim((string)$message);
+    $now = time();
+    $stmt = $connection->prepare("UPDATE `pays` SET `approval_error` = ?, `approval_error_date` = ? WHERE `hash_id` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('sis', $message, $now, $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_payLinkedOrderIds($hashId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    $ids = [];
+    if($hashId === '') return $ids;
+    $stmt = $connection->prepare("SELECT `id` FROM `orders_list` WHERE `auto_pay_hash` = ?");
+    if(!$stmt) return $ids;
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while($row = $res->fetch_assoc()) $ids[] = intval($row['id']);
+    $stmt->close();
+    return $ids;
+}
+
+function wizwiz_autoOrderActionKeyboard($hashId, $userId){
+    $rows = [];
+    if(wizwiz_reportDetailEnabled('cancel_button', 'on')){
+        $rows[] = [[ 'text'=>'❌ لغو کامل سفارش', 'callback_data'=>'autoCancelOrder' . $hashId, 'style'=>'danger' ]];
+    }
+    if(wizwiz_reportDetailEnabled('private_button', 'on')) $rows[] = [wizwiz_userPrivateButton($userId)];
+    if(count($rows) == 0) return null;
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_orderStatusKeyboard($statusText, $userId = 0, $style = 'success'){
+    $rows = [[['text'=>$statusText, 'callback_data'=>'wizwizch', 'style'=>$style]]];
+    $userId = intval($userId);
+    if($userId > 0) $rows[] = [wizwiz_userPrivateButton($userId)];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_adminPendingOrderKeyboard($hashId, $userId){
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'✅ تأیید', 'callback_data'=>'accept' . $hashId, 'style'=>'success'],
+            ['text'=>'❌ عدم تأیید', 'callback_data'=>'declineOrder' . $hashId, 'style'=>'danger']
+        ],
+        [
+            wizwiz_userPrivateButton($userId)
+        ]
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_adminPendingWalletKeyboard($hashId, $userId){
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'✅ تأیید', 'callback_data'=>'approvePayment' . $hashId, 'style'=>'success'],
+            ['text'=>'❌ عدم تأیید', 'callback_data'=>'decPayment' . $hashId, 'style'=>'danger']
+        ],
+        [
+            wizwiz_userPrivateButton($userId)
+        ]
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_notifyOrderReceiptSent($hashId, $fileId = null){
+    // رسید خرید دیگر به کانال/گروه گزارش درآمد ارسال نمی‌شود.
+    // فقط پیام مستقیم ادمین ارسال می‌شود و گزارش کانال مخصوص تأیید خودکار باقی می‌ماند.
+    return null;
+}
+
+function wizwiz_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType){
+    global $botUrl, $buttonValues, $botState;
+    if(!is_array($links)) $links = [$links];
+    $keyboard = json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'] ?? 'بازگشت', 'callback_data'=>'mainMenu']]]], JSON_UNESCAPED_UNICODE);
+
+    // دقیقاً مثل خرید عادی/کیف پول: اگر چند دامنه وجود داشته باشد همه لینک‌ها در یک پیام ارسال می‌شوند.
+    if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($uid, $remark, $links, $subLink, $serverType, $keyboard)){
+        return true;
+    }
+
+    if(!class_exists('QRcode') && file_exists('phpqrcode/qrlib.php')) @include_once 'phpqrcode/qrlib.php';
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH', 540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT', 540);
+
+    foreach($links as $link){
+        $link = (string)$link;
+        if(trim($link) === '') continue;
+        $acc_text = "😍 سفارش جدید شما\n📡 پروتکل: $protocol\n🔮 نام سرویس: $remark\n🔋حجم سرویس: $volume گیگ\n⏰ مدت سرویس: $days روز\n" .
+            (($botState['configLinkState'] ?? 'on') != 'off' && $serverType != 'marzban' ? "\n💝 config : <code>$link</code>" : '');
+        if(($botState['subLinkState'] ?? 'off') == 'on' && $subLink != '') $acc_text .= "\n\n🌐 subscription : <code>$subLink</code>";
+
+        if(class_exists('QRcode')){
+            $file = RandomString() . '.png';
+            QRcode::png($link, $file, 'L', 11, 0);
+            if(function_exists('addBorderImage')) @addBorderImage($file);
+            if(file_exists('settings/QRCode.jpg')){
+                $backgroundImage = @imagecreatefromjpeg('settings/QRCode.jpg');
+                $qrImage = @imagecreatefrompng($file);
+                if($backgroundImage && $qrImage){
+                    $qrSize = ['width' => imagesx($qrImage), 'height' => imagesy($qrImage)];
+                    imagecopy($backgroundImage, $qrImage, 300, 300, 0, 0, $qrSize['width'], $qrSize['height']);
+                    imagepng($backgroundImage, $file);
+                    imagedestroy($backgroundImage);
+                    imagedestroy($qrImage);
+                }
+            }
+            sendPhoto($botUrl . $file, $acc_text, $keyboard, 'HTML', $uid);
+            @unlink($file);
+        }else{
+            sendMessage($acc_text, $keyboard, 'HTML', $uid);
+        }
+    }
+    return true;
+}
+
+function wizwiz_lockPayForApproval($hashId, $auto = false){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return ['ok'=>false, 'message'=>'کد پرداخت نامعتبر است.'];
+
+    if($auto){
+        $stmt = $connection->prepare("SELECT `state`, `approval_error` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        if(!$stmt) return ['ok'=>false, 'message'=>'دسترسی به وضعیت پرداخت ممکن نیست.'];
+        $stmt->bind_param('s', $hashId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$row) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد.'];
+        if(($row['state'] ?? '') === 'auto_processing') return ['ok'=>true, 'message'=>'locked'];
+        if(($row['state'] ?? '') === 'approved') return ['ok'=>false, 'message'=>'این سفارش قبلاً تأیید شده است.'];
+        return ['ok'=>false, 'message'=>'این سفارش دیگر در وضعیت قابل تأیید خودکار نیست.'];
+    }
+
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'processing' WHERE `hash_id` = ? AND `state` = 'sent'");
+    if(!$stmt) return ['ok'=>false, 'message'=>'قفل‌گذاری سفارش ممکن نیست.'];
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $changed = $stmt->affected_rows;
+    $stmt->close();
+    if($changed > 0) return ['ok'=>true, 'message'=>'locked'];
+
+    $stmt = $connection->prepare("SELECT `state`, `approval_error` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('s', $hashId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $state = $row['state'] ?? '';
+        if($state === 'approved') return ['ok'=>false, 'message'=>'این سفارش قبلاً تأیید شده است.'];
+        if($state === 'processing' || $state === 'auto_processing'){
+            if(trim((string)($row['approval_error'] ?? '')) !== ''){
+                wizwiz_restorePayApprovalState($hashId);
+                return wizwiz_lockPayForApproval($hashId, $auto);
+            }
+            return ['ok'=>false, 'message'=>'این سفارش در حال پردازش است؛ چند بار روی تأیید نزنید.'];
+        }
+        if($state === 'declined' || $state === 'auto_cancelled') return ['ok'=>false, 'message'=>'این سفارش قبلاً رد یا لغو شده است.'];
+    }
+    return ['ok'=>false, 'message'=>'این سفارش دیگر در وضعیت قابل تأیید نیست.'];
+}
+
+function wizwiz_restorePayApprovalState($hashId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return false;
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ? AND `state` IN ('processing','auto_processing')");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_approveSentOrderByHash($hashId, $auto = false){
+    global $connection, $botState, $mainValues, $admin;
+    $hashId = trim((string)$hashId);
+    $approvalLocked = false;
+    $fail = function($message) use (&$approvalLocked, $hashId){
+        if($approvalLocked) wizwiz_restorePayApprovalState($hashId);
+        wizwiz_setPayApprovalError($hashId, $message);
+        return ['ok'=>false, 'message'=>$message];
+    };
+    if($hashId === '') return $fail('کد پرداخت نامعتبر است.');
+
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return $fail('دسترسی به جدول پرداخت ممکن نیست.');
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $payInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$payInfo) return $fail('پرداخت پیدا نشد.');
+    if(($payInfo['state'] ?? '') == 'approved'){
+        $existingOrders = json_decode($payInfo['auto_approved_orders'] ?? '[]', true) ?: [];
+        if(count($existingOrders) == 0) $existingOrders = wizwiz_payLinkedOrderIds($hashId);
+        // اگر نسخه قدیمی سفارش را قبل از ساخت کانفیگ approved کرده باشد و هیچ سفارش لینک‌شده‌ای وجود نداشته باشد، امکان تلاش دوباره بده.
+        if(count($existingOrders) == 0 && intval($payInfo['admin_message_id'] ?? 0) > 0){
+            $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` = 'approved'");
+            if($stmt){ $stmt->bind_param('s', $hashId); $stmt->execute(); $stmt->close(); }
+            $payInfo['state'] = 'sent';
+        }else{
+            return ['ok'=>true, 'message'=>'این سفارش قبلاً تأیید شده است.', 'order_ids'=>$existingOrders, 'user_id'=>intval($payInfo['user_id'] ?? 0), 'price'=>intval($payInfo['price'] ?? 0), 'already'=>true];
+        }
+    }
+    if(in_array(($payInfo['state'] ?? ''), ['declined','auto_cancelled'], true)) return $fail('این سفارش قبلاً رد یا لغو شده است.');
+
+    $lock = wizwiz_lockPayForApproval($hashId, $auto);
+    if(empty($lock['ok'])) return $lock;
+    $approvalLocked = true;
+
+    $uid = intval($payInfo['user_id']);
+    $fid = intval($payInfo['plan_id']);
+    $price = intval($payInfo['price']);
+    $now = time();
+    $orderIds = [];
+    $remarks = [];
+
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return $fail('پلن سفارش پیدا نشد.');
+    $stmt->bind_param('i', $fid);
+    $stmt->execute();
+    $file_detail = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$file_detail) return $fail('پلن سفارش پیدا نشد.');
+
+    $days = $file_detail['days'];
+    $volume = $file_detail['volume'];
+    if(intval($payInfo['day'] ?? 0) > 0) $days = $payInfo['day'];
+    if(floatval($payInfo['volume'] ?? 0) > 0) $volume = $payInfo['volume'];
+    $protocol = $file_detail['protocol'];
+    $server_id = intval($file_detail['server_id']);
+    $netType = $file_detail['type'];
+    $acount = intval($file_detail['acount']);
+    $inbound_id = intval($file_detail['inbound_id']);
+    $limitip = intval($file_detail['limitip']);
+    $rahgozar = intval($file_detail['rahgozar']);
+    $customPath = $file_detail['custom_path'];
+    $customPort = $file_detail['custom_port'];
+    $customSni = $file_detail['custom_sni'];
+    $customDomain = $file_detail['custom_domain'] ?? null;
+
+    $autoFlag = $auto ? 1 : 0;
+
+    if(($payInfo['type'] ?? '') == 'RENEW_SCONFIG'){
+        $configInfo = json_decode((string)$payInfo['description'], true);
+        if(!is_array($configInfo)) return $fail('اطلاعات تمدید نامعتبر است.');
+        $uuid = $configInfo['uuid'] ?? '';
+        $remark = $configInfo['remark'] ?? '';
+        $isMarzban = !empty($configInfo['marzban']);
+        $renewInbound = intval($payInfo['volume']);
+        if($isMarzban) $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume'=>$volume]);
+        else $response = ($renewInbound > 0) ? editClientTraffic($server_id, $renewInbound, $uuid, $volume, $days, 'renew') : editInboundTraffic($server_id, $uuid, $volume, $days, 'renew');
+        if(is_null($response)) return $fail('اتصال به سرور برقرار نشد.');
+        $stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
+        if($stmt){
+            $stmt->bind_param('iiisii', $uid, $server_id, $renewInbound, $remark, $price, $now);
+            $stmt->execute();
+            $stmt->close();
+        }
+        $emptyOrders = json_encode([], JSON_UNESCAPED_UNICODE);
+        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved', `auto_approved` = ?, `auto_approved_date` = ?, `auto_approved_orders` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ?");
+        if($stmt){ $stmt->bind_param('iiss', $autoFlag, $now, $emptyOrders, $hashId); $stmt->execute(); $stmt->close(); }
+        $approvalLocked = false;
+        sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $volume, $days], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
+        return ['ok'=>true, 'message'=>'تمدید با موفقیت انجام شد.', 'order_ids'=>[], 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid, 'renew_remark'=>$remark, 'remarks'=>[$remark]];
+    }
+
+    $accountCount = intval($payInfo['agent_count'] ?? 0);
+    if($accountCount <= 0) $accountCount = 1;
+    $eachPrice = $accountCount > 0 ? (int)floor($price / $accountCount) : $price;
+
+    if($acount == 0 && $inbound_id != 0) return $fail($mainValues['out_of_connection_capacity'] ?? 'ظرفیت پلن تمام شده است.');
+    if($inbound_id == 0){
+        $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `id`=? LIMIT 1");
+        $stmt->bind_param('i', $server_id);
+        $stmt->execute();
+        $serverInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$serverInfo || intval($serverInfo['ucount']) <= 0) return $fail($mainValues['out_of_server_capacity'] ?? 'ظرفیت سرور تمام شده است.');
+    }else{
+        $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `id`=? LIMIT 1");
+        $stmt->bind_param('i', $server_id);
+        $stmt->execute();
+        $serverInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+    $srv_remark = $serverInfo['remark'] ?? 'srv';
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $serverConfig = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$serverConfig) return $fail('تنظیمات سرور پیدا نشد.');
+    $serverType = $serverConfig['type'];
+    $portType = $serverConfig['port_type'];
+    $panelUrl = $serverConfig['panel_url'];
+
+    $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
+    $expire_date = $now + (86400 * $days);
+    $agentBought = intval($payInfo['agent_bought'] ?? 0);
+
+    for($i=1; $i <= $accountCount; $i++){
+        $uniqid = generateRandomString(42, $protocol);
+        $savedinfo = @file_get_contents('settings/temp.txt');
+        $savedinfo = explode('-', (string)$savedinfo);
+        $port = intval($savedinfo[0] ?? 10000) + 1;
+        $last_num = intval($savedinfo[1] ?? 1) + 1;
+        $payDescription = trim((string)($payInfo['description'] ?? ''));
+        $isCustomPlanPay = ($payDescription !== '' && (intval($payInfo['day'] ?? 0) > 0 || floatval($payInfo['volume'] ?? 0) > 0));
+        if($isCustomPlanPay || (($botState['remark'] ?? '') == 'manual' && $payDescription !== '')){
+            $remark = $payDescription;
+            if($accountCount > 1) $remark .= '-' . $i;
+        }elseif(($botState['remark'] ?? '') == 'digits'){
+            $remark = $srv_remark . '-' . rand(10000,99999);
+        }else{
+            $remark = $srv_remark . '-' . $uid . '-' . rand(1111,99999);
+        }
+        if($portType == 'auto') @file_put_contents('settings/temp.txt', $port . '-' . $last_num);
+        else $port = rand(1111,65000);
+
+        if($inbound_id == 0){
+            if($serverType == 'marzban'){
+                $response = addMarzbanUser($server_id, $remark, $volume, $days, $fid);
+                if(is_object($response) && empty($response->success) && ($response->msg ?? '') == 'User already exists'){
+                    $remark .= rand(1111,99999);
+                    $response = addMarzbanUser($server_id, $remark, $volume, $days, $fid);
+                }
+            }else{
+                $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
+                if(is_object($response) && empty($response->success)){
+                    if(strstr((string)($response->msg ?? ''), 'Duplicate email')) $remark .= RandomString();
+                    elseif(strstr((string)($response->msg ?? ''), 'Port already exists')) $port = rand(1111,65000);
+                    $response = addUser($server_id, $uniqid, $protocol, $port, $expire_microdate, $remark, $volume, $netType, 'none', $rahgozar, $fid);
+                }
+            }
+        }else{
+            $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
+            if(is_object($response) && empty($response->success)){
+                if(strstr((string)($response->msg ?? ''), 'Duplicate email')) $remark .= RandomString();
+                $response = addInboundAccount($server_id, $uniqid, $inbound_id, $expire_microdate, $remark, $volume, $limitip, null, $fid);
+            }
+        }
+
+        if(is_null($response)) return $fail('اتصال به سرور برقرار نیست.');
+        if($response === 'inbound not Found') return $fail('سطر inbound در سرور پیدا نشد. سفارش به حالت قابل تأیید برگشت؛ بعد از اصلاح inbound دوباره روی تأیید بزنید.');
+        if(!is_object($response) || empty($response->success)) return $fail('خطای ساخت کانفیگ: ' . (is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response));
+
+        if($serverType == 'marzban'){
+            $uniqid = $token = str_replace('/sub/', '', $response->sub_link);
+            $subLink = (($botState['subLinkState'] ?? 'off') == 'on') ? $panelUrl . $response->sub_link : '';
+            $vraylink = [$subLink];
+            $vray_link = json_encode($response->vray_links, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }else{
+            $token = RandomString(30);
+            $subLink = (($botState['subLinkState'] ?? 'off') == 'on') ? wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : '';
+            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+            $vray_link = json_encode($vraylink, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+        wizwiz_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType);
+
+        $status = 1;
+        $notif = 0;
+        $autoFlag = $auto ? 1 : 0;
+        $stmt = $connection->prepare("INSERT INTO `orders_list` (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`, `auto_approved`, `auto_pay_hash`) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        if(!$stmt) return $fail('ثبت سفارش در دیتابیس ناموفق بود.');
+        $stmt->bind_param('ssiiisssisiiiiiiis', $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $eachPrice, $status, $now, $notif, $rahgozar, $agentBought, $autoFlag, $hashId);
+        $stmt->execute();
+        $orderIds[] = intval($connection->insert_id);
+        $remarks[] = $remark;
+        $stmt->close();
+    }
+
+    if($inbound_id == 0){
+        $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` - ? WHERE `id`=?");
+        if($stmt){ $stmt->bind_param('ii', $accountCount, $server_id); $stmt->execute(); $stmt->close(); }
+    }else{
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `acount` = `acount` - ? WHERE `id`=?");
+        if($stmt){ $stmt->bind_param('ii', $accountCount, $fid); $stmt->execute(); $stmt->close(); }
+    }
+
+    $ordersJson = json_encode($orderIds, JSON_UNESCAPED_UNICODE);
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved', `auto_approved` = ?, `auto_approved_date` = ?, `auto_approved_orders` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ?");
+    if($stmt){ $stmt->bind_param('iiss', $autoFlag, $now, $ordersJson, $hashId); $stmt->execute(); $stmt->close(); }
+    $approvalLocked = false;
+
+    $stmt = $connection->prepare("SELECT `name`, `username`, `refered_by` FROM `users` WHERE `userid`=? LIMIT 1");
+    $user_detail = null;
+    if($stmt){
+        $stmt->bind_param('i', $uid);
+        $stmt->execute();
+        $user_detail = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+    if(!empty($user_detail['refered_by'])){
+        $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'INVITE_BANNER_AMOUNT'");
+        if($stmt){
+            $stmt->execute();
+            $inviteAmount = intval($stmt->get_result()->fetch_assoc()['value'] ?? 0);
+            $stmt->close();
+            $inviterId = intval($user_detail['refered_by']);
+            if($inviteAmount > 0 && $inviterId > 0){
+                $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
+                if($stmt){ $stmt->bind_param('ii', $inviteAmount, $inviterId); $stmt->execute(); $stmt->close(); }
+                sendMessage('تبریک یکی از زیر مجموعه های شما خرید انجام داد شما مبلغ ' . number_format($inviteAmount) . ' تومان جایزه دریافت کردید', null, null, $inviterId);
+            }
+        }
+    }
+
+    sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark ?? '', $volume, $days], $mainValues['sent_config_to_user'] ?? 'کانفیگ برای شما ارسال شد.'), null, 'HTML', $uid);
+    return ['ok'=>true, 'message'=>'سفارش با موفقیت تأیید شد.', 'order_ids'=>$orderIds, 'remarks'=>$remarks, 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid];
+}
+
+function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
+    global $connection, $botState;
+    $state = wizwiz_getAutoApproveState();
+    if(!$force && !$state['enabled']) return ['processed'=>0, 'messages'=>[]];
+    $minutes = intval($state['minutes']);
+    if($minutes < 1) $minutes = 1;
+    $cutoff = $force ? time() : (time() - ($minutes * 60));
+    $limit = max(1, min(10, intval($limit)));
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND `type` IN ('BUY_SUB','RENEW_SCONFIG') AND COALESCE(`sent_date`,0) > 0 AND `sent_date` <= ? ORDER BY `sent_date` ASC LIMIT $limit");
+    if(!$stmt) return ['processed'=>0, 'messages'=>['خطا در دریافت سفارش‌های در انتظار.']];
+    $stmt->bind_param('i', $cutoff);
+    $stmt->execute();
+    $rows = $stmt->get_result();
+    $stmt->close();
+
+    $processed = 0;
+    $messages = [];
+    while($pay = $rows->fetch_assoc()){
+        $hash = $pay['hash_id'];
+        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_processing' WHERE `hash_id` = ? AND `state` = 'sent'");
+        if(!$stmt) continue;
+        $stmt->bind_param('s', $hash);
+        $stmt->execute();
+        $changed = $stmt->affected_rows;
+        $stmt->close();
+        if($changed <= 0) continue;
+
+        $result = wizwiz_approveSentOrderByHash($hash, true);
+        if($result['ok']){
+            $processed++;
+            $uid = intval($result['user_id'] ?? $pay['user_id']);
+            $orders = $result['order_ids'] ?? [];
+            $ordersText = count($orders) ? implode(', ', array_map('intval', $orders)) : 'ثبت نشده';
+            $statusText = wizwiz_approvalStatusTextFromResult($result, true);
+            wizwiz_updateAdminPayMessageStatus($hash, $statusText, 'success', $uid);
+
+            $lines = ["✅ <b>سفارش به‌صورت خودکار تأیید شد</b>"];
+            if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = "🆔 کاربر: <code>{$uid}</code>";
+            if(wizwiz_reportDetailEnabled('amount', 'on')) $lines[] = "💰 مبلغ: <b>" . number_format(intval($result['price'] ?? $pay['price'])) . " تومان</b>";
+            if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+            if(wizwiz_reportDetailEnabled('order_ids', 'on')) $lines[] = "🧾 سفارش‌های ساخته‌شده: <code>" . wizwiz_h($ordersText) . "</code>";
+            if(wizwiz_reportDetailEnabled('cancel_button', 'on')) $lines[] = "در صورت نیاز می‌توانید از همین پیام سفارش را کامل لغو کنید و دلیل لغو برای کاربر ارسال می‌شود.";
+            $body = implode("\n", $lines) . wizwiz_reportTimeLine();
+            wizwiz_reportEvent('🤖 تأیید خودکار سفارش', $body, wizwiz_autoOrderActionKeyboard($hash, $uid), 'auto_approved');
+            $messages[] = "✅ $hash تأیید شد.";
+        }else{
+            $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ? AND `state` = 'auto_processing'");
+            if($stmt){ $stmt->bind_param('s', $hash); $stmt->execute(); $stmt->close(); }
+            $uid = intval($pay['user_id'] ?? 0);
+            $lines = ["⚠️ <b>تأیید خودکار انجام نشد</b>"];
+            if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = "🆔 کاربر: <code>{$uid}</code>";
+            if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+            $lines[] = "📝 خطا: <b>" . wizwiz_h($result['message']) . "</b>";
+            $lines[] = "بعد از اصلاح مشکل، همان دکمه تأیید سفارش دوباره قابل استفاده است.";
+            wizwiz_reportEvent('⚠️ خطای تأیید خودکار', implode("\n", $lines) . wizwiz_reportTimeLine(), wizwiz_reportPrivateKeyboard($uid), 'approval_failed');
+            $messages[] = "❌ $hash: " . $result['message'];
+        }
+
+    }
+    return ['processed'=>$processed, 'messages'=>$messages];
+}
+
+function wizwiz_deleteOrderCompletely($orderId, $reason = ''){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return ['ok'=>false, 'message'=>'شماره سفارش نامعتبر است.'];
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return ['ok'=>false, 'message'=>'دسترسی به سفارش ممکن نیست.'];
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$order) return ['ok'=>false, 'message'=>'سفارش پیدا نشد.'];
+    $server_id = intval($order['server_id']);
+    $inbound_id = intval($order['inbound_id']);
+    $uuid = $order['uuid'] ?? '0';
+    $remark = $order['remark'] ?? '';
+    $fileid = intval($order['fileid']);
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    $serverConfig = null;
+    if($stmt){
+        $stmt->bind_param('i', $server_id);
+        $stmt->execute();
+        $serverConfig = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+    $serverType = $serverConfig['type'] ?? '';
+    if($serverType == 'marzban') @deleteMarzban($server_id, $remark);
+    else{
+        if($inbound_id > 0) @deleteClient($server_id, $inbound_id, $uuid, 1);
+        else @deleteInbound($server_id, $uuid, 1);
+    }
+
+    if($inbound_id > 0){
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `acount` = `acount` + 1 WHERE `id` = ?");
+        if($stmt){ $stmt->bind_param('i', $fileid); $stmt->execute(); $stmt->close(); }
+    }else{
+        $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` + 1 WHERE `id` = ?");
+        if($stmt){ $stmt->bind_param('i', $server_id); $stmt->execute(); $stmt->close(); }
+    }
+
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `cancel_reason` = ? WHERE `id` = ?");
+    if($stmt){ $stmt->bind_param('si', $reason, $orderId); $stmt->execute(); $stmt->close(); }
+    $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `id` = ?");
+    if($stmt){ $stmt->bind_param('i', $orderId); $stmt->execute(); $stmt->close(); }
+    return ['ok'=>true, 'message'=>'حذف شد.', 'order'=>$order];
+}
+
+function wizwiz_cancelAutoApprovedPay($hashId, $reason){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    $reason = trim((string)$reason);
+    if($reason === '') $reason = 'لغو توسط مدیریت';
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد.'];
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $pay = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$pay) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد.'];
+    $orders = json_decode((string)($pay['auto_approved_orders'] ?? '[]'), true);
+    if(!is_array($orders)) $orders = [];
+    if(count($orders) == 0){
+        $stmt = $connection->prepare("SELECT `id` FROM `orders_list` WHERE `auto_pay_hash` = ?");
+        if($stmt){
+            $stmt->bind_param('s', $hashId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while($row = $res->fetch_assoc()) $orders[] = intval($row['id']);
+            $stmt->close();
+        }
+    }
+    if(count($orders) == 0) return ['ok'=>false, 'message'=>'سفارشی برای حذف پیدا نشد یا این مورد تمدید بوده و حذف خودکار ندارد.'];
+    $deleted = 0;
+    foreach($orders as $oid){
+        $r = wizwiz_deleteOrderCompletely($oid, $reason);
+        if($r['ok']) $deleted++;
+    }
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ? WHERE `hash_id` = ?");
+    if($stmt){ $stmt->bind_param('ss', $reason, $hashId); $stmt->execute(); $stmt->close(); }
+    $uid = intval($pay['user_id']);
+    sendMessage("❌ سفارش شما که به‌صورت خودکار تأیید شده بود توسط مدیریت لغو شد.\n\n📝 دلیل لغو:\n" . $reason, null, 'HTML', $uid);
+    return ['ok'=>true, 'message'=>"$deleted سفارش حذف شد.", 'deleted'=>$deleted, 'user_id'=>$uid];
+}
+// ===== End WizWiz extra realtime reports + auto order approval =====
+
 ?>

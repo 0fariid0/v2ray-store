@@ -37,6 +37,131 @@ if($robotState == "off" && $from_id != $admin){
 if(wizwiz_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
+if(function_exists('wizwiz_processAutoApproveOrders')){
+    wizwiz_processAutoApproveOrders(false, 2);
+}
+if(function_exists('wizwiz_processDailyChannelStats')){
+    wizwiz_processDailyChannelStats(false);
+}
+
+if($data == 'autoApproveOrdersMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'toggleAutoApproveOrders' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $state = wizwiz_getAutoApproveState();
+    setSettings('autoApproveState', $state['enabled'] ? 'off' : 'on');
+    editText($message_id, wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'setAutoApproveMinutes' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("⏱ لطفاً تعداد دقیقه برای تأیید خودکار را ارسال کنید.\nمثلاً: 5\n\nعدد مجاز: 1 تا 1440 دقیقه", $cancelKey, 'HTML');
+    setUser('setAutoApproveMinutes');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setAutoApproveMinutes' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(is_numeric($text) && intval($text) >= 1 && intval($text) <= 1440){
+        setSettings('autoApproveMinutes', intval($text));
+        setUser();
+        sendMessage("✅ زمان تأیید خودکار روی " . intval($text) . " دقیقه تنظیم شد.", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    }else{
+        sendMessage('لطفاً فقط عدد بین 1 تا 1440 ارسال کنید.');
+    }
+    exit();
+}
+if($data == 'runAutoApproveOrdersNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $result = wizwiz_processAutoApproveOrders(true, 10);
+    $msg = "🚀 بررسی دستی تأیید خودکار انجام شد.\n\nتعداد تأیید شده: " . intval($result['processed']);
+    if(!empty($result['messages'])) $msg .= "\n\n" . implode("\n", $result['messages']);
+    editText($message_id, $msg . "\n\n" . wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    exit();
+}
+
+if($data == 'reportChannelSettingsMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'toggleDailyChannelStats' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_reportToggleSetting('wizReportDailyState', 'off');
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'toggleReportLiveStats' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_reportToggleSetting('wizReportLiveStatsState', 'on');
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'setDailyChannelStatsTime' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("🕘 لطفاً ساعت ارسال آمار روزانه را با فرمت 24 ساعته بفرستید.
+مثال: <code>21:30</code>
+
+زمان بر اساس ساعت سرور ربات محاسبه می‌شود.", $cancelKey, 'HTML');
+    setUser('setDailyChannelStatsTime');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setDailyChannelStatsTime' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $timeText = trim((string)$text);
+    if(preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeText)){
+        setSettings('wizReportDailyTime', $timeText);
+        setUser();
+        sendMessage("✅ ساعت ارسال آمار روزانه روی <b>$timeText</b> تنظیم شد.", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else{
+        sendMessage("❌ فرمت ساعت درست نیست. مثال درست: <code>21:30</code>", null, 'HTML');
+    }
+    exit();
+}
+if($data == 'sendDailyChannelStatsNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sent = wizwiz_sendDailyChannelStats(true);
+    alert($sent ? 'آمار به کانال/گروه گزارش ارسال شد.' : 'ارسال آمار ناموفق بود.', !$sent);
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleReportEvent_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $key = $match[1];
+    if(array_key_exists($key, wizwiz_reportEventItems())){
+        wizwiz_reportToggleSetting(wizwiz_reportEventKey($key), 'on');
+        editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else alert('گزینه معتبر نیست.', true);
+    exit();
+}
+if(preg_match('/^toggleReportDetail_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $key = $match[1];
+    if(array_key_exists($key, wizwiz_reportDetailItems())){
+        wizwiz_reportToggleSetting(wizwiz_reportDetailKey($key), 'on');
+        editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else alert('گزینه معتبر نیست.', true);
+    exit();
+}
+if(preg_match('/^toggleReportStat_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $key = $match[1];
+    if(array_key_exists($key, wizwiz_reportStatItems())){
+        wizwiz_reportToggleSetting(wizwiz_reportStatKey($key), 'on');
+        editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else alert('گزینه معتبر نیست.', true);
+    exit();
+}
+if(preg_match('/^autoCancelOrder(.+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $hashId = trim($match[1]);
+    sendMessage("📝 لطفاً دلیل لغو کامل سفارش خودکار را ارسال کنید.\nاین دلیل برای کاربر هم ارسال می‌شود.", $cancelKey, 'HTML', $from_id);
+    setUser('autoCancelOrder|' . $hashId . '|' . $chat_id . '|' . $message_id);
+    alert('دلیل لغو را در پی وی ربات ارسال کنید.', true);
+    exit();
+}
+if(preg_match('/^autoCancelOrder\|(.+)\|(-?\d+)\|(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $hashId = $match[1];
+    $reportChatId = $match[2];
+    $reportMsgId = intval($match[3]);
+    $result = wizwiz_cancelAutoApprovedPay($hashId, $text);
+    setUser();
+    sendMessage(($result['ok'] ? '✅ ' : '❌ ') . $result['message'], $removeKeyboard, 'HTML');
+    if($result['ok']){
+        editText($reportMsgId, "❌ سفارش خودکار لغو و حذف شد.\n\n🔖 کد پرداخت: <code>" . htmlspecialchars($hashId, ENT_QUOTES, 'UTF-8') . "</code>\n📝 دلیل:\n" . htmlspecialchars($text, ENT_QUOTES, 'UTF-8'), null, 'HTML', $reportChatId);
+    }
+    exit();
+}
+
 if(preg_match('/^approveNewMember(\d+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $targetId = (int)$match[1];
     $targetUser = wizwiz_getUserByTelegramId($targetId);
@@ -1226,10 +1351,7 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
         $name = $userInfo['name'];
         $username = $userInfo['username'];
     
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $stmt->close();
+        wizwiz_markPayReceiptSent($match[1]);
         
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
@@ -1244,35 +1366,38 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
         sendMessage($mainValues['reached_main_menu'],getMainKeys());
         $msg = str_replace(['PRICE', 'USERNAME', 'NAME', 'USER-ID'],[$price, $username, $name, $from_id], $mainValues['increase_wallet_request_message']);
         
-        $keyboard = json_encode([
-            'inline_keyboard' => [
-                [
-                    ['text' => $buttonValues['approve'], 'callback_data' => "approvePayment{$match[1]}"],
-                    ['text' => $buttonValues['decline'], 'callback_data' => "decPayment{$match[1]}"]
-                ]
-            ]
-        ]);
+        $keyboard = wizwiz_adminPendingWalletKeyboard($match[1], $uid);
         sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
     }else{
         sendMessage($mainValues['please_send_only_image']);
     }
 }
 if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
+    $hashId = $match[1];
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $stmt->bind_param("s", $hashId);
     $stmt->execute();
     $payInfo = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    $price = $payInfo['price'];
-    $userId = $payInfo['user_id'];
-    
-    if($payInfo['state'] == "approved") exit();
-    
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved' WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
+    if(!$payInfo){
+        alert('پرداخت پیدا نشد.', true);
+        exit();
+    }
+    $price = intval($payInfo['price']);
+    $userId = intval($payInfo['user_id']);
+
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved' WHERE `hash_id` = ? AND `state` = 'sent'");
+    $stmt->bind_param("s", $hashId);
     $stmt->execute();
+    $changed = $stmt->affected_rows;
     $stmt->close();
-    
+    if($changed <= 0){
+        alert('این درخواست قبلاً تأیید/رد شده یا در حال پردازش است.', true);
+        if(($payInfo['state'] ?? '') == 'approved' && function_exists('wizwiz_orderStatusKeyboard')){
+            editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
+        }
+        exit();
+    }
 
     $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
     $stmt->bind_param("ii", $price, $userId);
@@ -1281,16 +1406,28 @@ if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $u
 
     sendMessage("افزایش حساب شما با موفقیت تأیید شد\n✅ مبلغ " . number_format($price). " تومان به حساب شما اضافه شد",null,null,$userId);
     
-    unset($markup[count($markup)-1]);
-    $markup[] = [['text' => '✅', 'callback_data' => "dontsendanymore"]];
-    $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
-
-    editKeys($keys);
+    if(function_exists('wizwiz_orderStatusKeyboard')){
+        editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
+    }else{
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
+    }
 }
 if(preg_match('/^decPayment(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    unset($markup[count($markup)-1]);
-    $markup[] = [['text' => '❌', 'callback_data' => "dontsendanymore"]];
-    $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
+    $stmt = $connection->prepare("SELECT `user_id`, `state` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $decUserId = 0;
+    if($stmt){
+        $stmt->bind_param("s", $match[1]);
+        $stmt->execute();
+        $decPayInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $decUserId = intval($decPayInfo['user_id'] ?? 0);
+        if(($decPayInfo['state'] ?? '') != 'sent'){
+            alert('این درخواست قبلاً تأیید/رد شده یا قابل رد کردن نیست.', true);
+            if(($decPayInfo['state'] ?? '') == 'approved' && function_exists('wizwiz_orderStatusKeyboard')) editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $decUserId, 'success'));
+            exit();
+        }
+    }
+    $keys = function_exists('wizwiz_orderStatusKeyboard') ? wizwiz_orderStatusKeyboard('❌ رد شد', $decUserId, 'danger') : json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE);
     file_put_contents("temp" . $from_id . ".txt", $keys);
     sendMessage("لطفاً دلیل عدم تأیید افزایش موجودی را وارد کنید",$cancelKey);
     setUser("decPayment" . $message_id . "_" . $match[1]);
@@ -1305,10 +1442,16 @@ if(preg_match('/^decPayment(\d+)_(.*)/',$userInfo['step'],$match) && ($from_id =
     $price = $payInfo['price'];
     $userId = $payInfo['user_id'];
     
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined' WHERE `hash_id` = ?");
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined' WHERE `hash_id` = ? AND `state` = 'sent'");
     $stmt->bind_param("s", $match[2]);
     $stmt->execute();
+    $changed = $stmt->affected_rows;
     $stmt->close();
+    if($changed <= 0){
+        setUser();
+        sendMessage('❌ این درخواست دیگر در وضعیت قابل رد کردن نیست؛ احتمالاً قبلاً تأیید/رد شده است.', $removeKeyboard);
+        exit();
+    }
     
     sendMessage("💔 افزایش موجودی شما به مبلغ "  . number_format($price) . " به دلیل زیر رد شد\n\n$text",null,null,$userId);
 
@@ -4085,6 +4228,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         $stmt->execute();
         $rowId = $stmt->insert_id;
         $stmt->close();
+        wizwiz_notifyPurchaseStarted($hash_id, 'انتخاب پلن دلخواه');
     }
     
     
@@ -4312,6 +4456,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
             $stmt->execute();
             $rowId = $stmt->insert_id;
             $stmt->close();
+            wizwiz_notifyPurchaseStarted($hash_id, isset($accountCount) ? 'انتخاب پلن خرید انبوه' : 'انتخاب پلن خرید');
         }else{
             $price = $afterDiscount;
         }
@@ -4714,10 +4859,7 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
         $payInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $stmt->close();
+        wizwiz_markPayReceiptSent($match[1]);
         
         $fid = $payInfo['plan_id'];
         $volume = $payInfo['volume'];
@@ -4748,15 +4890,17 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
     
         $msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                             ["کارت به کارت", $from_id, $username, $first_name, $fileprice, $remark,$volume, $days], $mainValues['buy_custom_account_request']);
-        $keyboard = json_encode([
-            'inline_keyboard' => [
-                [
-                    ['text' => $buttonValues['approve'], 'callback_data' => "accCustom" . $match[1]],
-                    ['text' => $buttonValues['decline'], 'callback_data' => "decline$uid"]
-                ]
-            ]
-        ]);
-        sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        $keyboard = json_encode(['inline_keyboard' => [
+            [
+                ['text' => $buttonValues['approve'], 'callback_data' => "accept" . $match[1], 'style' => 'success'],
+                ['text' => $buttonValues['decline'], 'callback_data' => "declineOrder" . $match[1], 'style' => 'danger']
+            ],
+            [wizwiz_userPrivateButton($uid)]
+        ]], JSON_UNESCAPED_UNICODE);
+        $adminMsg = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        if(function_exists('wizwiz_storeAdminPayMessage') && isset($adminMsg->ok) && $adminMsg->ok && isset($adminMsg->result->message_id)){
+            wizwiz_storeAdminPayMessage($match[1], $admin, intval($adminMsg->result->message_id));
+        }
     }else{
         sendMessage($mainValues['please_send_only_image']);
     }
@@ -4973,12 +5117,11 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     $stmt->close();
 
 
-    unset($markup[count($markup)-1]);
-    $markup[] = [['text'=>"✅",'callback_data'=>"wizwizch"]];
-    $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
-
-
-    editKeys($keys);
+    if(function_exists('wizwiz_orderStatusKeyboard')){
+        editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $uid, 'success'));
+    }else{
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE));
+    }
     
     $filename = $file_detail['title'];
     $fileprice = number_format($file_detail['price']);
@@ -5397,10 +5540,7 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
         $payInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $stmt->close();
+        wizwiz_markPayReceiptSent($match[1]);
     
         
         $fid = $payInfo['plan_id'];
@@ -5443,16 +5583,12 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
         if($payInfo['agent_count'] != 0) $msg = str_replace(['ACCOUNT-COUNT', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK"],[$payInfo['agent_count'], 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename], $mainValues['buy_new_much_account_request']);
         else $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],[$serverTitle, 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename, $volume, $days], $mainValues['buy_new_account_request']);
 
-        $keyboard = json_encode([
-            'inline_keyboard' => [
-                [
-                    ['text' => $buttonValues['approve'], 'callback_data' => "accept" . $match[1] ],
-                    ['text' => $buttonValues['decline'], 'callback_data' => "decline$uid"]
-                ]
-            ]
-        ]);
+        $keyboard = wizwiz_adminPendingOrderKeyboard($match[1], $uid);
         setUser('', 'temp');
         $res = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        if(function_exists('wizwiz_storeAdminPayMessage') && isset($res->ok) && $res->ok && isset($res->result->message_id)){
+            wizwiz_storeAdminPayMessage($match[1], $admin, intval($res->result->message_id));
+        }
     }else{
         sendMessage($mainValues['please_send_only_image']);
     }
@@ -5580,6 +5716,18 @@ if(preg_match('/^agencyApprove(\d+)_(\d+)/',$userInfo['step'],$match) && $text !
 }
 if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser();
+    $result = wizwiz_approveSentOrderByHash($match[1], false);
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit();
+    }
+    $approvedText = function_exists('wizwiz_approvalStatusTextFromResult') ? wizwiz_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
+    if(function_exists('wizwiz_orderStatusKeyboard')){
+        editKeys(wizwiz_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success'));
+    }else{
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE));
+    }
+    exit();
     
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
     $stmt->bind_param("s", $match[1]);
@@ -5890,6 +6038,67 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         }
     }
 }
+if(preg_match('/^declineOrder(.+)/',$data, $match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $hashId = trim($match[1]);
+    $stmt = $connection->prepare("SELECT `user_id`, `state` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $decPay = null;
+    if($stmt){
+        $stmt->bind_param('s', $hashId);
+        $stmt->execute();
+        $decPay = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+    if(!$decPay){
+        alert('پرداخت پیدا نشد.', true);
+        exit();
+    }
+    if(($decPay['state'] ?? '') == 'approved'){
+        alert('این سفارش قبلاً تأیید شده و قابل رد کردن نیست.', true);
+        if(function_exists('wizwiz_orderStatusKeyboard')) editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', intval($decPay['user_id'] ?? 0), 'success'));
+        exit();
+    }
+    if(in_array(($decPay['state'] ?? ''), ['processing','auto_processing'], true)){
+        alert('این سفارش در حال پردازش است و فعلاً قابل رد کردن نیست.', true);
+        exit();
+    }
+    if(in_array(($decPay['state'] ?? ''), ['declined','auto_cancelled'], true)){
+        alert('این سفارش قبلاً رد یا لغو شده است.', true);
+        if(function_exists('wizwiz_orderStatusKeyboard')) editKeys(wizwiz_orderStatusKeyboard('❌ رد شد', intval($decPay['user_id'] ?? 0), 'danger'));
+        exit();
+    }
+    setUser('declineOrder|' . $hashId . '|' . $message_id . '|' . intval($decPay['user_id'] ?? 0));
+    sendMessage('دلیلت از عدم تایید چیه؟ ( بفرس براش ) 😔 ', $cancelKey);
+    exit();
+}
+if(preg_match('/^declineOrder\|(.+)\|(\d+)\|(\d+)$/',$userInfo['step'] ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) and $text != $buttonValues['cancel']){
+    setUser();
+    $hashId = $match[1];
+    $targetMsgId = intval($match[2]);
+    $uid = intval($match[3]);
+
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined' WHERE `hash_id` = ? AND `state` = 'sent'");
+    $changed = 0;
+    if($stmt){
+        $stmt->bind_param('s', $hashId);
+        $stmt->execute();
+        $changed = $stmt->affected_rows;
+        $stmt->close();
+    }
+    if($changed <= 0){
+        sendMessage('❌ این سفارش دیگر در وضعیت قابل رد کردن نیست؛ احتمالاً قبلاً تأیید/رد شده است.', $removeKeyboard, 'HTML');
+        exit();
+    }
+
+    if(function_exists('wizwiz_orderStatusKeyboard')){
+        editKeys(wizwiz_orderStatusKeyboard('❌ رد شد', $uid, 'danger'), $targetMsgId);
+    }else{
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE), $targetMsgId);
+    }
+    sendMessage('پیامت رو براش ارسال کردم ... 🤝',$removeKeyboard);
+    sendMessage($mainValues['reached_main_menu'],getMainKeys());
+    sendMessage($text, null, null, $uid);
+    exit();
+}
 if(preg_match('/decline/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser($data . "_" . $message_id);
     sendMessage('دلیلت از عدم تایید چیه؟ ( بفرس براش ) 😔 ',$cancelKey);
@@ -5897,10 +6106,11 @@ if(preg_match('/decline/',$data) and ($from_id == $admin || $userInfo['isAdmin']
 if(preg_match('/decline(\d+)_(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) and $text != $buttonValues['cancel']){
     setUser();
     $uid = $match[1];
-    editKeys(
-        json_encode(['inline_keyboard'=>[
-	    [['text'=>"لغو شد ❌",'callback_data'=>"wizwizch"]]
-	    ]]) ,$match[2]);
+    if(function_exists('wizwiz_orderStatusKeyboard')){
+        editKeys(wizwiz_orderStatusKeyboard('❌ رد شد', intval($uid), 'danger'), $match[2]);
+    }else{
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE), $match[2]);
+    }
 
     sendMessage('پیامت رو براش ارسال کردم ... 🤝',$removeKeyboard);
     sendMessage($mainValues['reached_main_menu'],getMainKeys());
@@ -7301,8 +7511,10 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 	    VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?,1, ?, 0, ?, ?)");
 	$stmt->bind_param("isiiisssisiiii", $from_id, $token, $id, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $price, $date, $rahgozar, $agentBought);
     $stmt->execute();
+    $newOrderId = intval($connection->insert_id);
     $order = $stmt->get_result();
     $stmt->close();
+    wizwiz_notifyTestAccountTaken($newOrderId, $from_id, $file_detail['title'] ?? '', $remark, $volume, $days);
     
     if($inbound_id == 0) {
         $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` - 1 WHERE `id`=?");
@@ -9585,10 +9797,7 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
         $hash_id = $payInfo['hash_id'];
         $stmt->close();
         
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $stmt->close();
+        wizwiz_markPayReceiptSent($match[1]);
     
 
         
@@ -10461,10 +10670,7 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
         
         $planid = $increaseInfo[2];
 
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $stmt->close();
+        wizwiz_markPayReceiptSent($match[1]);
     
 
         
@@ -10819,10 +11025,7 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
         
         $planid = $increaseInfo[2];
     
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $stmt->close();
+        wizwiz_markPayReceiptSent($match[1]);
     
         $stmt = $connection->prepare("SELECT * FROM `increase_plan` WHERE `id` = ?");
         $stmt->bind_param("i", $planid);
@@ -12039,7 +12242,11 @@ function getAdminKeysPlus(){
         ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
     ];
     $keys[] = [
-        ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement', 'style'=>'primary']
+        ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement', 'style'=>'primary'],
+        ['text'=>'⏱ تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu', 'style'=>'success']
+    ];
+    $keys[] = [
+        ['text'=>'📊 تنظیمات آمار کانال', 'callback_data'=>'reportChannelSettingsMenu', 'style'=>'primary']
     ];
 
     $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'wizwizch', 'style'=>'primary']];
