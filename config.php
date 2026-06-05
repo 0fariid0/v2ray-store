@@ -4001,23 +4001,36 @@ function getBotReportKeys(){
         ]]);
 }
 function getAdminsKeys(){
-    global $connection, $mainValues, $buttonValues;
+    global $connection, $mainValues, $buttonValues, $admin;
     $keys = array();
+    $mainAdminId = intval($admin ?? 0);
+    if($mainAdminId != 0){
+        $keys[] = [['text'=>"👑 ادمین اصلی: همیشه دریافت فیش روشن است", 'callback_data'=>"wizwizch"]];
+    }
     
-    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `isAdmin` = true");
+    $stmt = $connection->prepare("SELECT `userid`, `name`, `username`, COALESCE(`receive_order_receipts`, 0) AS `receive_order_receipts` FROM `users` WHERE `isAdmin` = true ORDER BY `id` DESC");
     $stmt->execute();
     $usersList = $stmt->get_result();
     $stmt->close();
     if($usersList->num_rows > 0){
         while($user = $usersList->fetch_assoc()){
-            $keys[] = [['text'=>"❌",'callback_data'=>"delAdmin" . $user['userid']],['text'=>$user['name'], "callback_data"=>"wizwizch"]];
+            $uid = intval($user['userid']);
+            $displayName = trim((string)($user['name'] ?? ''));
+            if($displayName === '') $displayName = (string)$uid;
+            $receiptEnabled = intval($user['receive_order_receipts'] ?? 0) === 1;
+            $receiptText = $receiptEnabled ? "🧾 دریافت فیش: روشن ✅" : "🧾 دریافت فیش: خاموش ❌";
+            $keys[] = [['text'=>"👤 " . $displayName, "callback_data"=>"wizwizch"]];
+            $keys[] = [
+                ['text'=>"❌ حذف ادمین", 'callback_data'=>"delAdmin" . $uid],
+                ['text'=>$receiptText, 'callback_data'=>"toggleAdminReceipt" . $uid]
+            ];
         }
     }else{
-        $keys[] = [['text'=>"لیست ادمین ها خالی است ❕",'callback_data'=>"wizwizch"]];
+        $keys[] = [['text'=>"لیست ادمین های فرعی خالی است ❕",'callback_data'=>"wizwizch"]];
     }
     $keys[] = [['text'=>"➕ افزودن ادمین",'callback_data'=>"addNewAdmin"]];
     $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]];
-    return json_encode(['inline_keyboard'=>$keys]);
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 function getUserInfoKeys($userId){
     global $connection, $mainValues, $buttonValues; 
@@ -9334,6 +9347,19 @@ function wizwiz_ensureAutoOrderColumns(){
 }
 wizwiz_ensureAutoOrderColumns();
 
+function wizwiz_ensureAdminReceiptColumns(){
+    global $connection;
+    if(function_exists('wizwiz_schemaPatchDone') && wizwiz_schemaPatchDone('ADMIN_RECEIPT_SETTINGS_V1')) return;
+
+    $exists = @($connection->query("SHOW COLUMNS FROM `users` LIKE 'receive_order_receipts'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `users` ADD `receive_order_receipts` tinyint(1) NOT NULL DEFAULT 0 AFTER `isAdmin`"));
+    }
+
+    if(function_exists('wizwiz_markSchemaPatchDone')) wizwiz_markSchemaPatchDone('ADMIN_RECEIPT_SETTINGS_V1');
+}
+wizwiz_ensureAdminReceiptColumns();
+
 function wizwiz_h($value){
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
@@ -9869,10 +9895,10 @@ function wizwiz_getOrderAdminRecipients(){
     $mainAdmin = intval($admin ?? 0);
     if($mainAdmin != 0) $ids[] = $mainAdmin;
 
-    // اگر ادمین‌های فرعی تعریف شده باشند، پیام سفارش برای آن‌ها هم ارسال می‌شود.
-    // این کار باعث می‌شود اگر ادمین اصلی پیام را دریافت نکرد، سفارش از دست نرود.
+    // ادمین اصلی همیشه فیش سفارش را دریافت می‌کند.
+    // ادمین‌های فرعی فقط وقتی فیش می‌گیرند که از قسمت تنظیمات ادمین‌ها فعال شده باشند.
     if(isset($connection) && $connection){
-        $stmt = @$connection->prepare("SELECT `userid` FROM `users` WHERE `isAdmin` = 1");
+        $stmt = @$connection->prepare("SELECT `userid` FROM `users` WHERE `isAdmin` = 1 AND COALESCE(`receive_order_receipts`, 0) = 1");
         if($stmt){
             $stmt->execute();
             $res = $stmt->get_result();

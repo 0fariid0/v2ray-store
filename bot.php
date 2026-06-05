@@ -498,6 +498,22 @@ if($data=='botReports' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
 if($data=="adminsList" && $from_id == $admin){
     editText($message_id, "لیست ادمین ها",getAdminsKeys());
 }
+if(preg_match('/^toggleAdminReceipt(\d+)$/',$data,$match) && intval($from_id) === intval($admin)){
+    $targetAdminId = intval($match[1]);
+    if($targetAdminId === intval($admin)){
+        alert("ادمین اصلی همیشه فیش سفارش را دریافت می‌کند و قابل خاموش شدن نیست.", true);
+        exit();
+    }
+
+    $stmt = $connection->prepare("UPDATE `users` SET `receive_order_receipts` = IF(COALESCE(`receive_order_receipts`, 0) = 1, 0, 1) WHERE `userid` = ? AND `isAdmin` = 1");
+    $stmt->bind_param("i", $targetAdminId);
+    $stmt->execute();
+    $stmt->close();
+
+    editText($message_id, "لیست ادمین ها", getAdminsKeys());
+    alert("تنظیم دریافت فیش این ادمین بروزرسانی شد.");
+    exit();
+}
 if(preg_match('/^delAdmin(\d+)/',$data,$match) && $from_id === $admin){
     $stmt = $connection->prepare("UPDATE `users` SET `isAdmin` = false WHERE `userid` = ?");
     $stmt->bind_param("i", $match[1]);
@@ -514,7 +530,7 @@ if($data=="addNewAdmin" && $from_id === $admin){
 }
 if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $buttonValues['cancel']){
     if(is_numeric($text)){
-        $stmt = $connection->prepare("UPDATE `users` SET `isAdmin` = true WHERE `userid` = ?");
+        $stmt = $connection->prepare("UPDATE `users` SET `isAdmin` = true, `receive_order_receipts` = 0 WHERE `userid` = ?");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
