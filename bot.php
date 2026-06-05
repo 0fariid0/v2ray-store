@@ -8920,7 +8920,13 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     $stmt->close();
 
     if($number_of_result <= 0){
-        alert($mainValues['you_dont_have_config']);
+        $keyboard = [
+            [['text'=>'➕ ثبت کانفیگ با لینک', 'callback_data'=>'addMyConfigByLink']],
+            [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']]
+        ];
+        editText($message_id, "📦 هنوز کانفیگی داخل حساب شما ثبت نشده است.
+
+اگر از قبل لینک کانفیگ یا لینک ساب دارید، می‌توانید آن را داخل ربات ثبت کنید تا در همین بخش نمایش داده شود.", json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE));
         exit;
     }
 
@@ -8962,12 +8968,60 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     if(!empty($buttons)) $keyboard[] = $buttons;
 
     if($isAgentConfigList) $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchAgentConfig"]];
-    else $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchMyConfig"]];
+    else {
+        $keyboard[] = [
+            ['text'=>'➕ ثبت کانفیگ با لینک','callback_data'=>"addMyConfigByLink"],
+            ['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchMyConfig"]
+        ];
+    }
     $keyboard[] = [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]];
 
     editText($message_id, $mainValues['select_one_to_show_detail'], json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE));
     exit;
 }
+
+if($data == "addMyConfigByLink"){
+    delMessage();
+    setUser('addMyConfigByLink');
+    sendMessage("🔗 لینک کانفیگ یا لینک ساب خودتان را ارسال کنید.
+
+ربات داخل سرورهای ثبت‌شده می‌گردد، اگر این کانفیگ را در پنل پیدا کند با همان نامی که در پنل ثبت شده به حساب شما اضافه می‌کند.
+
+اگر برای سرور چند دامنه داخل ربات ثبت شده باشد، همه لینک‌ها مثل خرید عادی برای شما ساخته و نمایش داده می‌شود.", $cancelKey, 'HTML');
+    exit();
+}
+
+if($userInfo['step'] == 'addMyConfigByLink' && $text != $buttonValues['cancel']){
+    sendMessage($mainValues['please_wait_message'], $removeKeyboard);
+    [$ok, $result] = farid_registerManualConfigForUser($from_id, $text);
+    setUser();
+    if(!$ok){
+        sendMessage("❌ ثبت کانفیگ انجام نشد:
+
+" . htmlspecialchars((string)$result, ENT_QUOTES, 'UTF-8'), json_encode(['inline_keyboard'=>[
+            [['text'=>'↩️ تلاش دوباره','callback_data'=>'addMyConfigByLink']],
+            [['text'=>$buttonValues['back_button'],'callback_data'=>'mySubscriptions']]
+        ]], JSON_UNESCAPED_UNICODE), 'HTML');
+        exit();
+    }
+
+    $already = !empty($result['already_exists']);
+    $msg = ($already ? "♻️ این کانفیگ قبلاً ثبت شده بود و لینک‌های آن بروزرسانی شد." : "✅ کانفیگ با موفقیت به حساب شما اضافه شد.") . "
+
+" .
+           "🔮 نام سرویس: <b>" . htmlspecialchars($result['remark']) . "</b>
+" .
+           "🧾 شماره سفارش: <code>" . intval($result['order_id']) . "</code>
+" .
+           "🔗 تعداد لینک ساخته‌شده: <code>" . intval($result['links_count'] ?? 0) . "</code>";
+    sendMessage($msg, json_encode(['inline_keyboard'=>[
+        [['text'=>'📦 مشاهده کانفیگ‌های من','callback_data'=>'mySubscriptions']],
+        [['text'=>'➕ ثبت لینک دیگر','callback_data'=>'addMyConfigByLink']],
+        [['text'=>$buttonValues['back_to_main'],'callback_data'=>'mainMenu']]
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+
 if($data=="searchAgentConfig" || $data == "searchMyConfig" || $data=="searchUsersConfig"){
     delMessage();
     sendMessage("🔎 نام سرویس، لینک کانفیگ یا لینک ساب را ارسال کنید:",$cancelKey);
@@ -12839,39 +12893,69 @@ function farid_registerManualConfigForUser($targetUserId, $input){
     $token = trim((string)($found['sub_id'] ?? ''));
     if($token === '') $token = RandomString(30);
 
+    // همیشه لینک‌ها از روی اطلاعات واقعی پنل و دامنه‌های ثبت‌شده داخل ربات بازسازی می‌شوند.
+    // این باعث می‌شود اگر کاربر فقط یک لینک بدهد ولی در ربات چند دامنه برای سرور ثبت شده باشد، همه لینک‌ها مثل خرید عادی ساخته شوند.
     $links = [];
-    if(empty($found['is_sub']) && !empty($found['provided_link'])){
-        $links[] = $found['provided_link'];
-    }else{
-        $generated = getConnectionLink($serverId, $uuid, $protocol, $remark, intval($found['port']), (string)$found['net_type'], $inboundId, 0);
-        if(is_array($generated)) $links = $generated;
-        elseif(is_string($generated) && $generated !== '') $links = [$generated];
+    $generated = getConnectionLink($serverId, $uuid, $protocol, $remark, intval($found['port']), (string)$found['net_type'], $inboundId, 0);
+    if(is_array($generated)) $links = $generated;
+    elseif(is_string($generated) && $generated !== '') $links = [$generated];
+
+    // فقط برای حالت خطا، لینک ورودی را به‌عنوان fallback نگه می‌داریم تا ثبت کاملاً بی‌دلیل شکست نخورد.
+    if(empty($links) && !empty($found['provided_link']) && empty($found['is_sub'])){
+        $links[] = trim((string)$found['provided_link']);
     }
+    $links = wizwiz_normalizeConfigLinksArray($links);
     if(empty($links)) return [false, 'کانفیگ پیدا شد، ولی ساخت لینک خروجی ممکن نشد.'];
 
     $linkJson = json_encode(array_values($links), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $date = (string)time();
     $fileId = 0;
+    $alreadyExists = false;
 
-    $stmt = $connection->prepare("INSERT INTO `orders_list`
-        (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`)
-        VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0, 0)");
-    $uidStr = (string)$targetUserId;
-    $stmt->bind_param('ssiiisssiss', $uidStr, $token, $fileId, $serverId, $inboundId, $remark, $uuid, $protocol, $expire, $linkJson, $date);
-    $stmt->execute();
-    $orderId = intval($connection->insert_id);
-    $stmt->close();
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `server_id`=? AND `inbound_id`=? AND `uuid`=? AND `status`=1 ORDER BY `id` DESC LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('iiis', $targetUserId, $serverId, $inboundId, $uuid);
+        $stmt->execute();
+        $existingOrder = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }else $existingOrder = null;
+
+    if($existingOrder){
+        $alreadyExists = true;
+        $orderId = intval($existingOrder['id']);
+        if(!empty($existingOrder['token'])) $token = (string)$existingOrder['token'];
+        $stmt = $connection->prepare("UPDATE `orders_list` SET `token`=?, `server_id`=?, `inbound_id`=?, `remark`=?, `protocol`=?, `expire_date`=?, `link`=?, `notif`=0 WHERE `id`=?");
+        if($stmt){
+            $stmt->bind_param('siissisi', $token, $serverId, $inboundId, $remark, $protocol, $expire, $linkJson, $orderId);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }else{
+        $stmt = $connection->prepare("INSERT INTO `orders_list`
+            (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`)
+            VALUES (?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, 0, 0, 0)");
+        $uidStr = (string)$targetUserId;
+        $stmt->bind_param('ssiiisssiss', $uidStr, $token, $fileId, $serverId, $inboundId, $remark, $uuid, $protocol, $expire, $linkJson, $date);
+        $stmt->execute();
+        $orderId = intval($connection->insert_id);
+        $stmt->close();
+    }
 
     $subLink = '';
     if(($botState['subLinkState'] ?? 'off') == 'on'){
         $subLink = wizwiz_makeCustomerSubLink($serverId, $token, $uuid, $inboundId, $remark);
     }
 
-    $msg = "✅ کانفیگ به حساب شما اضافه شد.\n\n" .
-           "🔮 نام سرویس: <b>" . htmlspecialchars($remark) . "</b>\n" .
-           (($botState['configLinkState'] ?? '') != 'off' ? ("\n💝 config:\n<code>" . implode("</code>\n<code>", $links) . "</code>\n") : "") .
-           ($subLink !== '' ? "\n🌐 subscription:\n<code>$subLink</code>" : "");
-    sendMessage($msg, null, 'HTML', $targetUserId);
+    if(($botState['configLinkState'] ?? '') != 'off' && count($links) > 1){
+        $msg = wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink, '✅ کانفیگ به حساب شما اضافه شد');
+    }else{
+        $safeLinks = array_map(function($l){ return htmlspecialchars($l, ENT_QUOTES, 'UTF-8'); }, $links);
+        $msg = "✅ کانفیگ به حساب شما اضافه شد.\n\n" .
+               "🔮 نام سرویس: <b>" . htmlspecialchars($remark, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+               ((($botState['configLinkState'] ?? '') != 'off') ? ("\n💝 config:\n<code>" . implode("</code>\n<code>", $safeLinks) . "</code>\n") : "") .
+               ($subLink !== '' ? "\n🌐 subscription:\n<code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>" : "");
+    }
+    if($msg !== '') sendMessage($msg, null, 'HTML', $targetUserId);
 
     return [true, [
         'order_id' => $orderId,
@@ -12879,6 +12963,8 @@ function farid_registerManualConfigForUser($targetUserId, $input){
         'server_id' => $serverId,
         'inbound_id' => $inboundId,
         'sub_link' => $subLink,
+        'links_count' => count($links),
+        'already_exists' => $alreadyExists,
     ]];
 }
 
