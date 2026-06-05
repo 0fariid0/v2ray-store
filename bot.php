@@ -43,7 +43,6 @@ if(function_exists('wizwiz_processAutoApproveOrders')){
 if(function_exists('wizwiz_processDailyChannelStats')){
     wizwiz_processDailyChannelStats(false);
 }
-
 if($data == 'autoApproveOrdersMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
     exit();
@@ -1377,7 +1376,7 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
         $name = $userInfo['name'];
         $username = $userInfo['username'];
     
-        wizwiz_markPayReceiptSent($match[1]);
+        wizwiz_markPayReceiptSent($match[1], $fileid);
         
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
@@ -1393,7 +1392,12 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
         $msg = str_replace(['PRICE', 'USERNAME', 'NAME', 'USER-ID'],[$price, $username, $name, $from_id], $mainValues['increase_wallet_request_message']);
         
         $keyboard = wizwiz_adminPendingWalletKeyboard($match[1], $uid);
-        sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
+            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+            if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
+        }else{
+            sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        }
     }else{
         sendMessage($mainValues['please_send_only_image']);
     }
@@ -4885,7 +4889,7 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
         $payInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        wizwiz_markPayReceiptSent($match[1]);
+        wizwiz_markPayReceiptSent($match[1], $fileid);
         
         $fid = $payInfo['plan_id'];
         $volume = $payInfo['volume'];
@@ -4923,9 +4927,14 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
             ],
             [wizwiz_userPrivateButton($uid)]
         ]], JSON_UNESCAPED_UNICODE);
-        $adminMsg = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
-        if(function_exists('wizwiz_storeAdminPayMessage') && isset($adminMsg->ok) && $adminMsg->ok && isset($adminMsg->result->message_id)){
-            wizwiz_storeAdminPayMessage($match[1], $admin, intval($adminMsg->result->message_id));
+        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
+            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+            if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
+        }else{
+            $adminMsg = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+            if(function_exists('wizwiz_storeAdminPayMessage') && isset($adminMsg->ok) && $adminMsg->ok && isset($adminMsg->result->message_id)){
+                wizwiz_storeAdminPayMessage($match[1], $admin, intval($adminMsg->result->message_id));
+            }
         }
     }else{
         sendMessage($mainValues['please_send_only_image']);
@@ -5566,7 +5575,7 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
         $payInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        wizwiz_markPayReceiptSent($match[1]);
+        wizwiz_markPayReceiptSent($match[1], $fileid);
     
         
         $fid = $payInfo['plan_id'];
@@ -5611,9 +5620,14 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
 
         $keyboard = wizwiz_adminPendingOrderKeyboard($match[1], $uid);
         setUser('', 'temp');
-        $res = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
-        if(function_exists('wizwiz_storeAdminPayMessage') && isset($res->ok) && $res->ok && isset($res->result->message_id)){
-            wizwiz_storeAdminPayMessage($match[1], $admin, intval($res->result->message_id));
+        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
+            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+            if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
+        }else{
+            $res = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+            if(function_exists('wizwiz_storeAdminPayMessage') && isset($res->ok) && $res->ok && isset($res->result->message_id)){
+                wizwiz_storeAdminPayMessage($match[1], $admin, intval($res->result->message_id));
+            }
         }
     }else{
         sendMessage($mainValues['please_send_only_image']);
@@ -9878,7 +9892,7 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
         $hash_id = $payInfo['hash_id'];
         $stmt->close();
         
-        wizwiz_markPayReceiptSent($match[1]);
+        wizwiz_markPayReceiptSent($match[1], $fileid);
     
 
         
@@ -9919,7 +9933,12 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
             ]
         ]);
     
-        sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
+            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+            if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
+        }else{
+            sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        }
         setUser();
     }else{
         sendMessage($mainValues['please_send_only_image']);
@@ -10751,7 +10770,7 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
         
         $planid = $increaseInfo[2];
 
-        wizwiz_markPayReceiptSent($match[1]);
+        wizwiz_markPayReceiptSent($match[1], $fileid);
     
 
         
@@ -10779,7 +10798,12 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
         ]);
 
 
-        sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
+            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+            if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
+        }else{
+            sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        }
         setUser();
     }else{ 
         sendMessage($mainValues['please_send_only_image']);
@@ -11106,7 +11130,7 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
         
         $planid = $increaseInfo[2];
     
-        wizwiz_markPayReceiptSent($match[1]);
+        wizwiz_markPayReceiptSent($match[1], $fileid);
     
         $stmt = $connection->prepare("SELECT * FROM `increase_plan` WHERE `id` = ?");
         $stmt->bind_param("i", $planid);
@@ -11132,7 +11156,12 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
             ]
         ]);
 
-        sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
+            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+            if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
+        }else{
+            sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
+        }
         setUser();
     }else{
         sendMessage($mainValues['please_send_only_image']);
