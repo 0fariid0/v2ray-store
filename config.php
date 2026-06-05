@@ -2359,6 +2359,49 @@ function wizwiz_stripButtonStylesFromMarkup($markup){
     return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
+function wizwiz_replyMarkupHasCopyTextButton($markup){
+    if($markup === null || $markup === '') return false;
+    $decoded = is_string($markup) ? json_decode($markup, true) : $markup;
+    if(!is_array($decoded)) return false;
+    $stack = [$decoded];
+    while($stack){
+        $item = array_pop($stack);
+        if(is_array($item)){
+            if(array_key_exists('copy_text', $item)) return true;
+            foreach($item as $v){
+                if(is_array($v)) $stack[] = $v;
+            }
+        }
+    }
+    return false;
+}
+
+function wizwiz_fallbackCopyTextButtonsRecursive($value){
+    if(is_array($value)){
+        if(array_key_exists('copy_text', $value)){
+            unset($value['copy_text']);
+            $hasAction = false;
+            foreach(['url','callback_data','web_app','login_url','switch_inline_query','switch_inline_query_current_chat','switch_inline_query_chosen_chat','callback_game','pay'] as $field){
+                if(array_key_exists($field, $value)){ $hasAction = true; break; }
+            }
+            if(!$hasAction) $value['callback_data'] = 'wizwizch';
+        }
+        foreach($value as $k => $v){
+            if(is_array($v)) $value[$k] = wizwiz_fallbackCopyTextButtonsRecursive($v);
+        }
+    }
+    return $value;
+}
+
+function wizwiz_fallbackCopyTextButtonsFromMarkup($markup){
+    if($markup === null || $markup === '') return $markup;
+    $isString = is_string($markup);
+    $decoded = $isString ? json_decode($markup, true) : $markup;
+    if(!is_array($decoded)) return $markup;
+    $decoded = wizwiz_fallbackCopyTextButtonsRecursive($decoded);
+    return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function bot($method, $datas = []){
     global $botToken;
     $url = "https://api.telegram.org/bot" . $botToken . "/" . $method;
@@ -2385,17 +2428,36 @@ function bot($method, $datas = []){
     }
 
     $decoded = json_decode($res);
+    $currentDatas = $datas;
 
     // اگر سرور/کلاینت Bot API با style مشکل داشت، یک بار بدون style دوباره تلاش می‌کنیم
     // تا دکمه‌ها کلاً از کار نیفتند.
-    if(isset($datas['reply_markup']) && wizwiz_replyMarkupHasButtonStyle($datas['reply_markup']) && is_object($decoded) && isset($decoded->ok) && !$decoded->ok){
+    if(isset($currentDatas['reply_markup']) && wizwiz_replyMarkupHasButtonStyle($currentDatas['reply_markup']) && is_object($decoded) && isset($decoded->ok) && !$decoded->ok){
         $desc = strtolower((string)($decoded->description ?? ''));
         if(strpos($desc, 'style') !== false || strpos($desc, 'button') !== false || strpos($desc, 'reply markup') !== false){
-            $datas['reply_markup'] = wizwiz_stripButtonStylesFromMarkup($datas['reply_markup']);
-            [$res2, $err2] = $sendRequest($datas);
+            $retryDatas = $currentDatas;
+            $retryDatas['reply_markup'] = wizwiz_stripButtonStylesFromMarkup($retryDatas['reply_markup']);
+            [$res2, $err2] = $sendRequest($retryDatas);
             if(!$err2){
                 $decoded2 = json_decode($res2);
-                if(is_object($decoded2)) return $decoded2;
+                if(is_object($decoded2) && (!isset($decoded2->ok) || $decoded2->ok)) return $decoded2;
+                if(is_object($decoded2)) $decoded = $decoded2;
+                $currentDatas = $retryDatas;
+            }
+        }
+    }
+
+    // اگر Bot API نصب‌شده قدیمی باشد و copy_text را نشناسد، دکمه به حالت عادی برمی‌گردد
+    // تا آپدیت دکمه‌های سفارش از کار نیفتد.
+    if(isset($currentDatas['reply_markup']) && wizwiz_replyMarkupHasCopyTextButton($currentDatas['reply_markup']) && is_object($decoded) && isset($decoded->ok) && !$decoded->ok){
+        $desc = strtolower((string)($decoded->description ?? ''));
+        if(strpos($desc, 'copy_text') !== false || strpos($desc, 'button') !== false || strpos($desc, 'reply markup') !== false){
+            $retryDatas = $currentDatas;
+            $retryDatas['reply_markup'] = wizwiz_fallbackCopyTextButtonsFromMarkup($retryDatas['reply_markup']);
+            [$res3, $err3] = $sendRequest($retryDatas);
+            if(!$err3){
+                $decoded3 = json_decode($res3);
+                if(is_object($decoded3)) return $decoded3;
             }
         }
     }
@@ -9477,11 +9539,29 @@ function wizwiz_approvalStatusTextFromResult($result, $auto = false){
     return $prefix;
 }
 
-function wizwiz_updateAdminPayMessageStatus($hashId, $statusText, $style = 'success', $userId = 0){
+function wizwiz_approvalCopyTextFromResult($result){
+    $items = [];
+    if(!empty($result['renew_remark'])) $items[] = trim((string)$result['renew_remark']);
+    $remarks = $result['remarks'] ?? [];
+    if(is_array($remarks)){
+        foreach($remarks as $remark){
+            $remark = trim((string)$remark);
+            if($remark !== '') $items[] = $remark;
+        }
+    }
+    $items = array_values(array_unique($items));
+    if(count($items) == 0) return '';
+    $text = implode("\n", $items);
+    if(function_exists('mb_strlen') && mb_strlen($text, 'UTF-8') > 256) return mb_substr($text, 0, 256, 'UTF-8');
+    if(!function_exists('mb_strlen') && strlen($text) > 256) return substr($text, 0, 256);
+    return $text;
+}
+
+function wizwiz_updateAdminPayMessageStatus($hashId, $statusText, $style = 'success', $userId = 0, $copyText = ''){
     [$chat, $msg, $storedUser] = wizwiz_getAdminPayMessage($hashId);
     if($userId <= 0) $userId = $storedUser;
     if($chat == 0 || $msg <= 0) return false;
-    editKeys(wizwiz_orderStatusKeyboard($statusText, $userId, $style), $msg, $chat);
+    editKeys(wizwiz_orderStatusKeyboard($statusText, $userId, $style, $copyText), $msg, $chat);
     return true;
 }
 
@@ -9524,8 +9604,14 @@ function wizwiz_autoOrderActionKeyboard($hashId, $userId){
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
-function wizwiz_orderStatusKeyboard($statusText, $userId = 0, $style = 'success'){
-    $rows = [[['text'=>$statusText, 'callback_data'=>'wizwizch', 'style'=>$style]]];
+function wizwiz_orderStatusKeyboard($statusText, $userId = 0, $style = 'success', $copyText = ''){
+    $copyText = trim((string)$copyText);
+    if($copyText !== ''){
+        $mainButton = ['text'=>$statusText, 'copy_text'=>['text'=>$copyText]];
+    }else{
+        $mainButton = ['text'=>$statusText, 'callback_data'=>'wizwizch', 'style'=>$style];
+    }
+    $rows = [[$mainButton]];
     $userId = intval($userId);
     if($userId > 0) $rows[] = [wizwiz_userPrivateButton($userId)];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
@@ -9899,7 +9985,7 @@ function wizwiz_approveSentOrderByHash($hashId, $auto = false){
         }
     }
 
-    sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark ?? '', $volume, $days], $mainValues['sent_config_to_user'] ?? 'کانفیگ برای شما ارسال شد.'), null, 'HTML', $uid);
+    // پیام خلاصه «کانفیگ برای کاربر ارسال شد» حذف شد؛ کانفیگ اصلی قبلاً برای کاربر ارسال می‌شود.
     return ['ok'=>true, 'message'=>'سفارش با موفقیت تأیید شد.', 'order_ids'=>$orderIds, 'remarks'=>$remarks, 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid];
 }
 
@@ -9937,7 +10023,8 @@ function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
             $orders = $result['order_ids'] ?? [];
             $ordersText = count($orders) ? implode(', ', array_map('intval', $orders)) : 'ثبت نشده';
             $statusText = wizwiz_approvalStatusTextFromResult($result, true);
-            wizwiz_updateAdminPayMessageStatus($hash, $statusText, 'success', $uid);
+            $copyText = function_exists('wizwiz_approvalCopyTextFromResult') ? wizwiz_approvalCopyTextFromResult($result) : '';
+            wizwiz_updateAdminPayMessageStatus($hash, $statusText, 'success', $uid, $copyText);
 
             $lines = ["✅ <b>سفارش به‌صورت خودکار تأیید شد</b>"];
             if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = "🆔 کاربر: <code>{$uid}</code>";

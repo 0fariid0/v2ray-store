@@ -5722,8 +5722,9 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
         exit();
     }
     $approvedText = function_exists('wizwiz_approvalStatusTextFromResult') ? wizwiz_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
+    $copyText = function_exists('wizwiz_approvalCopyTextFromResult') ? wizwiz_approvalCopyTextFromResult($result) : '';
     if(function_exists('wizwiz_orderStatusKeyboard')){
-        editKeys(wizwiz_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success'));
+        editKeys(wizwiz_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
     }else{
         editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE));
     }
@@ -5976,7 +5977,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
             $order = $stmt->get_result();
             $stmt->close();
         }
-        sendMessage(str_replace(["REMARK", "VOLUME", "DAYS"],[$remark, $volume, $days], $mainValues['sent_config_to_user']), getMainKeys());
+        // پیام خلاصه «کانفیگ برای کاربر ارسال شد» حذف شد؛ کانفیگ اصلی قبلاً برای کاربر ارسال می‌شود.
         if($inbound_id == 0) {
             $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` - ? WHERE `id`=?");
             $stmt->bind_param("ii", $accountCount, $server_id);
