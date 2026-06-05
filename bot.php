@@ -630,23 +630,49 @@ if(in_array($userInfo['step'] ?? '', ['addJoinExemptUser','removeJoinExemptUser'
 }
 
 if($data == "userButtonSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $msg = "🎛 <b>تنظیمات نمایش دکمه‌های کاربر</b>
+    $msg = "🎛 <b>تنظیمات دکمه‌های کاربر</b>
 
-از این بخش می‌توانید دکمه‌های صفحه اصلی کاربر را مخفی یا فعال کنید.
+از این بخش می‌توانید دکمه‌های صفحه اصلی کاربر را مخفی/فعال کنید یا جای آن‌ها را تغییر دهید.
+در منوی کاربر، دکمه‌های فعال با ترتیب و ردیف‌بندی انتخابی شما نمایش داده می‌شوند؛ هر ردیف حداکثر ۲ دکمه دارد، ولی می‌توانید یک ردیف را تک‌دکمه‌ای کنید.
 دکمه مدیریت ربات برای ادمین‌ها همیشه نمایش داده می‌شود.";
     editText($message_id, $msg, wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    exit();
+}
+if($data == "userButtonLayoutSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^moveUserButtonOrder_([A-Za-z0-9_]+)_(up|down)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $ok = wizwiz_moveUserButtonOrder($match[1], $match[2]);
+    if(!$ok) alert('امکان جابه‌جایی بیشتر وجود ندارد.');
+    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleUserButtonRowBreak_([A-Za-z0-9_]+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_toggleUserButtonRowBreak($match[1]);
+    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    exit();
+}
+if($data == "resetUserButtonRows" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_resetUserButtonRowBreaks();
+    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    exit();
+}
+if($data == "resetUserButtonOrder" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_resetUserButtonOrder();
+    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^toggleUserButtonVisibility_([A-Za-z0-9_]+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $match[1];
     $current = wizwiz_userButtonVisible($key);
     wizwiz_setUserButtonVisible($key, !$current);
-    editText($message_id, "🎛 تنظیمات نمایش دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    editText($message_id, "🎛 تنظیمات دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^setAllUserButtons_(on|off)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     wizwiz_setAllUserButtonsVisible($match[1] == 'on');
-    editText($message_id, "🎛 تنظیمات نمایش دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    editText($message_id, "🎛 تنظیمات دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
     exit();
 }
 

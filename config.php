@@ -1313,6 +1313,7 @@ function wizwiz_defaultUserButtonVisibilityKeys(){
         'application_links' => true,
         'my_tickets' => true,
         'search_config' => true,
+        'refresh_panel' => true,
     ];
 }
 
@@ -1353,6 +1354,114 @@ function wizwiz_setAllUserButtonsVisible($visible){
     $state['userButtonVisibility'] = $vis;
     wizwiz_saveBotStatesArray($state);
     $botState = $state;
+}
+
+function wizwiz_defaultUserButtonOrder(){
+    return [
+        'request_agency',
+        'my_subscriptions',
+        'buy_subscriptions',
+        'test_account',
+        'wallet_charge',
+        'invite_friends',
+        'my_info',
+        'shared_existence',
+        'individual_existence',
+        'application_links',
+        'my_tickets',
+        'search_config',
+        'refresh_panel',
+    ];
+}
+
+function wizwiz_getUserButtonOrder($state = null){
+    if($state === null) $state = wizwiz_getBotStatesArray();
+    $defaults = wizwiz_defaultUserButtonOrder();
+    $allowed = array_values(array_keys(wizwiz_defaultUserButtonVisibilityKeys()));
+    $saved = is_array($state) && isset($state['userButtonOrder']) && is_array($state['userButtonOrder']) ? $state['userButtonOrder'] : [];
+    $order = [];
+    foreach($saved as $key){
+        $key = (string)$key;
+        if(in_array($key, $allowed, true) && !in_array($key, $order, true)) $order[] = $key;
+    }
+    foreach($defaults as $key){
+        if(in_array($key, $allowed, true) && !in_array($key, $order, true)) $order[] = $key;
+    }
+    foreach($allowed as $key){
+        if(!in_array($key, $order, true)) $order[] = $key;
+    }
+    return $order;
+}
+
+function wizwiz_saveUserButtonOrder($order){
+    global $botState;
+    $state = wizwiz_getBotStatesArray();
+    $state['userButtonOrder'] = wizwiz_getUserButtonOrder(['userButtonOrder' => $order]);
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+    return true;
+}
+
+function wizwiz_moveUserButtonOrder($key, $direction){
+    $key = (string)$key;
+    $direction = (string)$direction;
+    $order = wizwiz_getUserButtonOrder();
+    $index = array_search($key, $order, true);
+    if($index === false) return false;
+    $target = ($direction === 'up') ? $index - 1 : (($direction === 'down') ? $index + 1 : $index);
+    if($target < 0 || $target >= count($order) || $target === $index) return false;
+    $tmp = $order[$target];
+    $order[$target] = $order[$index];
+    $order[$index] = $tmp;
+    return wizwiz_saveUserButtonOrder($order);
+}
+
+function wizwiz_resetUserButtonOrder(){
+    return wizwiz_saveUserButtonOrder(wizwiz_defaultUserButtonOrder());
+}
+
+function wizwiz_getUserButtonRowBreaks($state = null){
+    if($state === null) $state = wizwiz_getBotStatesArray();
+    $allowed = array_values(array_keys(wizwiz_defaultUserButtonVisibilityKeys()));
+    $saved = is_array($state) && isset($state['userButtonRowBreaks']) && is_array($state['userButtonRowBreaks']) ? $state['userButtonRowBreaks'] : [];
+    $breaks = [];
+    foreach($allowed as $key){
+        $breaks[$key] = !empty($saved[$key]);
+    }
+    return $breaks;
+}
+
+function wizwiz_userButtonBreakAfter($key, $state = null){
+    $breaks = wizwiz_getUserButtonRowBreaks($state);
+    return !empty($breaks[$key]);
+}
+
+function wizwiz_setUserButtonRowBreak($key, $enabled){
+    global $botState;
+    $key = (string)$key;
+    $defaults = wizwiz_defaultUserButtonVisibilityKeys();
+    if(!array_key_exists($key, $defaults)) return false;
+    $state = wizwiz_getBotStatesArray();
+    $breaks = wizwiz_getUserButtonRowBreaks($state);
+    $breaks[$key] = $enabled ? true : false;
+    $state['userButtonRowBreaks'] = $breaks;
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+    return true;
+}
+
+function wizwiz_toggleUserButtonRowBreak($key){
+    return wizwiz_setUserButtonRowBreak($key, !wizwiz_userButtonBreakAfter($key));
+}
+
+function wizwiz_resetUserButtonRowBreaks(){
+    global $botState;
+    $state = wizwiz_getBotStatesArray();
+    $breaks = wizwiz_getUserButtonRowBreaks([]);
+    $state['userButtonRowBreaks'] = $breaks;
+    wizwiz_saveBotStatesArray($state);
+    $botState = $state;
+    return true;
 }
 
 
@@ -1533,28 +1642,33 @@ function wizwiz_stopPurchaseIfBlocked($callbackData = '', $userStep = ''){
 function wizwiz_userButtonTitles(){
     global $buttonValues;
     return [
-        'buy_subscriptions' => $buttonValues['buy_subscriptions'] ?? 'خرید کانفیگ جدید',
+        'request_agency' => $buttonValues['request_agency'] ?? 'درخواست نمایندگی',
         'my_subscriptions' => $buttonValues['my_subscriptions'] ?? 'کانفیگ‌های من',
+        'buy_subscriptions' => $buttonValues['buy_subscriptions'] ?? 'خرید کانفیگ جدید',
         'test_account' => 'اکانت تست',
         'wallet_charge' => $buttonValues['sharj'] ?? 'شارژ کیف پول',
         'invite_friends' => $buttonValues['invite_friends'] ?? 'دعوت دوستان',
         'my_info' => $buttonValues['my_info'] ?? 'حساب کاربری',
+        'shared_existence' => $buttonValues['shared_existence'] ?? 'موجودی اشتراکی',
+        'individual_existence' => $buttonValues['individual_existence'] ?? 'موجودی اختصاصی',
         'application_links' => $buttonValues['application_links'] ?? 'راهنمای اتصال',
         'my_tickets' => $buttonValues['my_tickets'] ?? 'تیکت‌های من',
         'search_config' => $buttonValues['search_config'] ?? 'مشخصات کانفیگ',
-        'shared_existence' => $buttonValues['shared_existence'] ?? 'موجودی اشتراکی',
-        'individual_existence' => $buttonValues['individual_existence'] ?? 'موجودی اختصاصی',
-        'request_agency' => $buttonValues['request_agency'] ?? 'درخواست نمایندگی',
+        'refresh_panel' => '🔄 بروزرسانی پنل',
     ];
 }
 
 function wizwiz_getUserButtonSettingsKeys(){
     $titles = wizwiz_userButtonTitles();
     $vis = wizwiz_getUserButtonVisibility();
+    $order = wizwiz_getUserButtonOrder();
     $keys = [];
-    $keys[] = [['text'=>'🎛 تنظیمات نمایش دکمه‌های کاربر', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'↕️ جابه‌جایی ترتیب دکمه‌ها', 'callback_data'=>'userButtonLayoutSettings', 'style'=>'primary']];
     $row = [];
-    foreach($titles as $key => $title){
+    foreach($order as $key){
+        if(!isset($titles[$key])) continue;
+        $title = $titles[$key];
         $on = !empty($vis[$key]);
         $row[] = [
             'text' => ($on ? '✅ ' : '❌ ') . $title,
@@ -1572,6 +1686,74 @@ function wizwiz_getUserButtonSettingsKeys(){
         ['text'=>'❌ مخفی کردن همه', 'callback_data'=>'setAllUserButtons_off', 'style'=>'danger']
     ];
     $keys[] = [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'managePanel', 'style'=>'primary']];
+    return wizwiz_inlineKeyboardJson($keys);
+}
+
+function wizwiz_getUserButtonOrderText(){
+    $titles = wizwiz_userButtonTitles();
+    $order = wizwiz_getUserButtonOrder();
+    $vis = wizwiz_getUserButtonVisibility();
+    $breaks = wizwiz_getUserButtonRowBreaks();
+    $msg = "↕️ <b>جابه‌جایی دکمه‌های منوی کاربر</b>
+
+";
+    $msg .= "با دکمه‌های بالا و پایین، ترتیب نمایش دکمه‌ها را تغییر دهید.
+";
+    $msg .= "برای تک‌دکمه کردن یک ردیف، روی «↵ ردیف جدید بعدش» همان دکمه بزنید تا دکمه بعدی به ردیف بعد برود.
+";
+    $msg .= "هر ردیف همچنان حداکثر ۲ دکمه دارد.
+
+";
+    $i = 1;
+    foreach($order as $key){
+        if(!isset($titles[$key])) continue;
+        $status = !empty($vis[$key]) ? '✅' : '❌';
+        $rowBreak = !empty($breaks[$key]) ? ' ↵' : '';
+        $title = htmlspecialchars((string)$titles[$key], ENT_QUOTES, 'UTF-8');
+        $msg .= $i . ". {$status} {$title}{$rowBreak}
+";
+        $i++;
+    }
+    $msg .= "
+↵ یعنی بعد از آن دکمه، ردیف جدید شروع می‌شود.";
+    return $msg;
+}
+
+function wizwiz_getUserButtonOrderSettingsKeys(){
+    $titles = wizwiz_userButtonTitles();
+    $order = wizwiz_getUserButtonOrder();
+    $breaks = wizwiz_getUserButtonRowBreaks();
+    $keys = [];
+    $keys[] = [['text'=>'↕️ ترتیب دکمه‌های کاربر', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $total = count($order);
+    $i = 1;
+    foreach($order as $key){
+        if(!isset($titles[$key])) continue;
+        $title = $titles[$key];
+        $keys[] = [[
+            'text' => $i . '. ' . $title,
+            'callback_data' => 'wizwizch',
+            'style' => 'primary'
+        ]];
+        $moveRow = [];
+        if($i > 1){
+            $moveRow[] = ['text'=>'⬆️ بالا', 'callback_data'=>'moveUserButtonOrder_' . $key . '_up', 'style'=>'primary'];
+        }
+        if($i < $total){
+            $moveRow[] = ['text'=>'⬇️ پایین', 'callback_data'=>'moveUserButtonOrder_' . $key . '_down', 'style'=>'primary'];
+        }
+        if(count($moveRow) > 0) $keys[] = $moveRow;
+        $breakOn = !empty($breaks[$key]);
+        $keys[] = [[
+            'text' => ($breakOn ? '✅ ↵ ردیف جدید بعدش فعال' : '↵ ردیف جدید بعدش'),
+            'callback_data' => 'toggleUserButtonRowBreak_' . $key,
+            'style' => $breakOn ? 'success' : 'primary'
+        ]];
+        $i++;
+    }
+    $keys[] = [['text'=>'🔄 بازگشت به ترتیب پیش‌فرض', 'callback_data'=>'resetUserButtonOrder', 'style'=>'danger']];
+    $keys[] = [['text'=>'🧹 حذف ردیف‌بندی سفارشی', 'callback_data'=>'resetUserButtonRows', 'style'=>'danger']];
+    $keys[] = [['text'=>'🔙 برگشت به تنظیمات دکمه‌ها', 'callback_data'=>'userButtonSettings', 'style'=>'primary']];
     return wizwiz_inlineKeyboardJson($keys);
 }
 
@@ -2695,7 +2877,7 @@ function getMainKeys(){
         foreach($buttons as $btn){
             if(is_array($btn) && !empty($btn)) $row[] = $btn;
         }
-        if(count($row) > 0) $mainKeys[] = $row;
+        if(count($row) > 0) $mainKeys[] = array_slice($row, 0, 2);
     };
     $buttonIfVisible = function($key, $button) use ($botState){
         return wizwiz_userButtonVisible($key, $botState) ? $button : null;
@@ -2711,49 +2893,75 @@ function getMainKeys(){
         }
         $addRow([$buttonIfVisible('my_subscriptions', ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>"agentConfigsList"])]);
     }else{
-        if(($botState['agencyState'] ?? 'off') == "on" && empty($userInfo['is_agent'])){
-            $addRow([$buttonIfVisible('request_agency', ['text'=>$buttonValues['request_agency'],'callback_data'=>"requestAgency"])]);
+        $definitions = [
+            'request_agency' => [
+                'enabled' => (($botState['agencyState'] ?? 'off') == "on" && empty($userInfo['is_agent'])),
+                'button' => ['text'=>$buttonValues['request_agency'],'callback_data'=>"requestAgency"]
+            ],
+            'my_subscriptions' => [
+                'enabled' => true,
+                'button' => ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>'mySubscriptions']
+            ],
+            'buy_subscriptions' => [
+                'enabled' => (($botState['sellState'] ?? 'off') == "on" || $isAdminUser),
+                'button' => ['text'=>$buttonValues['buy_subscriptions'],'callback_data'=>"buySubscription"]
+            ],
+            'test_account' => [
+                'enabled' => (($botState['testAccount'] ?? 'off') == "on"),
+                'button' => ['text'=>'اکانت تست','callback_data'=>"getTestAccount"]
+            ],
+            'wallet_charge' => [
+                'enabled' => wizwiz_isWalletOpenForCurrentUser(),
+                'button' => ['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"]
+            ],
+            'invite_friends' => [
+                'enabled' => true,
+                'button' => ['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"]
+            ],
+            'my_info' => [
+                'enabled' => true,
+                'button' => ['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"]
+            ],
+            'shared_existence' => [
+                'enabled' => (($botState['sharedExistence'] ?? 'off') == "on"),
+                'button' => ['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"]
+            ],
+            'individual_existence' => [
+                'enabled' => (($botState['individualExistence'] ?? 'off') == "on"),
+                'button' => ['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"]
+            ],
+            'application_links' => [
+                'enabled' => true,
+                'button' => ['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"]
+            ],
+            'my_tickets' => [
+                'enabled' => true,
+                'button' => ['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"]
+            ],
+            'search_config' => [
+                'enabled' => (($botState['searchState'] ?? 'off') == "on" || $isAdminUser),
+                'button' => ['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]
+            ],
+            'refresh_panel' => [
+                'enabled' => true,
+                'button' => ['text'=>'🔄 بروزرسانی پنل', 'callback_data'=>'mainMenu']
+            ],
+        ];
+
+        $row = [];
+        $rowBreaks = wizwiz_getUserButtonRowBreaks($botState);
+        foreach(wizwiz_getUserButtonOrder($botState) as $key){
+            if(!isset($definitions[$key])) continue;
+            if(empty($definitions[$key]['enabled'])) continue;
+            if(!wizwiz_userButtonVisible($key, $botState)) continue;
+            $row[] = $definitions[$key]['button'];
+            if(count($row) >= 2 || !empty($rowBreaks[$key])){
+                $addRow($row);
+                $row = [];
+            }
         }
-
-        $subRow = [];
-        if(wizwiz_userButtonVisible('my_subscriptions', $botState)){
-            $subRow[] = ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>'mySubscriptions'];
-        }
-        if((($botState['sellState'] ?? 'off') == "on" || $isAdminUser) && wizwiz_userButtonVisible('buy_subscriptions', $botState)){
-            $subRow[] = ['text'=>$buttonValues['buy_subscriptions'],'callback_data'=>"buySubscription"];
-        }
-        $addRow($subRow);
+        if(count($row) > 0) $addRow($row);
     }
-
-    if(($botState['testAccount'] ?? 'off') == "on"){
-        $addRow([$buttonIfVisible('test_account', ['text'=>'اکانت تست','callback_data'=>"getTestAccount"])]);
-    }
-
-    if(wizwiz_isWalletOpenForCurrentUser()){
-        $addRow([$buttonIfVisible('wallet_charge', ['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"])]);
-    }
-    $addRow([
-        $buttonIfVisible('invite_friends', ['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"]),
-        $buttonIfVisible('my_info', ['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"])
-    ]);
-
-    $sharedOn = (($botState['sharedExistence'] ?? 'off') == "on") && wizwiz_userButtonVisible('shared_existence', $botState);
-    $individualOn = (($botState['individualExistence'] ?? 'off') == "on") && wizwiz_userButtonVisible('individual_existence', $botState);
-    $addRow([
-        $sharedOn ? ['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"] : null,
-        $individualOn ? ['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"] : null
-    ]);
-
-    $addRow([
-        $buttonIfVisible('application_links', ['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"]),
-        $buttonIfVisible('my_tickets', ['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"])
-    ]);
-
-    if((($botState['searchState'] ?? 'off') == "on" || $isAdminUser) && wizwiz_userButtonVisible('search_config', $botState)){
-        $addRow([['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]]);
-    }
-
-    $addRow([['text'=>'🔄 بروزرسانی پنل', 'callback_data'=>'mainMenu']]);
 
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` LIKE '%MAIN_BUTTONS%'");
     $stmt->execute();
