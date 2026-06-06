@@ -57,6 +57,41 @@ if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $wizCancelPayMatch)){
     sendMessage($mainValues['reached_main_menu'], getMainKeys());
     exit();
 }
+
+// هندلر مرکزی و مقاوم دریافت رسید کارت‌به‌کارت
+// این بخش قبل از هندلرهای قدیمی اجرا می‌شود تا عکس رسید با کپشن/بدون کپشن گم نشود
+// و پیام ادمین همیشه همراه دکمه‌های تأیید/رد ارسال شود.
+if(function_exists('wizwiz_isCartToCartReceiptStep') && isset($update->message) && wizwiz_isCartToCartReceiptStep($userInfo['step'] ?? '', $wizReceiptStepMatch)){
+    $wizReceiptHashId = $wizReceiptStepMatch[2] ?? '';
+    $wizReceiptStepPrefix = $wizReceiptStepMatch[1] ?? '';
+    $wizReceiptFileId = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, '') : ($fileid ?? '');
+
+    if($wizReceiptFileId === ''){
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($wizReceiptHashId);
+        else sendMessage($mainValues['please_send_only_image'] ?? 'لطفاً فقط عکس رسید پرداخت را ارسال کنید.');
+        exit();
+    }
+
+    if(function_exists('wizwiz_processCartToCartReceiptUpload')){
+        $wizReceiptResult = wizwiz_processCartToCartReceiptUpload($wizReceiptHashId, $wizReceiptStepPrefix, $wizReceiptFileId);
+        if(!empty($wizReceiptResult['ok'])){
+            setUser();
+            setUser('', 'temp');
+            sendMessage($wizReceiptResult['user_message'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.', $removeKeyboard, 'HTML');
+            sendMessage($mainValues['reached_main_menu'], getMainKeys());
+            if(empty($wizReceiptResult['admin_ok'])){
+                $adminErr = trim((string)($wizReceiptResult['admin_message'] ?? ''));
+                $warn = "⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.";
+                if($adminErr !== '') $warn .= "\nعلت: <code>" . wizwiz_h($adminErr) . "</code>";
+                sendMessage($warn, null, 'HTML');
+            }
+        }else{
+            $err = trim((string)($wizReceiptResult['message'] ?? 'ثبت رسید انجام نشد.'));
+            sendMessage("⚠️ " . $err, function_exists('wizwiz_cartToCartReceiptKeyboard') ? wizwiz_cartToCartReceiptKeyboard($wizReceiptHashId) : null, 'HTML');
+        }
+        exit();
+    }
+}
 if(function_exists('wizwiz_processAutoApproveOrders')){
     wizwiz_processAutoApproveOrders(false, 2);
 }

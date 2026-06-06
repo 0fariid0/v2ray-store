@@ -10018,6 +10018,30 @@ function wizwiz_approvalCopyTextFromResult($result){
     return $text;
 }
 
+function wizwiz_approvalConfigNamesLineFromResult($result){
+    $items = [];
+    if(!empty($result['renew_remark'])) $items[] = trim((string)$result['renew_remark']);
+    $remarks = $result['remarks'] ?? [];
+    if(is_array($remarks)){
+        foreach($remarks as $remark){
+            $remark = trim((string)$remark);
+            if($remark !== '') $items[] = $remark;
+        }
+    }
+    $items = array_values(array_unique($items));
+    if(count($items) == 0) return '';
+
+    $shown = array_slice($items, 0, 10);
+    $escaped = array_map(function($item){ return '<code>' . wizwiz_h($item) . '</code>'; }, $shown);
+    $more = count($items) - count($shown);
+    if($more > 0) $escaped[] = 'و ' . intval($more) . ' کانفیگ دیگر';
+
+    if(count($escaped) == 1) return '🔮 نام کانفیگ: ' . $escaped[0];
+    return "🔮 نام کانفیگ‌ها:
+" . implode("
+", $escaped);
+}
+
 function wizwiz_updateAdminPayMessageStatus($hashId, $statusText, $style = 'success', $userId = 0, $copyText = ''){
     [$chat, $msg, $storedUser] = wizwiz_getAdminPayMessage($hashId);
     if($userId <= 0) $userId = $storedUser;
@@ -10102,6 +10126,236 @@ function wizwiz_adminPendingWalletKeyboard($hashId, $userId){
     ]], JSON_UNESCAPED_UNICODE);
 }
 
+function wizwiz_getPayByHash($hashId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return null;
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $pay = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $pay ?: null;
+}
+
+function wizwiz_cartToCartReceiptTypeTitle($pay, $stepPrefix = ''){
+    $type = is_array($pay) ? (string)($pay['type'] ?? '') : '';
+    if($type === 'INCREASE_WALLET') return 'شارژ کیف پول';
+    if($type === 'RENEW_ACCOUNT') return 'تمدید سرویس';
+    if($type === 'RENEW_SCONFIG') return 'تمدید سرویس سفارشی';
+    if(preg_match('/^INCREASE_DAY_/', $type)) return 'افزایش زمان سرویس';
+    if(preg_match('/^INCREASE_VOLUME_/', $type)) return 'افزایش حجم سرویس';
+    if($type === 'BUY_SUB') return $stepPrefix === 'payCustomWithCartToCart' ? 'خرید سفارشی' : 'خرید جدید';
+    return 'پرداخت کارت‌به‌کارت';
+}
+
+function wizwiz_adminReceiptKeyboardByPay($pay, $stepPrefix = ''){
+    global $buttonValues;
+    if(!is_array($pay)) return null;
+    $hashId = (string)($pay['hash_id'] ?? '');
+    $userId = intval($pay['user_id'] ?? 0);
+    $type = (string)($pay['type'] ?? '');
+    $approveText = $buttonValues['approve'] ?? '✅ تأیید';
+    $declineText = $buttonValues['decline'] ?? '❌ عدم تأیید';
+
+    if($type === 'INCREASE_WALLET') return wizwiz_adminPendingWalletKeyboard($hashId, $userId);
+    if($type === 'RENEW_ACCOUNT'){
+        return wizwiz_inlineKeyboardJson([
+            [
+                ['text'=>$approveText, 'callback_data'=>'approveRenewAcc' . $hashId, 'style'=>'success'],
+                ['text'=>$declineText, 'callback_data'=>'decRenewAcc' . $hashId, 'style'=>'danger']
+            ],
+            [wizwiz_userPrivateButton($userId)]
+        ]);
+    }
+    if(preg_match('/^INCREASE_DAY_/', $type)){
+        return wizwiz_inlineKeyboardJson([
+            [
+                ['text'=>$approveText, 'callback_data'=>'approveIncreaseDay' . $hashId, 'style'=>'success'],
+                ['text'=>$declineText, 'callback_data'=>'decIncreaseDay' . $hashId, 'style'=>'danger']
+            ],
+            [wizwiz_userPrivateButton($userId)]
+        ]);
+    }
+    if(preg_match('/^INCREASE_VOLUME_/', $type)){
+        return wizwiz_inlineKeyboardJson([
+            [
+                ['text'=>$approveText, 'callback_data'=>'approveIncreaseVolume' . $hashId, 'style'=>'success'],
+                ['text'=>$declineText, 'callback_data'=>'decIncreaseVolume' . $hashId, 'style'=>'danger']
+            ],
+            [wizwiz_userPrivateButton($userId)]
+        ]);
+    }
+    return wizwiz_adminPendingOrderKeyboard($hashId, $userId);
+}
+
+function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
+    global $connection;
+    if(!is_array($pay)) return '🧾 رسید پرداخت';
+    $hash = (string)($pay['hash_id'] ?? '');
+    $uid = intval($pay['user_id'] ?? 0);
+    $type = (string)($pay['type'] ?? '');
+    $price = number_format(intval($pay['price'] ?? 0));
+    $typeTitle = wizwiz_cartToCartReceiptTypeTitle($pay, $stepPrefix);
+
+    $user = null;
+    if($uid > 0){
+        $stmt = $connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $uid);
+            $stmt->execute();
+            $user = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+        }
+    }
+
+    $lines = ["🧾 <b>رسید پرداخت کارت‌به‌کارت</b>"];
+    $lines[] = "📌 نوع: <b>" . wizwiz_h($typeTitle) . "</b>";
+    if($user) $lines[] = wizwiz_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '');
+    else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
+    if($hash !== '') $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+    $lines[] = "💰 مبلغ: <b>{$price} تومان</b>";
+
+    $remark = '';
+    $planTitle = '';
+    $volume = '';
+    $days = '';
+
+    if($type === 'RENEW_SCONFIG'){
+        $configInfo = json_decode((string)($pay['description'] ?? ''), true);
+        if(is_array($configInfo)) $remark = trim((string)($configInfo['remark'] ?? ''));
+        else $remark = trim((string)($pay['description'] ?? ''));
+        $planTitle = 'تمدید سرویس';
+    }elseif($type === 'RENEW_ACCOUNT'){
+        $oid = intval($pay['plan_id'] ?? 0);
+        if($oid > 0){
+            $stmt = $connection->prepare("SELECT `remark`, `fileid` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $oid);
+                $stmt->execute();
+                $order = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if($order){
+                    $remark = trim((string)($order['remark'] ?? ''));
+                    $planId = intval($order['fileid'] ?? 0);
+                    if($planId > 0){
+                        $stmt = $connection->prepare("SELECT `title`, `volume`, `days` FROM `server_plans` WHERE `id` = ? LIMIT 1");
+                        if($stmt){
+                            $stmt->bind_param('i', $planId);
+                            $stmt->execute();
+                            $plan = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            if($plan){
+                                $planTitle = trim((string)($plan['title'] ?? ''));
+                                $volume = $plan['volume'] ?? '';
+                                $days = $plan['days'] ?? '';
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }elseif(preg_match('/^INCREASE_(DAY|VOLUME)_(\d+)_(\d+)/', $type, $m)){
+        $orderId = intval($m[2]);
+        $planId = intval($m[3]);
+        if($orderId > 0){
+            $stmt = $connection->prepare("SELECT `remark` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $orderId);
+                $stmt->execute();
+                $order = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if($order) $remark = trim((string)($order['remark'] ?? ''));
+            }
+        }
+        if($planId > 0){
+            $table = ($m[1] === 'DAY') ? 'increase_day' : 'increase_plan';
+            $stmt = $connection->prepare("SELECT `volume` FROM `{$table}` WHERE `id` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $planId);
+                $stmt->execute();
+                $inc = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if($inc) $volume = $inc['volume'] ?? '';
+            }
+        }
+    }elseif($type !== 'INCREASE_WALLET'){
+        $remark = trim((string)($pay['description'] ?? ''));
+        $planId = intval($pay['plan_id'] ?? 0);
+        $volume = $pay['volume'] ?? '';
+        $days = $pay['day'] ?? '';
+        if($planId > 0){
+            $stmt = $connection->prepare("SELECT sp.`title`, sp.`volume`, sp.`days`, sc.`title` cat_title, si.`title` server_title FROM `server_plans` sp LEFT JOIN `server_categories` sc ON sp.`catid` = sc.`id` LEFT JOIN `server_info` si ON sp.`server_id` = si.`id` WHERE sp.`id` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $planId);
+                $stmt->execute();
+                $plan = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if($plan){
+                    $planTitle = trim(($plan['cat_title'] ?? '') . ' ' . ($plan['title'] ?? ''));
+                    if($planTitle === '') $planTitle = trim((string)($plan['server_title'] ?? ''));
+                    if($volume === '' || intval($volume) <= 0) $volume = $plan['volume'] ?? $volume;
+                    if($days === '' || intval($days) <= 0) $days = $plan['days'] ?? $days;
+                }
+            }
+        }
+    }
+
+    if($planTitle !== '') $lines[] = "📦 پلن/سرویس: <b>" . wizwiz_h($planTitle) . "</b>";
+    if($remark !== '') $lines[] = "🔮 نام کانفیگ: <code>" . wizwiz_h($remark) . "</code>";
+    if($type === 'INCREASE_WALLET'){
+        $lines[] = "👛 این پرداخت برای افزایش موجودی کیف پول است.";
+    }elseif(preg_match('/^INCREASE_DAY_/', $type) && $volume !== '' && intval($volume) > 0){
+        $lines[] = "⏰ افزایش زمان: <b>" . wizwiz_h($volume) . " روز</b>";
+    }elseif(preg_match('/^INCREASE_VOLUME_/', $type) && $volume !== '' && intval($volume) > 0){
+        $lines[] = "🔋 افزایش حجم: <b>" . wizwiz_h($volume) . " گیگ</b>";
+    }else{
+        if($volume !== '' && intval($volume) > 0) $lines[] = "🔋 حجم: <b>" . wizwiz_h($volume) . " گیگ</b>";
+        if($days !== '' && intval($days) > 0) $lines[] = "⏰ مدت: <b>" . wizwiz_h($days) . " روز</b>";
+    }
+    $lines[] = "\n✅ عکس رسید به همین پیام وصل شده و دکمه‌های بررسی زیر آن قرار دارد.";
+    return implode("\n", $lines);
+}
+
+function wizwiz_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId){
+    global $from_id, $mainValues;
+    $hashId = trim((string)$hashId);
+    $fileId = trim((string)$fileId);
+    $stepPrefix = trim((string)$stepPrefix);
+    if($hashId === '') return ['ok'=>false, 'message'=>'کد پرداخت نامعتبر است.'];
+    if($fileId === '') return ['ok'=>false, 'message'=>'لطفاً رسید را فقط به صورت عکس ارسال کنید.'];
+
+    $pay = wizwiz_getPayByHash($hashId);
+    if(!$pay) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد یا منقضی شده است.'];
+    $uid = intval($pay['user_id'] ?? 0);
+    if($uid > 0 && intval($from_id ?? 0) > 0 && $uid !== intval($from_id)) return ['ok'=>false, 'message'=>'این پرداخت متعلق به حساب شما نیست.'];
+
+    $state = (string)($pay['state'] ?? '');
+    if(in_array($state, ['approved', 'paid_with_wallet'], true)) return ['ok'=>false, 'message'=>'این سفارش قبلاً تأیید شده است.'];
+    if(in_array($state, ['declined', 'auto_cancelled'], true)) return ['ok'=>false, 'message'=>'این سفارش قبلاً رد یا لغو شده است.'];
+
+    if(!wizwiz_markPayReceiptSent($hashId, $fileId)) return ['ok'=>false, 'message'=>'ثبت رسید در دیتابیس انجام نشد. لطفاً دوباره تلاش کنید.'];
+    $pay['state'] = 'sent';
+    $pay['receipt_file_id'] = $fileId;
+
+    $msg = wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix);
+    $keyboard = wizwiz_adminReceiptKeyboardByPay($pay, $stepPrefix);
+    $adminSend = wizwiz_sendAdminPaymentPhoto($hashId, $fileId, $msg, $keyboard, 'HTML', $uid);
+
+    $type = (string)($pay['type'] ?? '');
+    if($type === 'INCREASE_WALLET') $userMessage = $mainValues['order_increase_sent'] ?? '✅ رسید شارژ کیف پول شما ثبت شد و برای ادمین ارسال شد.';
+    elseif($type === 'RENEW_ACCOUNT' || preg_match('/^INCREASE_(DAY|VOLUME)_/', $type)) $userMessage = $mainValues['renew_order_sent'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.';
+    else $userMessage = $mainValues['order_buy_sent'] ?? '✅ رسید خرید شما ثبت شد و برای ادمین ارسال شد.';
+
+    return [
+        'ok'=>true,
+        'admin_ok'=>!empty($adminSend['ok']),
+        'admin_message'=>($adminSend['message'] ?? ''),
+        'user_message'=>$userMessage,
+    ];
+}
+
 function wizwiz_notifyOrderReceiptSent($hashId, $fileId = null){
     // رسید خرید دیگر به کانال/گروه گزارش درآمد ارسال نمی‌شود.
     // فقط پیام مستقیم ادمین ارسال می‌شود و گزارش کانال مخصوص تأیید خودکار باقی می‌ماند.
@@ -10148,7 +10402,8 @@ function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = nul
     $recipients = wizwiz_getOrderAdminRecipients();
     if(count($recipients) == 0) return ['ok'=>false, 'sent'=>0, 'message'=>'هیچ ادمینی برای ارسال سفارش پیدا نشد.'];
 
-    // رنگ دکمه‌ها حفظ می‌شود. اگر Bot API مقصد style را قبول نکند، تابع bot() فقط همان درخواست خطادار را بدون style تکرار می‌کند.
+    // دکمه‌ها باید همیشه همراه همان پیام سفارش باشند؛ اگر ارسال عکس با کپشن کامل خطا داد،
+    // چند بار با کپشن امن‌تر تلاش می‌کنیم، اما عکسِ تنها و بدون دکمه برای ادمین نمی‌فرستیم.
     $keyboard = wizwiz_styleReplyMarkup($keyboard);
 
     $sent = 0;
@@ -10156,6 +10411,10 @@ function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = nul
     $firstMsg = 0;
     $errors = [];
     $plainCaption = function_exists('wizwiz_plainTextForTelegram') ? wizwiz_plainTextForTelegram($caption) : strip_tags((string)$caption);
+    $plainCaption = trim($plainCaption) !== '' ? trim($plainCaption) : '🧾 رسید پرداخت کارت‌به‌کارت';
+    if(function_exists('mb_substr')) $safePlainCaption = mb_substr($plainCaption, 0, 900, 'UTF-8');
+    else $safePlainCaption = substr($plainCaption, 0, 900);
+    $minimalCaption = '🧾 رسید پرداخت کارت‌به‌کارت' . ($hashId !== '' ? "\n🔖 کد پرداخت: " . $hashId : '');
 
     foreach($recipients as $chatId){
         $chatId = intval($chatId);
@@ -10165,33 +10424,23 @@ function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = nul
         $descList = [];
 
         if($photo !== ''){
-            $res = sendPhoto($photo, $caption, $keyboard, $parse, $chatId);
-            $ok = is_object($res) && isset($res->ok) && $res->ok;
-            if(!$ok){
-                $desc = is_object($res) && isset($res->description) ? (string)$res->description : 'sendPhoto failed';
-                $descList[] = $desc;
-                // اگر مشکل از HTML/Markdown یا کپشن طولانی بود، عکس را با متن ساده دوباره می‌فرستیم.
-                $safePlainCaption = ($plainCaption !== '' ? $plainCaption : '🧾 رسید پرداخت');
-                if(function_exists('mb_substr')) $safePlainCaption = mb_substr($safePlainCaption, 0, 900, 'UTF-8');
-                else $safePlainCaption = substr($safePlainCaption, 0, 900);
-                $res = sendPhoto($photo, $safePlainCaption, $keyboard, null, $chatId);
+            $attempts = [
+                [$caption, $parse, 'photo with html caption'],
+                [$safePlainCaption, null, 'photo with plain caption'],
+                [$minimalCaption, null, 'photo with minimal caption'],
+            ];
+            foreach($attempts as $attempt){
+                $res = sendPhoto($photo, $attempt[0], $keyboard, $attempt[1], $chatId);
                 $ok = is_object($res) && isset($res->ok) && $res->ok;
-                if(!$ok){
-                    $desc2 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendPhoto plain fallback failed';
-                    $descList[] = $desc2;
-                }
+                if($ok) break;
+                $desc = is_object($res) && isset($res->description) ? (string)$res->description : ($attempt[2] . ' failed');
+                $descList[] = $desc;
             }
         }
 
         if(!$ok){
-            // اگر عکس با کپشن ارسال نشد، اول خود عکس را بدون دکمه بفرستیم تا رسید گم نشود، بعد متن سفارش را با دکمه‌ها ارسال کنیم.
-            if($photo !== ''){
-                $photoOnly = sendPhoto($photo, '🧾 رسید پرداخت', null, null, $chatId);
-                if(!(is_object($photoOnly) && isset($photoOnly->ok) && $photoOnly->ok)){
-                    $descPhoto = is_object($photoOnly) && isset($photoOnly->description) ? (string)$photoOnly->description : 'sendPhoto photo-only failed';
-                    $descList[] = $descPhoto;
-                }
-            }
+            // اگر تلگرام به هر دلیل اجازه ارسال عکس همراه دکمه را نداد، پیام متنیِ سفارش با دکمه‌ها ارسال می‌شود
+            // تا ادمین بدون دکمه نماند. File ID رسید هم داخل متن می‌آید تا قابل پیگیری باشد.
             $fallback = wizwiz_adminSendFallbackText($hashId, $photo, $caption);
             $res = sendMessage($fallback, $keyboard, $parse, $chatId);
             $ok = is_object($res) && isset($res->ok) && $res->ok;
@@ -10704,6 +10953,8 @@ function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
             if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = "🆔 کاربر: <code>{$uid}</code>";
             if(wizwiz_reportDetailEnabled('amount', 'on')) $lines[] = "💰 مبلغ: <b>" . number_format(intval($result['price'] ?? $pay['price'])) . " تومان</b>";
             if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+            $configNamesLine = wizwiz_approvalConfigNamesLineFromResult($result);
+            if($configNamesLine !== '') $lines[] = $configNamesLine;
             if(wizwiz_reportDetailEnabled('order_ids', 'on')) $lines[] = "🧾 سفارش‌های ساخته‌شده: <code>" . wizwiz_h($ordersText) . "</code>";
             if(wizwiz_reportDetailEnabled('cancel_button', 'on')) $lines[] = "در صورت نیاز می‌توانید از همین پیام سفارش را کامل لغو کنید و دلیل لغو برای کاربر ارسال می‌شود.";
             $body = implode("\n", $lines) . wizwiz_reportTimeLine();
