@@ -373,14 +373,19 @@ if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimit
 
 if(preg_match('/^requestCartToCartCard(.+)/', $data, $match)){
     $paymentKeys = wizwiz_getPaymentKeys();
+    $account = function_exists('wizwiz_getCartToCartAccountForUser') ? wizwiz_getCartToCartAccountForUser($from_id, $paymentKeys) : ['is_second'=>false];
     wizwiz_markUserCardVersion($from_id, $paymentKeys);
     $url = wizwiz_cardContactUrl($paymentKeys);
     $contact = wizwiz_cardContactDisplay($paymentKeys);
+    $accountTitle = function_exists('wizwiz_cartToCartAccountTitle') ? wizwiz_cartToCartAccountTitle($account) : 'خرید';
+    $requestText = !empty($account['is_second']) ? 'شماره کارت خرید دوم جهت واریز' : 'شماره کارت جهت واریز';
     $msg = "💳 <b>دریافت شماره کارت</b>
+
+نوع پرداخت: <b>$accountTitle</b>
 
 روی دکمه زیر بزنید و به ادمین $contact پیام بدهید.
 متن پیام:
-<code>شماره کارت جهت واریز</code>
+<code>$requestText</code>
 
 بعد از دریافت شماره کارت و واریز، به همین ربات برگردید و تصویر رسید را ارسال کنید.";
     $keys = wizwiz_inlineKeyboardJson([
@@ -789,10 +794,16 @@ if(preg_match('/^changePaymentKeys(\w+)/',$data,$match) && ($from_id == $admin |
             $gate = "کد جدید درگاه زرین پال";
             break;
         case "bankAccount":
-            $gate = "شماره حساب جدید";
+            $gate = "شماره کارت خرید اول";
             break;
         case "holderName":
-            $gate = "اسم دارنده حساب";
+            $gate = "اسم دارنده کارت خرید اول";
+            break;
+        case "secondBankAccount":
+            $gate = "شماره کارت خرید دوم";
+            break;
+        case "secondHolderName":
+            $gate = "اسم دارنده کارت خرید دوم";
             break;
         case "cardContact":
             $gate = "آیدی عددی یا یوزرنیم ادمین دریافت شماره کارت";
@@ -812,6 +823,9 @@ if(preg_match('/^changePaymentKeys(\w+)/',$userInfo['step'],$match) && $text != 
     $value = trim((string)$text);
     if(in_array(strtolower($value), ['/empty', 'empty', 'خالی'], true)) $value = '';
     $paymentKeys[$match[1]] = $value;
+    if(in_array($match[1], ['bankAccount', 'holderName', 'secondBankAccount', 'secondHolderName'], true)){
+        $paymentKeys['cardInfoVersion'] = time();
+    }
     wizwiz_savePaymentKeys($paymentKeys);
 
     sendMessage($mainValues['saved_successfuly'],$removeKeyboard);
@@ -9377,7 +9391,7 @@ if(preg_match('/updateConfigConnectionLink(\d+)/', $data,$match)){
     if($keys != null){
         editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
     }
-
+}
 
 // ♻️ به‌روزرسانی و ارسال «همه کانفیگ‌های کاربر» درجا (برای کاربر)
 if(preg_match('/^updateAllMyConfigs_(\d+)/', $data, $match)){
@@ -9572,90 +9586,62 @@ if(preg_match('/^updateAllUserConfigs(\d+)_(\d+)/', $data, $match) && ($from_id 
     exit();
 }
 
-} 
 if(preg_match('/changAccountConnectionLink(\d+)/', $data,$match)){
     alert($mainValues['please_wait_message']);
-    $oid = $match[1];
+    $oid = intval($match[1]);
 
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=?");
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=? LIMIT 1");
     $stmt->bind_param("i", $oid);
     $stmt->execute();
     $order = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-
-    $date = jdate("Y-m-d H:i",$order['date']);
-    $expire_date = jdate("Y-m-d H:i",$order['expire_date']);
-    $remark = $order['remark'];
-    $uuid = $order['uuid']??"0";
-    $inboundId = $order['inbound_id'];
-    $acc_link = $order['link'];
-    $server_id = $order['server_id'];
-    $rahgozar = $order['rahgozar'];
-    
-    $file_id = $order['fileid'];
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
-    $stmt->bind_param("i", $file_id);
-    $stmt->execute();
-    $file_detail = $stmt->get_result()->fetch_assoc();
-    $customPath = $file_detail['custom_path'];
-    $customPort = $file_detail['custom_port'];
-    $customSni = $file_detail['custom_sni'];
-    $customDomain = $file_detail['custom_domain'] ?? null;
-    
-    
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $serverType = $server_info['type'];
-
-    if($serverType == "marzban"){
-        $res = renewMarzbanUUID($server_id, $remark);
-        $vraylink = $res->links;
-        $newUuid = $newToken = str_replace("/sub/", "", $res->subscription_url);
-    }else{
-        $response = getJson($server_id)->obj;
-        if($inboundId == 0){
-            foreach($response as $row){
-                $clients = json_decode($row->settings)->clients;
-                if($clients[0]->id == $uuid || $clients[0]->password == $uuid) {
-                    $port = $row->port;
-                    $protocol = $row->protocol;
-                    $netType = json_decode($row->streamSettings)->network;
-                    break;
-                }
-            }
-            
-            $update_response = renewInboundUuid($server_id, $uuid);
-        }else{
-            foreach($response as $row){
-                if($row->id == $inboundId) {
-                    $port = $row->port; 
-                    $protocol = $row->protocol;
-                    $netType = json_decode($row->streamSettings)->network;
-                    break;
-                }
-            }
-            $update_response = renewClientUuid($server_id, $inboundId, $uuid);
-        }
-        $newUuid = $update_response->newUuid;
-        $vraylink = getConnectionLink($server_id, $newUuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
-        $newToken = RandomString(30);
+    if(!$order){
+        alert($mainValues['config_not_found'] ?? "کانفیگ یافت نشد");
+        exit();
     }
 
-    
-    $vray_link = json_encode($vraylink);
-    $stmt = $connection->prepare("UPDATE `orders_list` SET `link`=?, `uuid` = ?, `token` = ? WHERE `id`=?");
-    $stmt->bind_param("sssi", $vray_link, $newUuid, $newToken, $oid);
-    $stmt->execute();
-    $stmt->close();
-    $keys = getOrderDetailKeys($from_id, $oid);
-    if($keys != null) $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
-    editText($message_id, $keys['msg'], $keys['keyboard'],"HTML");
+    $ownerId = intval($order['userid'] ?? 0);
+    if($ownerId != $from_id && !($from_id == $admin || $userInfo['isAdmin'] == true)){
+        alert("⛔️ شما به این کانفیگ دسترسی ندارید");
+        exit();
+    }
+
+    $result = farid_renewAccountConnectionLinks($order);
+    if(empty($result['ok'])){
+        $errorMsg = $result['message'] ?? "خطا در قطع دسترسی و ساخت لینک جدید";
+        if(is_array($errorMsg) || is_object($errorMsg)) $errorMsg = json_encode($errorMsg, JSON_UNESCAPED_UNICODE);
+        alert("⛔️ " . strval($errorMsg), true);
+        exit();
+    }
+
+    $remark = $result['remark'] ?? ($order['remark'] ?? "-");
+    $links = $result['links'] ?? [];
+
+    // ارسال لینک جدید در پیام تازه؛ مثل بخش آپدیت، پیام جزئیات فقط به‌روزرسانی می‌شود.
+    if($ownerId > 0){
+        farid_sendUpdatedConfigToUser($ownerId, $remark, $links, "", "🔐 لینک جدید سرویس شما ساخته شد");
+    }
+
+    if($ownerId == $from_id){
+        $keys = getOrderDetailKeys($from_id, $oid);
+        if($keys != null){
+            $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
+            if(function_exists('farid_attachUpdateAllMyConfigsButton')) $keys['keyboard'] = farid_attachUpdateAllMyConfigsButton($keys['keyboard']);
+        }
+    }else{
+        $keys = getUserOrderDetailKeys($oid);
+        if($keys != null){
+            $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
+            if($ownerId > 0 && function_exists('farid_attachUpdateAllUserConfigsButton')) $keys['keyboard'] = farid_attachUpdateAllUserConfigsButton($keys['keyboard'], $ownerId);
+        }
+    }
+
+    if($keys != null){
+        editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
+    }
+    alert("✅ دسترسی قبلی قطع شد و لینک جدید در پیام جداگانه ارسال شد.");
+    exit();
 }
 if(preg_match('/changeUserConfigState(\d+)/', $data,$match)){
     alert($mainValues['please_wait_message']);
@@ -14004,6 +13990,203 @@ function farid_refreshPlanOrderLinks($planId){
     return $updated;
 }
 
+
+function farid_renewAccountConnectionLinks($order){
+    global $connection;
+
+    if(!is_array($order)){
+        return ['ok'=>false, 'message'=>'اطلاعات کانفیگ نامعتبر است.'];
+    }
+
+    $oid = intval($order['id'] ?? 0);
+    $ownerId = intval($order['userid'] ?? 0);
+    $remark = $order['remark'] ?? '-';
+    $uuid = $order['uuid'] ?? '0';
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $server_id = intval($order['server_id'] ?? 0);
+    $rahgozar = $order['rahgozar'] ?? null;
+    $file_id = intval($order['fileid'] ?? 0);
+
+    if($oid <= 0 || $server_id <= 0){
+        return ['ok'=>false, 'message'=>'شناسه کانفیگ یا سرور نامعتبر است.'];
+    }
+
+    $customPath = null;
+    $customPort = 0;
+    $customSni = null;
+    $customDomain = null;
+    if($file_id > 0){
+        $stmt = $connection->prepare("SELECT `custom_path`, `custom_port`, `custom_sni`, `custom_domain` FROM `server_plans` WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param("i", $file_id);
+            $stmt->execute();
+            $file_detail = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($file_detail){
+                $customPath = $file_detail['custom_path'];
+                $customPort = $file_detail['custom_port'];
+                $customSni = $file_detail['custom_sni'];
+                $customDomain = $file_detail['custom_domain'] ?? null;
+            }
+        }
+    }
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    if(!$stmt){
+        return ['ok'=>false, 'message'=>'دسترسی به اطلاعات سرور ممکن نیست.'];
+    }
+    $stmt->bind_param("i", $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$server_info){
+        return ['ok'=>false, 'message'=>'سرور کانفیگ پیدا نشد.'];
+    }
+
+    $serverType = $server_info['type'] ?? '';
+    $newUuid = $uuid;
+    $newToken = RandomString(30);
+    $vraylink = null;
+
+    if($serverType == "marzban"){
+        if(!function_exists('renewMarzbanUUID')){
+            return ['ok'=>false, 'message'=>'تابع ساخت لینک جدید مرزبان در دسترس نیست.'];
+        }
+        $res = renewMarzbanUUID($server_id, $remark);
+        if(!is_object($res)){
+            return ['ok'=>false, 'message'=>'پاسخ مرزبان نامعتبر بود.'];
+        }
+        if(isset($res->success) && $res->success === false){
+            return ['ok'=>false, 'message'=>($res->msg ?? 'مرزبان لینک جدید را نساخت.')];
+        }
+        if(isset($res->links) && !empty($res->links)){
+            $vraylink = $res->links;
+        }elseif(isset($res->subscription_url) && !empty($res->subscription_url)){
+            $vraylink = [$res->subscription_url];
+        }
+        if($vraylink == null){
+            return ['ok'=>false, 'message'=>'لینک جدید از مرزبان دریافت نشد.'];
+        }
+        if(isset($res->subscription_url) && !empty($res->subscription_url)){
+            $newUuid = $newToken = str_replace('/sub/', '', $res->subscription_url);
+        }
+    }else{
+        $json = getJson($server_id);
+        if(!$json || !isset($json->obj)){
+            return ['ok'=>false, 'message'=>'پنل در دسترس نیست یا پاسخ پنل نامعتبر است.'];
+        }
+        $response = $json->obj;
+
+        $port = null;
+        $protocol = null;
+        $netType = null;
+        $found = false;
+
+        if($inboundId == 0){
+            foreach($response as $row){
+                $settings = json_decode($row->settings ?? '{}', true);
+                $clients = $settings['clients'] ?? [];
+                foreach($clients as $client){
+                    $cid = $client['id'] ?? null;
+                    $pwd = $client['password'] ?? null;
+                    if(($cid !== null && $cid == $uuid) || ($pwd !== null && $pwd == $uuid)){
+                        $port = $row->port ?? null;
+                        $protocol = $row->protocol ?? null;
+                        $stream = json_decode($row->streamSettings ?? '{}');
+                        $netType = $stream->network ?? null;
+                        $found = true;
+                        break 2;
+                    }
+                }
+            }
+            if(!$found){
+                return ['ok'=>false, 'message'=>'کانفیگ روی پنل پیدا نشد.'];
+            }
+            $update_response = renewInboundUuid($server_id, $uuid);
+        }else{
+            foreach($response as $row){
+                if(isset($row->id) && intval($row->id) == $inboundId){
+                    $settings = json_decode($row->settings ?? '{}', true);
+                    $clients = $settings['clients'] ?? [];
+                    foreach($clients as $client){
+                        $cid = $client['id'] ?? null;
+                        $pwd = $client['password'] ?? null;
+                        if(($cid !== null && $cid == $uuid) || ($pwd !== null && $pwd == $uuid)){
+                            $found = true;
+                            break;
+                        }
+                    }
+                    $port = $row->port ?? null;
+                    $protocol = $row->protocol ?? null;
+                    $stream = json_decode($row->streamSettings ?? '{}');
+                    $netType = $stream->network ?? null;
+                    break;
+                }
+            }
+            if(!$found){
+                return ['ok'=>false, 'message'=>'کلاینت کانفیگ روی این اینباند پیدا نشد.'];
+            }
+            $update_response = renewClientUuid($server_id, $inboundId, $uuid);
+        }
+
+        if(is_array($update_response)) $update_response = (object)$update_response;
+        if(!is_object($update_response)){
+            return ['ok'=>false, 'message'=>'پاسخ پنل بعد از تغییر UUID نامعتبر بود.'];
+        }
+        if(isset($update_response->success) && $update_response->success === false){
+            $msg = $update_response->msg ?? $update_response->message ?? 'پنل تغییر UUID را قبول نکرد.';
+            return ['ok'=>false, 'message'=>$msg];
+        }
+        if(!isset($update_response->newUuid) || empty($update_response->newUuid)){
+            return ['ok'=>false, 'message'=>'UUID جدید از پنل دریافت نشد.'];
+        }
+        $newUuid = $update_response->newUuid;
+
+        if(!$protocol || !$port || !$netType){
+            return ['ok'=>false, 'message'=>'اطلاعات لازم برای ساخت لینک جدید کامل نیست.'];
+        }
+
+        $vraylink = getConnectionLink($server_id, $newUuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+    }
+
+    if(function_exists('wizwiz_normalizeConfigLinksArray')){
+        $normalizedLinks = wizwiz_normalizeConfigLinksArray($vraylink);
+    }else{
+        if(is_string($vraylink)) $normalizedLinks = [$vraylink];
+        elseif(is_object($vraylink)) $normalizedLinks = (array)$vraylink;
+        elseif(is_array($vraylink)) $normalizedLinks = $vraylink;
+        else $normalizedLinks = [];
+        $normalizedLinks = array_values(array_filter(array_map('strval', $normalizedLinks)));
+    }
+
+    if(empty($normalizedLinks)){
+        return ['ok'=>false, 'message'=>'لینک جدید ساخته نشد.'];
+    }
+
+    $vray_link = json_encode($normalizedLinks, JSON_UNESCAPED_UNICODE);
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `link`=?, `uuid`=?, `token`=? WHERE `id`=?");
+    if(!$stmt){
+        return ['ok'=>false, 'message'=>'ذخیره لینک جدید در دیتابیس ممکن نیست.'];
+    }
+    $stmt->bind_param("sssi", $vray_link, $newUuid, $newToken, $oid);
+    $saved = $stmt->execute();
+    $stmt->close();
+
+    if(!$saved){
+        return ['ok'=>false, 'message'=>'لینک جدید ساخته شد ولی در دیتابیس ذخیره نشد.'];
+    }
+
+    return [
+        'ok' => true,
+        'order_id' => $oid,
+        'user_id' => $ownerId,
+        'remark' => $remark,
+        'links' => $normalizedLinks,
+        'uuid' => $newUuid,
+        'token' => $newToken,
+    ];
+}
+
 function farid_generateUpdatedVrayLinks($order){
     global $connection, $botState;
 
@@ -14122,7 +14305,7 @@ function farid_generateUpdatedVrayLinks($order){
     return getConnectionLink($server_id, $uuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
 }
 
-function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage = null){
+function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage = null, $title = null){
     global $botState, $botUrl;
 
     $userId = intval($userId);
@@ -14140,13 +14323,16 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage =
     }
     if(empty($links)) return;
 
+    $title = $title ?: '✅ کانفیگ‌های سرویس شما به‌روزرسانی شد';
+
     // اگر چند دامنه/چند لینک وجود دارد، همه را در یک پیام واحد ارسال کن.
     if(count($links) > 1 && ($botState['configLinkState'] ?? '') != 'off'){
         if(function_exists('wizwiz_buildMultiDomainConfigMessage')){
-            $text = wizwiz_buildMultiDomainConfigMessage($remark, $links, '', '✅ کانفیگ‌های سرویس شما به‌روزرسانی شد');
+            $text = wizwiz_buildMultiDomainConfigMessage($remark, $links, '', $title);
         }else{
             $safeRemark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
-            $text = "✅ کانفیگ‌های سرویس شما به‌روزرسانی شد
+            $safeTitle = htmlspecialchars((string)$title, ENT_QUOTES, 'UTF-8');
+            $text = "{$safeTitle}
 🔮 نام سرویس: <b>{$safeRemark}</b>
 ";
             foreach($links as $link){
@@ -14162,11 +14348,14 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage =
         foreach($links as $link){
             if(empty($link)) continue;
 
+            $safeRemark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
+            $safeLink = htmlspecialchars((string)$link, ENT_QUOTES, 'UTF-8');
+            $safeTitle = htmlspecialchars((string)$title, ENT_QUOTES, 'UTF-8');
             $text = ($botState['configLinkState'] ?? '') != "off"
-                ? ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>
+                ? ("{$safeTitle}: <b>{$safeRemark}</b>
 
-<code>$link</code>")
-                : ("✅ کانفیگ به‌روزرسانی شد: <b>$remark</b>");
+<code>{$safeLink}</code>")
+                : ("{$safeTitle}: <b>{$safeRemark}</b>");
 
             $file = RandomString() . ".png";
             $ecc = 'L';

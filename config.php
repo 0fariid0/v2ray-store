@@ -1801,6 +1801,61 @@ function wizwiz_getCardInfoVersion($paymentKeys = null){
     return $v > 0 ? $v : 1;
 }
 
+function wizwiz_userHasActivePaidConfig($userId){
+    global $connection;
+    $userId = trim((string)$userId);
+    if($userId === '') return false;
+    $now = time();
+
+    // فقط سرویس‌های خریداری‌شده و فعال حساب می‌شوند؛ اکانت تست/هدیه با مبلغ صفر حساب نمی‌شود.
+    $sql = "SELECT `id` FROM `orders_list`
+            WHERE `userid` = ?
+              AND `status` = 1
+              AND CAST(COALESCE(`amount`, 0) AS SIGNED) > 0
+              AND (CAST(COALESCE(`expire_date`, 0) AS SIGNED) <= 0 OR CAST(COALESCE(`expire_date`, 0) AS SIGNED) > ?)
+            LIMIT 1";
+    $stmt = $connection->prepare($sql);
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $userId, $now);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $has = ($res && $res->num_rows > 0);
+    $stmt->close();
+    return $has;
+}
+
+function wizwiz_getCartToCartAccountForUser($userId = null, $paymentKeys = null){
+    global $from_id, $userInfo;
+    if($paymentKeys === null) $paymentKeys = wizwiz_getPaymentKeys();
+    if(!is_array($paymentKeys)) $paymentKeys = [];
+
+    if($userId === null || trim((string)$userId) === ''){
+        if(isset($from_id) && trim((string)$from_id) !== '') $userId = $from_id;
+        elseif(is_array($userInfo ?? null) && isset($userInfo['userid'])) $userId = $userInfo['userid'];
+        else $userId = '';
+    }
+
+    $primaryBank = trim((string)($paymentKeys['bankAccount'] ?? ''));
+    $primaryHolder = trim((string)($paymentKeys['holderName'] ?? ''));
+    $secondBank = trim((string)($paymentKeys['secondBankAccount'] ?? ($paymentKeys['bankAccount2'] ?? '')));
+    $secondHolder = trim((string)($paymentKeys['secondHolderName'] ?? ($paymentKeys['holderName2'] ?? '')));
+
+    $hasActivePaid = wizwiz_userHasActivePaidConfig($userId);
+    $useSecond = ($hasActivePaid && $secondBank !== '');
+
+    return [
+        'bank' => $useSecond ? $secondBank : $primaryBank,
+        'holder' => $useSecond ? $secondHolder : $primaryHolder,
+        'type' => $useSecond ? 'second' : 'first',
+        'is_second' => $useSecond,
+        'has_active_paid_config' => $hasActivePaid,
+    ];
+}
+
+function wizwiz_cartToCartAccountTitle($account){
+    return (!empty($account['is_second'])) ? 'خرید دوم و بعدی' : 'خرید اول';
+}
+
 function wizwiz_markCardInfoChanged(){
     $keys = wizwiz_getPaymentKeys();
     $keys['cardInfoVersion'] = time();
@@ -1927,30 +1982,34 @@ function wizwiz_cancelPendingPayByUser($hashId, $userId){
     return ['ok'=>($affected > 0), 'message'=>($affected > 0 ? 'خرید با موفقیت لغو شد.' : 'این پرداخت قبلاً از حالت انتظار خارج شده است.')];
 }
 
-function wizwiz_cartToCartNoCardText($alreadyReceived = false, $paymentKeys = null){
+function wizwiz_cartToCartNoCardText($alreadyReceived = false, $paymentKeys = null, $account = null){
     $contact = wizwiz_cardContactDisplay($paymentKeys);
+    $accountTitle = wizwiz_cartToCartAccountTitle(is_array($account) ? $account : []);
+    $requestText = (!empty($account['is_second'])) ? 'شماره کارت خرید دوم جهت واریز' : 'شماره کارت جهت واریز';
     if($alreadyReceived){
-        return "💳 <b>پرداخت کارت‌به‌کارت</b>\n\nشما قبلاً شماره کارت فعلی را دریافت کرده‌اید. لطفاً مبلغ را به همان شماره کارت واریز کنید.\n\nاگر شماره کارت را دوباره لازم دارید، به ادمین $contact پیام بدهید و متن زیر را ارسال کنید:\n<code>شماره کارت جهت واریز</code>\n\nبعد از واریز، تصویر رسید را همینجا بفرستید.";
+        return "💳 <b>پرداخت کارت‌به‌کارت - $accountTitle</b>\n\nشما قبلاً شماره کارت فعلی را دریافت کرده‌اید. لطفاً مبلغ را به همان شماره کارت واریز کنید.\n\nاگر شماره کارت را دوباره لازم دارید، به ادمین $contact پیام بدهید و متن زیر را ارسال کنید:\n<code>$requestText</code>\n\nبعد از واریز، تصویر رسید را همینجا بفرستید.";
     }
-    return "💳 <b>پرداخت کارت‌به‌کارت</b>\n\nبرای دریافت شماره کارت، روی دکمه <b>گرفتن شماره کارت</b> بزنید، به ادمین $contact پیام بدهید و متن زیر را ارسال کنید:\n<code>شماره کارت جهت واریز</code>\n\nبعد از دریافت شماره کارت و واریز، به همین ربات برگردید و تصویر رسید پرداخت را ارسال کنید.\n\nاین مرحله فقط یک‌بار برای شماره کارت فعلی لازم است؛ اگر ادمین اعلام کند شماره کارت تغییر کرده، دوباره باید شماره کارت جدید را بگیرید.";
+    return "💳 <b>پرداخت کارت‌به‌کارت - $accountTitle</b>\n\nبرای دریافت شماره کارت، روی دکمه <b>گرفتن شماره کارت</b> بزنید، به ادمین $contact پیام بدهید و متن زیر را ارسال کنید:\n<code>$requestText</code>\n\nبعد از دریافت شماره کارت و واریز، به همین ربات برگردید و تصویر رسید پرداخت را ارسال کنید.\n\nاین مرحله فقط یک‌بار برای شماره کارت فعلی لازم است؛ اگر ادمین اعلام کند شماره کارت تغییر کرده، دوباره باید شماره کارت جدید را بگیرید.";
 }
 
 function wizwiz_sendCartToCartInstructions($hashId, $templateKey, $parse = 'HTML'){
     global $mainValues, $userInfo;
     $paymentKeys = wizwiz_getPaymentKeys();
-    $bank = trim((string)($paymentKeys['bankAccount'] ?? ''));
-    $holder = trim((string)($paymentKeys['holderName'] ?? ''));
+    $account = wizwiz_getCartToCartAccountForUser($userInfo['userid'] ?? null, $paymentKeys);
+    $bank = trim((string)($account['bank'] ?? ''));
+    $holder = trim((string)($account['holder'] ?? ''));
+    $accountTitle = wizwiz_cartToCartAccountTitle($account);
     $extra = "\n\n📸 <b>بعد از واریز، فقط عکس رسید را همینجا ارسال کنید.</b>\n" .
              "اگر عکس کپشن داشته باشد مشکلی نیست؛ فقط خود عکس رسید برای ادمین ثبت می‌شود.\n" .
              "برای انصراف، دکمه <b>لغو خرید</b> را بزنید.";
     if($bank !== ''){
         $template = $mainValues[$templateKey] ?? 'ACCOUNT-NUMBER\nHOLDER-NAME';
-        $txt = str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template) . $extra;
+        $txt = "💳 <b>کارت‌به‌کارت - $accountTitle</b>\n\n" . str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template) . $extra;
         sendMessage($txt, wizwiz_cartToCartReceiptKeyboard($hashId), $parse);
         return;
     }
     $already = wizwiz_userHasCardVersion($userInfo, $paymentKeys);
-    sendMessage(wizwiz_cartToCartNoCardText($already, $paymentKeys) . $extra, wizwiz_cartToCartKeyboard($hashId), 'HTML');
+    sendMessage(wizwiz_cartToCartNoCardText($already, $paymentKeys, $account) . $extra, wizwiz_cartToCartKeyboard($hashId), 'HTML');
 }
 
 function wizwiz_deleteLocalOrderOnly($orderId){
@@ -2959,85 +3018,92 @@ function getMainKeys(){
         return wizwiz_userButtonVisible($key, $botState) ? $button : null;
     };
 
-    if(($botState['agencyState'] ?? 'off') == "on" && !empty($userInfo['is_agent']) && $userInfo['is_agent'] == 1){
+    $isAgent = (($botState['agencyState'] ?? 'off') == "on" && !empty($userInfo['is_agent']) && $userInfo['is_agent'] == 1);
+
+    if($isAgent){
+        // پنل نماینده باید علاوه بر خرید همکاری، امکانات معمول کاربر مثل حساب من، کیف پول، پشتیبانی، لینک برنامه‌ها و... را هم داشته باشد.
         $addRow([['text'=>$buttonValues['agency_setting'],'callback_data'=>"agencySettings"]]);
-        if((($botState['sellState'] ?? 'off') == "on" || $isAdminUser)){
-            $addRow([
+    }
+
+    $definitions = [
+        'request_agency' => [
+            'enabled' => (!$isAgent && (($botState['agencyState'] ?? 'off') == "on" && empty($userInfo['is_agent']))),
+            'buttons' => [['text'=>$buttonValues['request_agency'],'callback_data'=>"requestAgency"]]
+        ],
+        'my_subscriptions' => [
+            'enabled' => true,
+            'buttons' => [['text'=>$buttonValues['my_subscriptions'],'callback_data'=>($isAgent ? "agentConfigsList" : "mySubscriptions")]]
+        ],
+        'buy_subscriptions' => [
+            'enabled' => (($botState['sellState'] ?? 'off') == "on" || $isAdminUser),
+            'buttons' => ($isAgent ? [
                 ['text'=>$buttonValues['agent_one_buy'],'callback_data'=>"agentOneBuy"],
                 ['text'=>$buttonValues['agent_much_buy'],'callback_data'=>"agentMuchBuy"]
-            ]);
-        }
-        $addRow([$buttonIfVisible('my_subscriptions', ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>"agentConfigsList"])]);
-    }else{
-        $definitions = [
-            'request_agency' => [
-                'enabled' => (($botState['agencyState'] ?? 'off') == "on" && empty($userInfo['is_agent'])),
-                'button' => ['text'=>$buttonValues['request_agency'],'callback_data'=>"requestAgency"]
-            ],
-            'my_subscriptions' => [
-                'enabled' => true,
-                'button' => ['text'=>$buttonValues['my_subscriptions'],'callback_data'=>'mySubscriptions']
-            ],
-            'buy_subscriptions' => [
-                'enabled' => (($botState['sellState'] ?? 'off') == "on" || $isAdminUser),
-                'button' => ['text'=>$buttonValues['buy_subscriptions'],'callback_data'=>"buySubscription"]
-            ],
-            'test_account' => [
-                'enabled' => (($botState['testAccount'] ?? 'off') == "on"),
-                'button' => ['text'=>'اکانت تست','callback_data'=>"getTestAccount"]
-            ],
-            'wallet_charge' => [
-                'enabled' => wizwiz_isWalletOpenForCurrentUser(),
-                'button' => ['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"]
-            ],
-            'invite_friends' => [
-                'enabled' => true,
-                'button' => ['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"]
-            ],
-            'my_info' => [
-                'enabled' => true,
-                'button' => ['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"]
-            ],
-            'shared_existence' => [
-                'enabled' => (($botState['sharedExistence'] ?? 'off') == "on"),
-                'button' => ['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"]
-            ],
-            'individual_existence' => [
-                'enabled' => (($botState['individualExistence'] ?? 'off') == "on"),
-                'button' => ['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"]
-            ],
-            'application_links' => [
-                'enabled' => true,
-                'button' => ['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"]
-            ],
-            'my_tickets' => [
-                'enabled' => true,
-                'button' => ['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"]
-            ],
-            'search_config' => [
-                'enabled' => (($botState['searchState'] ?? 'off') == "on" || $isAdminUser),
-                'button' => ['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]
-            ],
-            'refresh_panel' => [
-                'enabled' => true,
-                'button' => ['text'=>'🔄 بروزرسانی پنل', 'callback_data'=>'mainMenu']
-            ],
-        ];
+            ] : [
+                ['text'=>$buttonValues['buy_subscriptions'],'callback_data'=>"buySubscription"]
+            ])
+        ],
+        'test_account' => [
+            'enabled' => (($botState['testAccount'] ?? 'off') == "on"),
+            'buttons' => [['text'=>'اکانت تست','callback_data'=>"getTestAccount"]]
+        ],
+        'wallet_charge' => [
+            'enabled' => wizwiz_isWalletOpenForCurrentUser(),
+            'buttons' => [['text'=>$buttonValues['sharj'],'callback_data'=>"increaseMyWallet"]]
+        ],
+        'invite_friends' => [
+            'enabled' => true,
+            'buttons' => [['text'=>$buttonValues['invite_friends'],'callback_data'=>"inviteFriends"]]
+        ],
+        'my_info' => [
+            'enabled' => true,
+            'buttons' => [['text'=>$buttonValues['my_info'],'callback_data'=>"myInfo"]]
+        ],
+        'shared_existence' => [
+            'enabled' => (($botState['sharedExistence'] ?? 'off') == "on"),
+            'buttons' => [['text'=>$buttonValues['shared_existence'],'callback_data'=>"availableServers"]]
+        ],
+        'individual_existence' => [
+            'enabled' => (($botState['individualExistence'] ?? 'off') == "on"),
+            'buttons' => [['text'=>$buttonValues['individual_existence'],'callback_data'=>"availableServers2"]]
+        ],
+        'application_links' => [
+            'enabled' => true,
+            'buttons' => [['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"]]
+        ],
+        'my_tickets' => [
+            'enabled' => true,
+            'buttons' => [['text'=>$buttonValues['my_tickets'],'callback_data'=>"supportSection"]]
+        ],
+        'search_config' => [
+            'enabled' => (($botState['searchState'] ?? 'off') == "on" || $isAdminUser),
+            'buttons' => [['text'=>$buttonValues['search_config'],'callback_data'=>"showUUIDLeft"]]
+        ],
+        'refresh_panel' => [
+            'enabled' => true,
+            'buttons' => [['text'=>'🔄 بروزرسانی پنل', 'callback_data'=>'mainMenu']]
+        ],
+    ];
 
-        $row = [];
-        $rowBreaks = wizwiz_getUserButtonRowBreaks($botState);
-        foreach(wizwiz_getUserButtonOrder($botState) as $key){
-            if(!isset($definitions[$key])) continue;
-            if(empty($definitions[$key]['enabled'])) continue;
-            if(!wizwiz_userButtonVisible($key, $botState)) continue;
-            $row[] = $definitions[$key]['button'];
-            if(count($row) >= 2 || !empty($rowBreaks[$key])){
+    $row = [];
+    $rowBreaks = wizwiz_getUserButtonRowBreaks($botState);
+    foreach(wizwiz_getUserButtonOrder($botState) as $key){
+        if(!isset($definitions[$key])) continue;
+        if(empty($definitions[$key]['enabled'])) continue;
+        if(!wizwiz_userButtonVisible($key, $botState)) continue;
+        foreach($definitions[$key]['buttons'] as $button){
+            $row[] = $button;
+            if(count($row) >= 2){
                 $addRow($row);
                 $row = [];
             }
         }
-        if(count($row) > 0) $addRow($row);
+        if(!empty($rowBreaks[$key]) && count($row) > 0){
+            $addRow($row);
+            $row = [];
+        }
     }
+    if(count($row) > 0) $addRow($row);
 
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` LIKE '%MAIN_BUTTONS%'");
     $stmt->execute();
@@ -3732,11 +3798,19 @@ function getGateWaysKeys(){
     return json_encode(['inline_keyboard'=>[
         [
             ['text'=>(!empty($paymentKeys['bankAccount'])?$paymentKeys['bankAccount']:" "),'callback_data'=>"changePaymentKeysbankAccount"],
-            ['text'=>"شماره حساب",'callback_data'=>"wizwizch"]
+            ['text'=>"شماره کارت خرید اول",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>(!empty($paymentKeys['holderName'])?$paymentKeys['holderName']:" "),'callback_data'=>"changePaymentKeysholderName"],
-            ['text'=>"دارنده حساب",'callback_data'=>"wizwizch"]
+            ['text'=>"دارنده کارت خرید اول",'callback_data'=>"wizwizch"]
+        ],
+        [
+            ['text'=>(!empty($paymentKeys['secondBankAccount'])?$paymentKeys['secondBankAccount']:(!empty($paymentKeys['bankAccount2'])?$paymentKeys['bankAccount2']:" ")),'callback_data'=>"changePaymentKeyssecondBankAccount"],
+            ['text'=>"شماره کارت خرید دوم",'callback_data'=>"wizwizch"]
+        ],
+        [
+            ['text'=>(!empty($paymentKeys['secondHolderName'])?$paymentKeys['secondHolderName']:(!empty($paymentKeys['holderName2'])?$paymentKeys['holderName2']:" ")),'callback_data'=>"changePaymentKeyssecondHolderName"],
+            ['text'=>"دارنده کارت خرید دوم",'callback_data'=>"wizwizch"]
         ],
         [
             ['text'=>(!empty($paymentKeys['cardContact'])?$paymentKeys['cardContact']:(string)$admin),'callback_data'=>"changePaymentKeyscardContact"],
@@ -5390,9 +5464,9 @@ function editInboundRemark($server_id, $uuid, $newRemark){
     $session = $match[1];
     
     $loginResponse = json_decode($body,true);
-    if(!$loginResponse['success']){
+    if(!is_array($loginResponse) || empty($loginResponse['success'])){
         curl_close($curl);
-        return $loginResponse;
+        return is_array($loginResponse) ? $loginResponse : ['success'=>false, 'msg'=>'ورود به پنل ناموفق بود یا پاسخ پنل نامعتبر بود.'];
     }
 
     if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$inbound_id";
@@ -5514,9 +5588,9 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
     $session = $match[1];
 
     $loginResponse = json_decode($body,true);
-    if(!$loginResponse['success']){
+    if(!is_array($loginResponse) || empty($loginResponse['success'])){
         curl_close($curl);
-        return $loginResponse;
+        return is_array($loginResponse) ? $loginResponse : ['success'=>false, 'msg'=>'ورود به پنل ناموفق بود یا پاسخ پنل نامعتبر بود.'];
     }
 
     if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/update/$inbound_id";
@@ -5678,29 +5752,38 @@ function renewInboundUuid($server_id, $uuid){
     $serverType = $server_info['type'];
 
     $response = getJson($server_id);
-    if(!$response) return null;
+    if(!$response || !isset($response->obj)) return null;
     $response = $response->obj;
+    $client_key = -1;
+    $foundClient = false;
     foreach($response as $row){
-        $settings = json_decode($row->settings, true);
-        $clients = $settings['clients'];
-        if($clients[0]['id'] == $uuid || $clients[0]['password'] == $uuid) {
-            $inbound_id = $row->id;
-            $total = $row->total;
-            $up = $row->up;
-            $down = $row->down;
-            $expiryTime = $row->expiryTime;
-            $port = $row->port;
-            $protocol = $row->protocol;
-            $netType = json_decode($row->streamSettings)->network;
-            break;
+        $settings = json_decode($row->settings ?? '{}', true);
+        $clients = $settings['clients'] ?? [];
+        foreach($clients as $key => $client){
+            $cid = $client['id'] ?? null;
+            $pwd = $client['password'] ?? null;
+            if(($cid !== null && $cid == $uuid) || ($pwd !== null && $pwd == $uuid)) {
+                $client_key = $key;
+                $inbound_id = $row->id;
+                $total = $row->total;
+                $up = $row->up;
+                $down = $row->down;
+                $expiryTime = $row->expiryTime;
+                $port = $row->port;
+                $protocol = $row->protocol;
+                $netType = json_decode($row->streamSettings)->network;
+                $foundClient = true;
+                break 2;
+            }
         }
     }
+    if(!$foundClient || $client_key < 0) return (object)['success'=>false, 'msg'=>'کانفیگ روی پنل پیدا نشد.'];
     
     $newUuid = generateRandomString(42,$protocol); 
-    if($protocol == "trojan") $settings['clients'][0]['password'] = $newUuid;
-    else $settings['clients'][0]['id'] = $newUuid;
-    if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
-    if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
+    if($protocol == "trojan") $settings['clients'][$client_key]['password'] = $newUuid;
+    else $settings['clients'][$client_key]['id'] = $newUuid;
+    if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
+    if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -5779,6 +5862,7 @@ function renewInboundUuid($server_id, $uuid){
     $response = curl_exec($curl);
     curl_close($curl);
     $response = json_decode($response);
+    if(!is_object($response)) $response = (object)['success'=>false, 'msg'=>'پاسخ پنل بعد از تغییر UUID نامعتبر بود.'];
     $response->newUuid = $newUuid;
     return $response;
 
@@ -5951,7 +6035,7 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     $serverType = $server_info['type'];
 
     $response = getJson($server_id);
-    if(!$response) return null;
+    if(!$response || !isset($response->obj)) return null;
     $response = $response->obj;
     $client_key = -1;
     foreach($response as $row){
@@ -6013,9 +6097,9 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     $session = $match[1];
 
     $loginResponse = json_decode($body,true);
-    if(!$loginResponse['success']){
+    if(!is_array($loginResponse) || empty($loginResponse['success'])){
         curl_close($curl);
-        return $loginResponse;
+        return is_array($loginResponse) ? $loginResponse : ['success'=>false, 'msg'=>'ورود به پنل ناموفق بود یا پاسخ پنل نامعتبر بود.'];
     }
 
     if($serverType == "sanaei_new"){
@@ -6023,7 +6107,10 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
         wizwiz_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
         $response = curl_exec($curl);
         curl_close($curl);
-        return json_decode($response);
+        $response = json_decode($response);
+        if(!is_object($response)) $response = (object)['success'=>false, 'msg'=>'پاسخ پنل بعد از تغییر UUID نامعتبر بود.'];
+        $response->newUuid = $newUuid;
+        return $response;
     }
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
@@ -6094,6 +6181,7 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
 
     $response = curl_exec($curl);
     $response = json_decode($response);
+    if(!is_object($response)) $response = (object)['success'=>false, 'msg'=>'پاسخ پنل بعد از تغییر UUID نامعتبر بود.'];
     $response->newUuid = $newUuid;
 
     curl_close($curl);
