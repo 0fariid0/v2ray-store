@@ -2712,6 +2712,7 @@ function forwardmessage($tochatId, $fromchatId, $message_id){
 function sendPhoto($photo, $caption = null, $keyboard = null, $parse = "MarkDown", $ci =null){
     global $from_id;
     $ci = $ci??$from_id;
+    $keyboard = wizwiz_styleReplyMarkup($keyboard);
     return bot('sendPhoto',[
         'chat_id'=>$ci,
         'caption'=>$caption,
@@ -4223,13 +4224,15 @@ function wizwiz_formatConfigLinksBlock($links, $titlePrefix = 'کانفیگ با
 }
 
 if(!function_exists('wizwiz_buildMultiDomainConfigMessage')){
-function wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink = '', $heading = '✅ کانفیگ‌های سرویس شما آماده شد'){
+function wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink = '', $heading = '✅ کانفیگ‌های سرویس شما آماده شد', $extraLines = ''){
     $links = wizwiz_normalizeConfigLinksArray($links);
     if(count($links) <= 1) return '';
 
     $remark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
     $msg = $heading . "\n";
     if($remark !== '') $msg .= "🔮 نام سرویس: <b>{$remark}</b>\n";
+    $extraLines = trim((string)$extraLines);
+    if($extraLines !== '') $msg .= $extraLines . "\n";
     $msg .= wizwiz_formatConfigLinksBlock($links, 'کانفیگ با دامنه', true);
 
     $subLink = trim((string)$subLink);
@@ -4241,14 +4244,15 @@ function wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink = '', $h
 }
 
 if(!function_exists('wizwiz_sendMultiDomainConfigMessage')){
-function wizwiz_sendMultiDomainConfigMessage($chatId, $remark, $links, $subLink = '', $serverType = '', $keyboard = null){
+function wizwiz_sendMultiDomainConfigMessage($chatId, $remark, $links, $subLink = '', $serverType = '', $keyboard = null, $heading = null, $extraLines = ''){
     global $botState, $buttonValues;
     $links = wizwiz_normalizeConfigLinksArray($links);
     if(count($links) <= 1) return false;
     if(($botState['configLinkState'] ?? '') == 'off') return false;
     if($serverType === 'marzban') return false;
 
-    $msg = wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink);
+    if($heading === null || trim((string)$heading) === '') $heading = '✅ کانفیگ‌های سرویس شما آماده شد';
+    $msg = wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink, $heading, $extraLines);
     if(trim($msg) === '') return false;
 
     if($keyboard === null){
@@ -9364,6 +9368,58 @@ function wizwiz_h($value){
     return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
 }
 
+function wizwiz_plainTextForTelegram($text){
+    $text = (string)$text;
+    $text = str_ireplace(['<br>', '<br/>', '<br />'], "\n", $text);
+    $text = strip_tags($text);
+    $text = html_entity_decode($text, ENT_QUOTES, 'UTF-8');
+    return trim($text);
+}
+
+function wizwiz_translateTechnicalError($text){
+    $raw = trim((string)$text);
+    if($raw === '') return 'خطای نامشخص';
+    $lower = strtolower($raw);
+    $fa = '';
+    if(strpos($lower, 'can\'t parse entities') !== false || strpos($lower, 'parse entities') !== false || strpos($lower, 'unsupported start tag') !== false){
+        $fa = 'خطای قالب‌بندی متن پیام بود. ربات تلاش می‌کند همان پیام را به صورت متن ساده ارسال کند.';
+    }elseif(strpos($lower, 'caption is too long') !== false){
+        $fa = 'متن کپشن رسید طولانی‌تر از حد مجاز تلگرام بود.';
+    }elseif(strpos($lower, 'message is too long') !== false){
+        $fa = 'متن پیام طولانی‌تر از حد مجاز تلگرام بود.';
+    }elseif(strpos($lower, 'bot was blocked') !== false || strpos($lower, 'forbidden') !== false){
+        $fa = 'ربات توسط گیرنده بلاک شده یا اجازه ارسال پیام ندارد.';
+    }elseif(strpos($lower, 'chat not found') !== false || strpos($lower, 'user not found') !== false){
+        $fa = 'چت یا کاربر مقصد پیدا نشد.';
+    }elseif(strpos($lower, 'wrong file identifier') !== false || strpos($lower, 'file_id') !== false || strpos($lower, 'file identifier') !== false){
+        $fa = 'شناسه فایل رسید نامعتبر بود یا تلگرام به فایل دسترسی نداشت.';
+    }elseif(strpos($lower, 'file is too big') !== false || strpos($lower, 'request entity too large') !== false){
+        $fa = 'حجم فایل ارسالی بیشتر از حد مجاز تلگرام بود.';
+    }elseif(strpos($lower, 'too many requests') !== false || strpos($lower, 'retry after') !== false){
+        $fa = 'محدودیت موقت تلگرام فعال شده است؛ چند لحظه بعد دوباره قابل ارسال است.';
+    }elseif(strpos($lower, 'reply markup') !== false || strpos($lower, 'button') !== false || strpos($lower, 'style') !== false){
+        $fa = 'ساختار دکمه‌های زیر پیام با نسخه Bot API سازگار نبود.';
+    }elseif(strpos($lower, 'timed out') !== false || strpos($lower, 'timeout') !== false || strpos($lower, 'failed to connect') !== false || strpos($lower, 'could not resolve') !== false){
+        $fa = 'ارتباط سرور با تلگرام برقرار نشد یا زمان پاسخ‌گویی تمام شد.';
+    }elseif(strpos($lower, 'user already exists') !== false){
+        $fa = 'کاربر با این نام/ریمارک از قبل روی پنل وجود دارد.';
+    }elseif(strpos($lower, 'duplicate email') !== false){
+        $fa = 'ریمارک/ایمیل تکراری است و پنل اجازه ساخت کانفیگ جدید نمی‌دهد.';
+    }elseif(strpos($lower, 'port already exists') !== false){
+        $fa = 'پورت انتخاب‌شده روی پنل تکراری است.';
+    }elseif(strpos($lower, 'inbound not found') !== false){
+        $fa = 'این inbound روی سرور پیدا نشد یا حذف شده است.';
+    }elseif(strpos($lower, 'connection') !== false || strpos($lower, 'curl') !== false){
+        $fa = 'خطای اتصال رخ داد.';
+    }
+
+    if($fa === ''){
+        if(preg_match('/[آ-ی]/u', $raw)) return $raw;
+        return 'خطای نامشخص: ' . $raw;
+    }
+    return $fa . "\nجزئیات فنی: " . $raw;
+}
+
 function wizwiz_userPrivateUrl($userId){
     return 'tg://user?id=' . intval($userId);
 }
@@ -9925,34 +9981,67 @@ function wizwiz_adminSendFallbackText($hashId, $photo, $caption){
 
 function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = null, $parse = 'HTML', $userId = 0){
     $hashId = trim((string)$hashId);
+    $photo = trim((string)$photo);
     $recipients = wizwiz_getOrderAdminRecipients();
     if(count($recipients) == 0) return ['ok'=>false, 'sent'=>0, 'message'=>'هیچ ادمینی برای ارسال سفارش پیدا نشد.'];
 
-    // دکمه‌های سفارش برای Bot API استاندارد پاک‌سازی می‌شوند تا وجود فیلدهای اضافه مثل style باعث رد شدن sendPhoto نشود.
-    if(function_exists('wizwiz_stripButtonStylesFromMarkup')) $safeKeyboard = wizwiz_stripButtonStylesFromMarkup($keyboard);
-    else $safeKeyboard = $keyboard;
+    // رنگ دکمه‌ها حفظ می‌شود. اگر Bot API مقصد style را قبول نکند، تابع bot() فقط همان درخواست خطادار را بدون style تکرار می‌کند.
+    $keyboard = wizwiz_styleReplyMarkup($keyboard);
 
     $sent = 0;
     $firstChat = 0;
     $firstMsg = 0;
     $errors = [];
+    $plainCaption = function_exists('wizwiz_plainTextForTelegram') ? wizwiz_plainTextForTelegram($caption) : strip_tags((string)$caption);
 
     foreach($recipients as $chatId){
         $chatId = intval($chatId);
         if($chatId == 0) continue;
-        $res = sendPhoto($photo, $caption, $safeKeyboard, $parse, $chatId);
-        $ok = is_object($res) && isset($res->ok) && $res->ok;
+        $ok = false;
+        $res = null;
+        $descList = [];
 
-        // اگر ارسال عکس شکست خورد، یک پیام متنی با همان دکمه‌های تأیید/رد می‌فرستیم تا سفارش در پنل ادمین گم نشود.
-        if(!$ok){
-            $desc = is_object($res) && isset($res->description) ? (string)$res->description : 'sendPhoto failed';
-            $errors[] = $chatId . ': ' . $desc;
-            $fallback = wizwiz_adminSendFallbackText($hashId, $photo, $caption);
-            $res = sendMessage($fallback, $safeKeyboard, $parse, $chatId);
+        if($photo !== ''){
+            $res = sendPhoto($photo, $caption, $keyboard, $parse, $chatId);
             $ok = is_object($res) && isset($res->ok) && $res->ok;
             if(!$ok){
-                $desc2 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage fallback failed';
-                $errors[] = $chatId . ': ' . $desc2;
+                $desc = is_object($res) && isset($res->description) ? (string)$res->description : 'sendPhoto failed';
+                $descList[] = $desc;
+                // اگر مشکل از HTML/Markdown یا کپشن طولانی بود، عکس را با متن ساده دوباره می‌فرستیم.
+                $safePlainCaption = ($plainCaption !== '' ? $plainCaption : '🧾 رسید پرداخت');
+                if(function_exists('mb_substr')) $safePlainCaption = mb_substr($safePlainCaption, 0, 900, 'UTF-8');
+                else $safePlainCaption = substr($safePlainCaption, 0, 900);
+                $res = sendPhoto($photo, $safePlainCaption, $keyboard, null, $chatId);
+                $ok = is_object($res) && isset($res->ok) && $res->ok;
+                if(!$ok){
+                    $desc2 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendPhoto plain fallback failed';
+                    $descList[] = $desc2;
+                }
+            }
+        }
+
+        if(!$ok){
+            // اگر عکس با کپشن ارسال نشد، اول خود عکس را بدون دکمه بفرستیم تا رسید گم نشود، بعد متن سفارش را با دکمه‌ها ارسال کنیم.
+            if($photo !== ''){
+                $photoOnly = sendPhoto($photo, '🧾 رسید پرداخت', null, null, $chatId);
+                if(!(is_object($photoOnly) && isset($photoOnly->ok) && $photoOnly->ok)){
+                    $descPhoto = is_object($photoOnly) && isset($photoOnly->description) ? (string)$photoOnly->description : 'sendPhoto photo-only failed';
+                    $descList[] = $descPhoto;
+                }
+            }
+            $fallback = wizwiz_adminSendFallbackText($hashId, $photo, $caption);
+            $res = sendMessage($fallback, $keyboard, $parse, $chatId);
+            $ok = is_object($res) && isset($res->ok) && $res->ok;
+            if(!$ok){
+                $desc3 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage fallback failed';
+                $descList[] = $desc3;
+                $plainFallback = function_exists('wizwiz_plainTextForTelegram') ? wizwiz_plainTextForTelegram($fallback) : strip_tags($fallback);
+                $res = sendMessage($plainFallback, $keyboard, null, $chatId);
+                $ok = is_object($res) && isset($res->ok) && $res->ok;
+                if(!$ok){
+                    $desc4 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage plain fallback failed';
+                    $descList[] = $desc4;
+                }
             }
         }
 
@@ -9962,6 +10051,8 @@ function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = nul
                 $firstChat = $chatId;
                 $firstMsg = intval($res->result->message_id);
             }
+        }else{
+            $errors[] = $chatId . ': ' . implode(' | ', $descList);
         }
     }
 
@@ -9971,14 +10062,16 @@ function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = nul
 
     if($sent <= 0){
         $errText = count($errors) ? implode("\n", array_slice($errors, 0, 5)) : 'نامشخص';
+        $faErr = function_exists('wizwiz_translateTechnicalError') ? wizwiz_translateTechnicalError($errText) : $errText;
         if(function_exists('wizwiz_reportEvent')){
             $body = "⚠️ <b>ارسال پیام سفارش به ادمین ناموفق بود</b>\n" .
                     ($hashId !== '' ? "🔖 کد پرداخت: <code>" . wizwiz_h($hashId) . "</code>\n" : '') .
                     ($userId ? "🆔 کاربر: <code>" . intval($userId) . "</code>\n" : '') .
-                    "📝 خطا:\n<code>" . wizwiz_h($errText) . "</code>" . wizwiz_reportTimeLine();
-            wizwiz_reportEvent('⚠️ خطای ارسال سفارش به ادمین', $body, null, 'admin_order_send_failed');
+                    "📝 خطا به فارسی:\n<code>" . wizwiz_h($faErr) . "</code>" . wizwiz_reportTimeLine();
+            $keyboardReport = $userId ? wizwiz_reportPrivateKeyboard($userId) : null;
+            wizwiz_reportEvent('⚠️ خطای ارسال سفارش به ادمین', $body, $keyboardReport, 'admin_order_send_failed');
         }
-        return ['ok'=>false, 'sent'=>0, 'message'=>$errText, 'errors'=>$errors];
+        return ['ok'=>false, 'sent'=>0, 'message'=>$faErr, 'errors'=>$errors];
     }
 
     return ['ok'=>true, 'sent'=>$sent, 'chat_id'=>$firstChat, 'message_id'=>$firstMsg, 'errors'=>$errors];
@@ -10340,7 +10433,7 @@ function wizwiz_approveSentOrderByHash($hashId, $auto = false){
 
         if(is_null($response)) return $fail('اتصال به سرور برقرار نیست.');
         if($response === 'inbound not Found') return $fail('سطر inbound در سرور پیدا نشد. سفارش به حالت قابل تأیید برگشت؛ بعد از اصلاح inbound دوباره روی تأیید بزنید.');
-        if(!is_object($response) || empty($response->success)) return $fail('خطای ساخت کانفیگ: ' . (is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response));
+        if(!is_object($response) || empty($response->success)) return $fail('خطای ساخت کانفیگ: ' . (function_exists('wizwiz_translateTechnicalError') ? wizwiz_translateTechnicalError(is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response) : (is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response)));
 
         if($serverType == 'marzban'){
             $uniqid = $token = str_replace('/sub/', '', $response->sub_link);

@@ -40,9 +40,6 @@ if(wizwiz_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
 if(function_exists('wizwiz_processAutoApproveOrders')){
     wizwiz_processAutoApproveOrders(false, 2);
 }
-if(function_exists('wizwiz_processDailyChannelStats')){
-    wizwiz_processDailyChannelStats(false);
-}
 if($data == 'autoApproveOrdersMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
     exit();
@@ -7525,12 +7522,26 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $__wizwizSubLink = isset($subLink) ? $subLink : '';
         $__wizwizServerType = isset($serverType) ? $serverType : '';
         $__wizwizRemark = isset($remark) ? $remark : '';
+        $__wizwizIsTestAccount = (intval($price ?? 0) === 0);
+        $__wizwizTestHeading = $__wizwizIsTestAccount ? '🧪 اکانت تست شما آماده شد' : null;
+        $__wizwizTestExtra = $__wizwizIsTestAccount ? "🔋 حجم اکانت تست: <b>{$volume} گیگ</b>
+⏰ مدت اعتبار تست: <b>{$days} روز</b>
+ℹ️ این اکانت تست است و {$volume} گیگ حجم دارد." : '';
         $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
+        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType, null, $__wizwizTestHeading, $__wizwizTestExtra)){
             $__wizwizLoopLinks = [];
         }
         foreach($__wizwizLoopLinks as $link){
-        $acc_text = "
+        if($__wizwizIsTestAccount){
+            $acc_text = "🧪 اکانت تست شما فعال شد
+🔮 نام اکانت تست: $remark
+🔋 حجم اکانت تست: $volume گیگ
+⏰ مدت اعتبار تست: $days روز
+ℹ️ این اکانت تست است و $volume گیگ حجم دارد.
+" . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
+💝 config : <code>$link</code>":"");
+        }else{
+            $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
@@ -7538,6 +7549,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 ⏰ مدت سرویس: $days روز
 " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
+        }
 if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
 
