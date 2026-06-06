@@ -9560,6 +9560,8 @@ function wizwiz_translateTechnicalError($text){
         $fa = 'حجم فایل ارسالی بیشتر از حد مجاز تلگرام بود.';
     }elseif(strpos($lower, 'too many requests') !== false || strpos($lower, 'retry after') !== false){
         $fa = 'محدودیت موقت تلگرام فعال شده است؛ چند لحظه بعد دوباره قابل ارسال است.';
+    }elseif(strpos($lower, 'button_user_privacy_restricted') !== false){
+        $fa = 'تلگرام اجازه ساخت دکمه رفتن به پی‌وی این کاربر را نداد. این محدودیت از سمت حریم خصوصی کاربر/تلگرام است؛ ربات باید پیام را بدون دکمه پی‌وی ارسال کند.';
     }elseif(strpos($lower, 'reply markup') !== false || strpos($lower, 'button') !== false || strpos($lower, 'style') !== false){
         $fa = 'ساختار دکمه‌های زیر پیام با نسخه Bot API سازگار نبود.';
     }elseif(strpos($lower, 'timed out') !== false || strpos($lower, 'timeout') !== false || strpos($lower, 'failed to connect') !== false || strpos($lower, 'could not resolve') !== false){
@@ -9589,6 +9591,41 @@ function wizwiz_userPrivateUrl($userId){
 
 function wizwiz_userPrivateButton($userId, $text = '👤 رفتن به پی وی مشتری'){
     return ['text' => $text, 'url' => wizwiz_userPrivateUrl($userId), 'style' => 'primary'];
+}
+
+function wizwiz_isUserPrivacyButtonError($value){
+    if(is_array($value)) $value = implode(' | ', array_map('strval', $value));
+    $value = strtolower((string)$value);
+    return strpos($value, 'button_user_privacy_restricted') !== false;
+}
+
+function wizwiz_stripPrivateUserButtons($markup, &$removed = false){
+    $removed = false;
+    if($markup === null || $markup === '') return $markup;
+
+    $decoded = is_string($markup) ? json_decode($markup, true) : $markup;
+    if(!is_array($decoded) || !isset($decoded['inline_keyboard']) || !is_array($decoded['inline_keyboard'])) return $markup;
+
+    $rows = [];
+    foreach($decoded['inline_keyboard'] as $row){
+        if(!is_array($row)) continue;
+        $newRow = [];
+        foreach($row as $button){
+            if(!is_array($button)) continue;
+            $url = strtolower(trim((string)($button['url'] ?? '')));
+            if($url !== '' && (strpos($url, 'tg://user?id=') === 0 || strpos($url, 'tg://openmessage?user_id=') === 0)){
+                $removed = true;
+                continue;
+            }
+            $newRow[] = $button;
+        }
+        if(count($newRow) > 0) $rows[] = $newRow;
+    }
+
+    if(!$removed) return $markup;
+    $decoded['inline_keyboard'] = $rows;
+    if(count($rows) == 0) return null;
+    return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
 function wizwiz_formatUserLine($userId, $name = '', $username = ''){
@@ -9760,7 +9797,18 @@ function wizwiz_reportEvent($title, $body, $keyboard = null, $eventKey = null){
     if($chat === null || $chat === '') return null;
     // اعلان‌ها جدا از آمار هستند؛ آمار فقط در گزارش روزانه/ارسال دستی ارسال می‌شود.
     $msg = $title . "\n\n" . $body;
-    return sendMessage($msg, $keyboard, 'HTML', $chat);
+    $res = sendMessage($msg, $keyboard, 'HTML', $chat);
+    if(is_object($res) && isset($res->ok) && $res->ok) return $res;
+
+    $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
+    if(function_exists('wizwiz_isUserPrivacyButtonError') && wizwiz_isUserPrivacyButtonError($desc)){
+        $removed = false;
+        $safeKeyboard = wizwiz_stripPrivateUserButtons($keyboard, $removed);
+        if($removed){
+            return sendMessage($msg, $safeKeyboard, 'HTML', $chat);
+        }
+    }
+    return $res;
 }
 
 function wizwiz_buildDailyChannelStatsText($manual = false){
@@ -10046,7 +10094,26 @@ function wizwiz_updateAdminPayMessageStatus($hashId, $statusText, $style = 'succ
     [$chat, $msg, $storedUser] = wizwiz_getAdminPayMessage($hashId);
     if($userId <= 0) $userId = $storedUser;
     if($chat == 0 || $msg <= 0) return false;
-    editKeys(wizwiz_orderStatusKeyboard($statusText, $userId, $style, $copyText), $msg, $chat);
+    $keys = wizwiz_orderStatusKeyboard($statusText, $userId, $style, $copyText);
+    $keys = wizwiz_styleReplyMarkup($keys);
+    $res = bot('editMessageReplyMarkup',[
+        'chat_id' => $chat,
+        'message_id' => $msg,
+        'reply_markup' => $keys
+    ]);
+    if(is_object($res) && isset($res->ok) && $res->ok) return true;
+    $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
+    if(function_exists('wizwiz_isUserPrivacyButtonError') && wizwiz_isUserPrivacyButtonError($desc)){
+        $removed = false;
+        $safeKeys = wizwiz_stripPrivateUserButtons($keys, $removed);
+        if($removed){
+            bot('editMessageReplyMarkup',[
+                'chat_id' => $chat,
+                'message_id' => $msg,
+                'reply_markup' => $safeKeys
+            ]);
+        }
+    }
     return true;
 }
 
@@ -10396,70 +10463,93 @@ function wizwiz_adminSendFallbackText($hashId, $photo, $caption){
     return $text . $extra;
 }
 
-function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = null, $parse = 'HTML', $userId = 0){
+function wizwiz_sendAdminPaymentPhotoToChat($chatId, $hashId, $photo, $caption, $keyboard = null, $parse = 'HTML'){
     $hashId = trim((string)$hashId);
     $photo = trim((string)$photo);
-    $recipients = wizwiz_getOrderAdminRecipients();
-    if(count($recipients) == 0) return ['ok'=>false, 'sent'=>0, 'message'=>'هیچ ادمینی برای ارسال سفارش پیدا نشد.'];
-
-    // دکمه‌ها باید همیشه همراه همان پیام سفارش باشند؛ اگر ارسال عکس با کپشن کامل خطا داد،
-    // چند بار با کپشن امن‌تر تلاش می‌کنیم، اما عکسِ تنها و بدون دکمه برای ادمین نمی‌فرستیم.
-    $keyboard = wizwiz_styleReplyMarkup($keyboard);
-
-    $sent = 0;
-    $firstChat = 0;
-    $firstMsg = 0;
-    $errors = [];
     $plainCaption = function_exists('wizwiz_plainTextForTelegram') ? wizwiz_plainTextForTelegram($caption) : strip_tags((string)$caption);
     $plainCaption = trim($plainCaption) !== '' ? trim($plainCaption) : '🧾 رسید پرداخت کارت‌به‌کارت';
     if(function_exists('mb_substr')) $safePlainCaption = mb_substr($plainCaption, 0, 900, 'UTF-8');
     else $safePlainCaption = substr($plainCaption, 0, 900);
     $minimalCaption = '🧾 رسید پرداخت کارت‌به‌کارت' . ($hashId !== '' ? "\n🔖 کد پرداخت: " . $hashId : '');
 
+    $ok = false;
+    $res = null;
+    $descList = [];
+
+    if($photo !== ''){
+        $attempts = [
+            [$caption, $parse, 'photo with html caption'],
+            [$safePlainCaption, null, 'photo with plain caption'],
+            [$minimalCaption, null, 'photo with minimal caption'],
+        ];
+        foreach($attempts as $attempt){
+            $res = sendPhoto($photo, $attempt[0], $keyboard, $attempt[1], $chatId);
+            $ok = is_object($res) && isset($res->ok) && $res->ok;
+            if($ok) break;
+            $desc = is_object($res) && isset($res->description) ? (string)$res->description : ($attempt[2] . ' failed');
+            $descList[] = $desc;
+        }
+    }
+
+    if(!$ok){
+        // اگر تلگرام به هر دلیل اجازه ارسال عکس همراه دکمه را نداد، پیام متنیِ سفارش با دکمه‌ها ارسال می‌شود
+        // تا ادمین بدون دکمه نماند. File ID رسید هم داخل متن می‌آید تا قابل پیگیری باشد.
+        $fallback = wizwiz_adminSendFallbackText($hashId, $photo, $caption);
+        $res = sendMessage($fallback, $keyboard, $parse, $chatId);
+        $ok = is_object($res) && isset($res->ok) && $res->ok;
+        if(!$ok){
+            $desc3 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage fallback failed';
+            $descList[] = $desc3;
+            $plainFallback = function_exists('wizwiz_plainTextForTelegram') ? wizwiz_plainTextForTelegram($fallback) : strip_tags($fallback);
+            $res = sendMessage($plainFallback, $keyboard, null, $chatId);
+            $ok = is_object($res) && isset($res->ok) && $res->ok;
+            if(!$ok){
+                $desc4 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage plain fallback failed';
+                $descList[] = $desc4;
+            }
+        }
+    }
+
+    return ['ok'=>$ok, 'result'=>$res, 'errors'=>$descList];
+}
+
+function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = null, $parse = 'HTML', $userId = 0){
+    $hashId = trim((string)$hashId);
+    $photo = trim((string)$photo);
+    $recipients = wizwiz_getOrderAdminRecipients();
+    if(count($recipients) == 0) return ['ok'=>false, 'sent'=>0, 'message'=>'هیچ ادمینی برای ارسال سفارش پیدا نشد.'];
+
+    // اول با دکمه tg://user?id تلاش می‌کنیم. اگر تلگرام خطای BUTTON_USER_PRIVACY_RESTRICTED بدهد،
+    // همان پیام دوباره بدون دکمه پی‌وی ارسال می‌شود تا دکمه‌های تأیید/رد از بین نروند.
+    $keyboard = wizwiz_styleReplyMarkup($keyboard);
+    $removedPrivateButton = false;
+    $keyboardWithoutPrivate = wizwiz_stripPrivateUserButtons($keyboard, $removedPrivateButton);
+
+    $sent = 0;
+    $firstChat = 0;
+    $firstMsg = 0;
+    $errors = [];
+
     foreach($recipients as $chatId){
         $chatId = intval($chatId);
         if($chatId == 0) continue;
-        $ok = false;
-        $res = null;
-        $descList = [];
 
-        if($photo !== ''){
-            $attempts = [
-                [$caption, $parse, 'photo with html caption'],
-                [$safePlainCaption, null, 'photo with plain caption'],
-                [$minimalCaption, null, 'photo with minimal caption'],
-            ];
-            foreach($attempts as $attempt){
-                $res = sendPhoto($photo, $attempt[0], $keyboard, $attempt[1], $chatId);
-                $ok = is_object($res) && isset($res->ok) && $res->ok;
-                if($ok) break;
-                $desc = is_object($res) && isset($res->description) ? (string)$res->description : ($attempt[2] . ' failed');
-                $descList[] = $desc;
-            }
-        }
+        $try = wizwiz_sendAdminPaymentPhotoToChat($chatId, $hashId, $photo, $caption, $keyboard, $parse);
+        $ok = !empty($try['ok']);
+        $res = $try['result'] ?? null;
+        $descList = $try['errors'] ?? [];
 
-        if(!$ok){
-            // اگر تلگرام به هر دلیل اجازه ارسال عکس همراه دکمه را نداد، پیام متنیِ سفارش با دکمه‌ها ارسال می‌شود
-            // تا ادمین بدون دکمه نماند. File ID رسید هم داخل متن می‌آید تا قابل پیگیری باشد.
-            $fallback = wizwiz_adminSendFallbackText($hashId, $photo, $caption);
-            $res = sendMessage($fallback, $keyboard, $parse, $chatId);
-            $ok = is_object($res) && isset($res->ok) && $res->ok;
-            if(!$ok){
-                $desc3 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage fallback failed';
-                $descList[] = $desc3;
-                $plainFallback = function_exists('wizwiz_plainTextForTelegram') ? wizwiz_plainTextForTelegram($fallback) : strip_tags($fallback);
-                $res = sendMessage($plainFallback, $keyboard, null, $chatId);
-                $ok = is_object($res) && isset($res->ok) && $res->ok;
-                if(!$ok){
-                    $desc4 = is_object($res) && isset($res->description) ? (string)$res->description : 'sendMessage plain fallback failed';
-                    $descList[] = $desc4;
-                }
-            }
+        if(!$ok && $removedPrivateButton && wizwiz_isUserPrivacyButtonError($descList)){
+            $descList[] = 'private user button removed because Telegram returned BUTTON_USER_PRIVACY_RESTRICTED';
+            $try2 = wizwiz_sendAdminPaymentPhotoToChat($chatId, $hashId, $photo, $caption, $keyboardWithoutPrivate, $parse);
+            $ok = !empty($try2['ok']);
+            $res = $try2['result'] ?? $res;
+            if(!empty($try2['errors']) && is_array($try2['errors'])) $descList = array_merge($descList, $try2['errors']);
         }
 
         if($ok){
             $sent++;
-            if($firstMsg <= 0 && isset($res->result->message_id)){
+            if($firstMsg <= 0 && is_object($res) && isset($res->result->message_id)){
                 $firstChat = $chatId;
                 $firstMsg = intval($res->result->message_id);
             }
