@@ -1849,11 +1849,82 @@ function wizwiz_markUserCardVersion($userId, $paymentKeys = null){
 
 function wizwiz_cartToCartKeyboard($hashId = ''){
     $rows = [];
+    $hashId = trim((string)$hashId);
     if($hashId !== ''){
         $rows[] = [['text'=>'💳 گرفتن شماره کارت', 'callback_data'=>'requestCartToCartCard' . $hashId, 'style'=>'success']];
+        $rows[] = [['text'=>'❌ لغو خرید', 'callback_data'=>'cancelPendingPay' . $hashId, 'style'=>'danger']];
+    }else{
+        $rows[] = [['text'=>'❌ لغو خرید', 'callback_data'=>'mainMenu', 'style'=>'danger']];
     }
-    $rows[] = [['text'=>'❌ لغو', 'callback_data'=>'mainMenu', 'style'=>'danger']];
     return wizwiz_inlineKeyboardJson($rows);
+}
+
+function wizwiz_cartToCartReceiptKeyboard($hashId = ''){
+    $hashId = trim((string)$hashId);
+    $cb = $hashId !== '' ? ('cancelPendingPay' . $hashId) : 'mainMenu';
+    return wizwiz_inlineKeyboardJson([
+        [['text'=>'❌ لغو خرید', 'callback_data'=>$cb, 'style'=>'danger']]
+    ]);
+}
+
+function wizwiz_isCartToCartReceiptStep($step, &$matches = null){
+    $step = (string)$step;
+    return preg_match('/^(increaseWalletWithCartToCart|payCustomWithCartToCart|payWithCartToCart|payRenewWithCartToCart|payIncreaseDayWithCartToCart|payIncreaseWithCartToCart)(.+)$/', $step, $matches) === 1;
+}
+
+function wizwiz_getBestPhotoFileId($updateObj = null, $fallback = ''){
+    $fallback = trim((string)$fallback);
+    if($updateObj === null && isset($GLOBALS['update'])) $updateObj = $GLOBALS['update'];
+    if(!isset($updateObj->message->photo) || !is_array($updateObj->message->photo) || count($updateObj->message->photo) == 0) return $fallback;
+    $best = null;
+    foreach($updateObj->message->photo as $photoSize){
+        if(isset($photoSize->file_id) && trim((string)$photoSize->file_id) !== '') $best = $photoSize;
+    }
+    return $best && isset($best->file_id) ? trim((string)$best->file_id) : $fallback;
+}
+
+function wizwiz_isReceiptPhotoMessage($updateObj = null){
+    return wizwiz_getBestPhotoFileId($updateObj, '') !== '';
+}
+
+function wizwiz_sendReceiptPhotoOnlyNotice($hashId = ''){
+    $txt = "📸 <b>لطفاً فقط تصویر رسید پرداخت را ارسال کنید.</b>\n\n" .
+           "✅ اگر عکس رسید کپشن/توضیح داشته باشد مشکلی نیست؛ ربات فقط خودِ عکس رسید را ثبت و برای ادمین ارسال می‌کند.\n" .
+           "❌ متن، فایل، ویدیو، ویس یا عکس ارسال‌شده به صورت فایل قابل قبول نیست.\n\n" .
+           "اگر منصرف شده‌اید، روی دکمه <b>لغو خرید</b> بزنید.";
+    return sendMessage($txt, wizwiz_cartToCartReceiptKeyboard($hashId), 'HTML');
+}
+
+function wizwiz_cancelPendingPayByUser($hashId, $userId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    $userId = intval($userId);
+    if($hashId === '' || $userId <= 0) return ['ok'=>false, 'message'=>'اطلاعات پرداخت نامعتبر است.'];
+
+    $stmt = $connection->prepare("SELECT `state`, `user_id` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return ['ok'=>false, 'message'=>'خطای دیتابیس هنگام بررسی پرداخت.'];
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $pay = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if(!$pay) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد یا قبلاً حذف شده است.'];
+    if(intval($pay['user_id'] ?? 0) !== $userId) return ['ok'=>false, 'message'=>'این پرداخت متعلق به شما نیست.'];
+
+    $state = (string)($pay['state'] ?? '');
+    if(!in_array($state, ['pending', 'sent'], true)){
+        return ['ok'=>false, 'message'=>'این پرداخت دیگر قابل لغو نیست.'];
+    }
+
+    $now = time();
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'cancelled_by_user', `approval_error` = NULL, `approval_error_date` = ? WHERE `hash_id` = ? AND `user_id` = ? AND `state` IN ('pending','sent')");
+    if(!$stmt) return ['ok'=>false, 'message'=>'خطای دیتابیس هنگام لغو پرداخت.'];
+    $stmt->bind_param('isi', $now, $hashId, $userId);
+    $stmt->execute();
+    $affected = $stmt->affected_rows;
+    $stmt->close();
+
+    return ['ok'=>($affected > 0), 'message'=>($affected > 0 ? 'خرید با موفقیت لغو شد.' : 'این پرداخت قبلاً از حالت انتظار خارج شده است.')];
 }
 
 function wizwiz_cartToCartNoCardText($alreadyReceived = false, $paymentKeys = null){
@@ -1869,13 +1940,17 @@ function wizwiz_sendCartToCartInstructions($hashId, $templateKey, $parse = 'HTML
     $paymentKeys = wizwiz_getPaymentKeys();
     $bank = trim((string)($paymentKeys['bankAccount'] ?? ''));
     $holder = trim((string)($paymentKeys['holderName'] ?? ''));
+    $extra = "\n\n📸 <b>بعد از واریز، فقط عکس رسید را همینجا ارسال کنید.</b>\n" .
+             "اگر عکس کپشن داشته باشد مشکلی نیست؛ فقط خود عکس رسید برای ادمین ثبت می‌شود.\n" .
+             "برای انصراف، دکمه <b>لغو خرید</b> را بزنید.";
     if($bank !== ''){
         $template = $mainValues[$templateKey] ?? 'ACCOUNT-NUMBER\nHOLDER-NAME';
-        sendMessage(str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template), $GLOBALS['cancelKey'], $parse);
+        $txt = str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template) . $extra;
+        sendMessage($txt, wizwiz_cartToCartReceiptKeyboard($hashId), $parse);
         return;
     }
     $already = wizwiz_userHasCardVersion($userInfo, $paymentKeys);
-    sendMessage(wizwiz_cartToCartNoCardText($already, $paymentKeys), wizwiz_cartToCartKeyboard($hashId), 'HTML');
+    sendMessage(wizwiz_cartToCartNoCardText($already, $paymentKeys) . $extra, wizwiz_cartToCartKeyboard($hashId), 'HTML');
 }
 
 function wizwiz_deleteLocalOrderOnly($orderId){

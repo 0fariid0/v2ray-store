@@ -37,6 +37,26 @@ if($robotState == "off" && $from_id != $admin){
 if(wizwiz_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
+
+// لغو امن خرید/پرداخت کارت‌به‌کارت در مرحله ارسال رسید
+if(function_exists('wizwiz_isCartToCartReceiptStep') && wizwiz_isCartToCartReceiptStep($userInfo['step'] ?? '', $wizReceiptStepMatch) && (($text ?? '') == ($buttonValues['cancel'] ?? ''))){
+    $hashId = $wizReceiptStepMatch[2] ?? '';
+    $cancelResult = wizwiz_cancelPendingPayByUser($hashId, $from_id);
+    setUser();
+    setUser('', 'temp');
+    sendMessage(($cancelResult['ok'] ? '❌ ' : '⚠️ ') . $cancelResult['message'], $removeKeyboard, 'HTML');
+    sendMessage($mainValues['reached_main_menu'], getMainKeys());
+    exit();
+}
+if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $wizCancelPayMatch)){
+    $cancelResult = function_exists('wizwiz_cancelPendingPayByUser') ? wizwiz_cancelPendingPayByUser($wizCancelPayMatch[1], $from_id) : ['ok'=>false, 'message'=>'امکان لغو پرداخت در دسترس نیست.'];
+    setUser();
+    setUser('', 'temp');
+    if(isset($message_id)) delMessage();
+    sendMessage(($cancelResult['ok'] ? '❌ ' : '⚠️ ') . $cancelResult['message'], $removeKeyboard, 'HTML');
+    sendMessage($mainValues['reached_main_menu'], getMainKeys());
+    exit();
+}
 if(function_exists('wizwiz_processAutoApproveOrders')){
     wizwiz_processAutoApproveOrders(false, 2);
 }
@@ -1383,7 +1403,8 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$data, $match)) {
     exit;
 }
 if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(isset($update->message->photo)){
+    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         setUser();
         $uid = $userInfo['userid'];
         $name = $userInfo['name'];
@@ -1412,7 +1433,8 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
             sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
         }
     }else{
-        sendMessage($mainValues['please_send_only_image']);
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        else sendMessage($mainValues['please_send_only_image']);
     }
 }
 if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -4895,7 +4917,8 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$data, $match)) {
     exit;
 }
 if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(isset($update->message->photo)){
+    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -4950,7 +4973,8 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
             }
         }
     }else{
-        sendMessage($mainValues['please_send_only_image']);
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        else sendMessage($mainValues['please_send_only_image']);
     }
 }
 if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cancel']){
@@ -5581,7 +5605,8 @@ if(preg_match('/payWithCartToCart(.*)/',$data,$match)) {
     exit;
 }
 if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(isset($update->message->photo)){
+    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -5643,7 +5668,8 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
             }
         }
     }else{
-        sendMessage($mainValues['please_send_only_image']);
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        else sendMessage($mainValues['please_send_only_image']);
     }
 }
 if($data=="availableServers"){
@@ -9908,11 +9934,12 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$data,$match)) {
     setUser($data);
     delMessage();
 
-    sendMessage(str_replace(['ACCOUNT-NUMBER', 'HOLDER-NAME'],[$paymentKeys['bankAccount'], $paymentKeys['holderName']], $mainValues['renew_ccount_cart_to_cart']),$cancelKey,"html");
+    wizwiz_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel']){
-    if(isset($update->message->photo)){
+    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -9969,7 +9996,8 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
         }
         setUser();
     }else{
-        sendMessage($mainValues['please_send_only_image']);
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        else sendMessage($mainValues['please_send_only_image']);
     }
 }
 if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -10767,12 +10795,13 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
 if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$data,$match)) {
     delMessage();
     setUser($data);
-    sendMessage(str_replace(['ACCOUNT-NUMBER', 'HOLDER-NAME'],[$paymentKeys['bankAccount'], $paymentKeys['holderName']], $mainValues['renew_ccount_cart_to_cart']),$cancelKey,"html");
+    wizwiz_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
 
     exit;
 }
 if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(isset($update->message->photo)){
+    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -10834,7 +10863,8 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
         }
         setUser();
     }else{ 
-        sendMessage($mainValues['please_send_only_image']);
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        else sendMessage($mainValues['please_send_only_image']);
     }
 
 }
@@ -11128,11 +11158,12 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$data)) {
     setUser($data);
     delMessage();
     
-    sendMessage(str_replace(['ACCOUNT-NUMBER', 'HOLDER-NAME'],[$paymentKeys['bankAccount'], $paymentKeys['holderName']], $mainValues['renew_ccount_cart_to_cart']),$cancelKey,"html");
+    wizwiz_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel']){
-    if(isset($update->message->photo)){
+    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -11192,7 +11223,8 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
         }
         setUser();
     }else{
-        sendMessage($mainValues['please_send_only_image']);
+        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        else sendMessage($mainValues['please_send_only_image']);
     }
 }
 if(preg_match('/approveIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
