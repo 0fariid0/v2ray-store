@@ -224,6 +224,125 @@ function wizwiz_warn_setting_value($type, $default = null){
     return $default;
 }
 
+function wizwiz_warn_ensure_notification_columns(){
+    global $connection;
+    $columns = [
+        'notif_msg_id' => "ALTER TABLE `orders_list` ADD `notif_msg_id` int(20) NOT NULL DEFAULT 0 AFTER `notif`",
+        'notif_kind' => "ALTER TABLE `orders_list` ADD `notif_kind` varchar(40) NOT NULL DEFAULT '' AFTER `notif_msg_id`"
+    ];
+    foreach($columns as $column => $alter){
+        $exists = @($connection->query("SHOW COLUMNS FROM `orders_list` LIKE '$column'"));
+        if(!$exists || $exists->num_rows == 0) @($connection->query($alter));
+    }
+}
+
+function wizwiz_warn_h($value){
+    if(function_exists('wizwiz_h')) return wizwiz_h($value);
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function wizwiz_warn_is_test_order($order){
+    return intval($order['amount'] ?? 0) <= 0;
+}
+
+function wizwiz_warn_gb_text($bytes){
+    $gb = round(max(0, intval($bytes)) / 1073741824, 2);
+    if($gb <= 0) return '۰';
+    return rtrim(rtrim(number_format($gb, 2, '.', ''), '0'), '.');
+}
+
+function wizwiz_warn_update_notification_state($orderId, $notif, $kind = '', $messageId = 0){
+    global $connection;
+    $orderId = intval($orderId);
+    $notif = intval($notif);
+    $messageId = intval($messageId);
+    $kind = trim((string)$kind);
+    if($orderId <= 0) return false;
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `notif` = ?, `notif_kind` = ?, `notif_msg_id` = ? WHERE `id` = ?");
+    if(!$stmt){
+        wizwiz_warn_update_notif_by_order($orderId, $notif);
+        return false;
+    }
+    $stmt->bind_param('isii', $notif, $kind, $messageId, $orderId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_warn_delete_previous_message($order){
+    $msgId = intval($order['notif_msg_id'] ?? 0);
+    $userId = intval($order['userid'] ?? 0);
+    if($msgId > 0 && $userId != 0) @delMessage($msgId, $userId);
+}
+
+function wizwiz_warn_send_or_replace($order, $kind, $msg, $notifValue){
+    $orderId = intval($order['id'] ?? 0);
+    $oldKind = trim((string)($order['notif_kind'] ?? ''));
+    $oldMsgId = intval($order['notif_msg_id'] ?? 0);
+    if($oldKind === $kind && $oldMsgId > 0){
+        wizwiz_warn_update_notification_state($orderId, $notifValue, $kind, $oldMsgId);
+        return $oldMsgId;
+    }
+    wizwiz_warn_delete_previous_message($order);
+    $res = sendMessage($msg, null, 'HTML', intval($order['userid'] ?? 0));
+    $newMsgId = 0;
+    if(is_object($res) && isset($res->ok) && $res->ok && isset($res->result->message_id)) $newMsgId = intval($res->result->message_id);
+    wizwiz_warn_update_notification_state($orderId, $notifValue, $kind, $newMsgId);
+    return $newMsgId;
+}
+
+function wizwiz_warn_clear_notification($order, $deleteMessage = true){
+    if($deleteMessage) wizwiz_warn_delete_previous_message($order);
+    wizwiz_warn_update_notification_state(intval($order['id'] ?? 0), 0, '', 0);
+}
+
+function wizwiz_warn_build_low_message($order, $kind, $leftBytes, $expiryTime){
+    $remark = wizwiz_warn_h($order['remark'] ?? '');
+    $isTest = wizwiz_warn_is_test_order($order);
+    if($kind === 'low_volume'){
+        $left = wizwiz_warn_gb_text($leftBytes);
+        if($isTest){
+            return "⚠️ <b>حجم اکانت تست شما رو به پایان است</b>\n\n🔮 نام اکانت تست: <code>{$remark}</code>\n🔋 حجم باقی‌مانده: <b>{$left} گیگ</b>\n\nاین اکانت تست است؛ در صورت رضایت از کیفیت سرویس، می‌توانید از منوی خرید سرویس اصلی تهیه کنید.";
+        }
+        return "⚠️ <b>هشدار حجم سرویس</b>\n\nاز حجم اکانت شما کمتر از <b>۱ گیگ</b> باقی مانده است.\n🔮 نام اکانت: <code>{$remark}</code>\n🔋 حجم باقی‌مانده: <b>{$left} گیگ</b>\n\nبرای جلوگیری از قطع سرویس، از بخش «کانفیگ‌های من» سرویس را تمدید یا افزایش حجم دهید.";
+    }
+
+    $leftSeconds = max(0, intval($expiryTime) - time());
+    $hours = max(1, ceil($leftSeconds / 3600));
+    if($isTest){
+        return "⚠️ <b>زمان اکانت تست شما رو به پایان است</b>\n\n🔮 نام اکانت تست: <code>{$remark}</code>\n⏰ زمان باقی‌مانده: <b>{$hours} ساعت</b>\n\nاین اکانت تست است؛ در صورت رضایت از کیفیت سرویس، می‌توانید سرویس اصلی تهیه کنید.";
+    }
+    return "⚠️ <b>هشدار پایان زمان سرویس</b>\n\nکمتر از <b>۱ روز</b> از زمان اکانت شما باقی مانده است.\n🔮 نام اکانت: <code>{$remark}</code>\n⏰ زمان باقی‌مانده: <b>{$hours} ساعت</b>\n\nبرای جلوگیری از قطع سرویس، از بخش «کانفیگ‌های من» سرویس را تمدید کنید.";
+}
+
+function wizwiz_warn_build_finished_message($order, $finishKind){
+    $remark = wizwiz_warn_h($order['remark'] ?? '');
+    $isTest = wizwiz_warn_is_test_order($order);
+    if($finishKind === 'finished_volume'){
+        if($isTest){
+            return "⛔️ <b>حجم اکانت تست شما تمام شد</b>\n\n🔮 نام اکانت تست: <code>{$remark}</code>\n\nحجم اکانت تست شما به پایان رسید. برای ادامه استفاده، می‌توانید از منوی ربات سرویس اصلی خریداری کنید.";
+        }
+        return "⛔️ <b>حجم اکانت شما تمام شد</b>\n\n🔮 نام اکانت: <code>{$remark}</code>\n\nحجم این اکانت تمام شده است. برای ادامه استفاده، از بخش «کانفیگ‌های من» افزایش حجم بزنید یا سرویس جدید تهیه کنید.";
+    }
+
+    if($isTest){
+        return "⏰ <b>مدت اکانت تست شما تمام شد</b>\n\n🔮 نام اکانت تست: <code>{$remark}</code>\n\nمدت اعتبار اکانت تست شما به پایان رسید. برای ادامه استفاده، می‌توانید سرویس اصلی خریداری کنید.";
+    }
+    return "⏰ <b>مدت اکانت شما تمام شد</b>\n\n🔮 نام اکانت: <code>{$remark}</code>\n\nمدت اعتبار این اکانت تمام شده است. برای ادامه استفاده، از بخش «کانفیگ‌های من» سرویس را تمدید کنید یا سرویس جدید تهیه کنید.";
+}
+
+function wizwiz_warn_delete_config_from_panel($order, $state){
+    $server_id = intval($order['server_id'] ?? 0);
+    $inbound_id = intval($order['inbound_id'] ?? 0);
+    $uuid = $order['uuid'] ?? '0';
+    $remark = $order['remark'] ?? '';
+    if(($state['server_type'] ?? '') == 'marzban') return deleteMarzban($server_id, $remark);
+    if($inbound_id > 0) return deleteClient($server_id, $inbound_id, $uuid, 1);
+    return deleteInbound($server_id, $uuid, 1);
+}
+
+wizwiz_warn_ensure_notification_columns();
+
 function wizwiz_warn_remove_orphan_if_checked($order, $state, $notify = true){
     if(!is_array($order) || !is_array($state)) return false;
     if(!empty($state['found']) || empty($state['logged_in'])) return false;
@@ -237,7 +356,8 @@ function wizwiz_warn_remove_orphan_if_checked($order, $state, $notify = true){
     return true;
 }
 
-$stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND (`notif`=0 OR `notif` = -1) ORDER BY `id` ASC LIMIT ? OFFSET ?");
+$autoDeleteConfigs = wizwiz_warn_setting_value('CLEAN_OLD_CONFIGS_AUTO', 'off') === 'on';
+$stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND (`notif` IN (0, -1, -2) OR COALESCE(`notif_kind`, '') != '') ORDER BY `id` ASC LIMIT ? OFFSET ?");
 $stmt->bind_param("ii", $limit, $warnOffset);
 $stmt->execute();
 $orders = $stmt->get_result();
@@ -247,13 +367,13 @@ if($orders){
     if($orders->num_rows>0){
         while ($order = $orders->fetch_assoc()){
             $from_id = intval($order['userid']);
-            $remark = $order['remark'];
             $notif = intval($order['notif']);
             $orderId = intval($order['id']);
+            $storedKind = trim((string)($order['notif_kind'] ?? ''));
+            if($storedKind === '' && $notif == -1) $storedKind = 'legacy_warning';
 
             $state = wizwiz_warn_order_state($order);
             if(empty($state['found'])){
-                // اگر پنل در دسترس بود و کلاینت دیگر وجود نداشت، فقط رکورد اضافه ربات را پاک می‌کنیم.
                 wizwiz_warn_remove_orphan_if_checked($order, $state, true);
                 continue;
             }
@@ -264,26 +384,48 @@ if($orders){
             $enable = !empty($state['enable']);
             $leftgb = ($total > 0) ? round($totalLeft / 1073741824, 2) : 999999;
 
-            if($notif == 0){
-                $send = "";
-                if($expiryTime > 0 && $expiryTime < time() + 86400) $send = "روز";
-                elseif($total > 0 && $leftgb < 1) $send = "گیگ";
+            $finishKind = '';
+            if($total > 0 && $totalLeft <= 0) $finishKind = 'finished_volume';
+            elseif($expiryTime > 0 && $expiryTime <= time()) $finishKind = 'finished_time';
 
-                if($send != ""){
-                    $msg = "💡 کاربر گرامی،\nاز سرویس اشتراک $remark تنها (۱ $send) باقی مانده است. می‌توانید از قسمت کانفیگ‌های من، سرویس فعلی خود را تمدید کنید یا سرویس جدید خریداری کنید.";
-                    sendMessage($msg, null, null, $from_id);
-                    wizwiz_warn_update_notif_by_order($orderId, -1);
-                }elseif(!$enable){
-                    $newTime = $time + 86400 * 2;
-                    wizwiz_warn_update_notif_by_order($orderId, $newTime);
+            if($finishKind !== ''){
+                if($storedKind !== $finishKind){
+                    $msg = wizwiz_warn_build_finished_message($order, $finishKind);
+                    wizwiz_warn_send_or_replace($order, $finishKind, $msg, -2);
+                }else{
+                    wizwiz_warn_update_notification_state($orderId, -2, $finishKind, intval($order['notif_msg_id'] ?? 0));
                 }
-            }elseif($notif == -1){
-                // اگر ادمین از پنل تاریخ یا حجم را تمدید کرده باشد، هشدار قبلی را آزاد می‌کنیم تا دفعه بعد دوباره درست هشدار بدهد.
-                $isCloseToExpire = ($expiryTime > 0 && $expiryTime < time() + 86400);
-                $isLowVolume = ($total > 0 && $leftgb < 1);
-                if(!$isCloseToExpire && !$isLowVolume && $enable){
-                    wizwiz_warn_update_notif_by_order($orderId, 0);
+
+                if($autoDeleteConfigs){
+                    $res = wizwiz_warn_delete_config_from_panel($order, $state);
+                    if(!is_null($res)) wizwiz_warn_delete_order_by_id($orderId);
                 }
+                continue;
+            }
+
+            $lowKind = '';
+            if($expiryTime > 0 && $expiryTime < time() + 86400) $lowKind = 'low_time';
+            elseif($total > 0 && $totalLeft > 0 && $totalLeft <= 1073741824) $lowKind = 'low_volume';
+
+            if($lowKind !== ''){
+                if($storedKind !== $lowKind){
+                    $msg = wizwiz_warn_build_low_message($order, $lowKind, $totalLeft, $expiryTime);
+                    wizwiz_warn_send_or_replace($order, $lowKind, $msg, -1);
+                }else{
+                    wizwiz_warn_update_notification_state($orderId, -1, $lowKind, intval($order['notif_msg_id'] ?? 0));
+                }
+                continue;
+            }
+
+            if(!$enable){
+                $newTime = $time + 86400 * 2;
+                wizwiz_warn_update_notification_state($orderId, $newTime, 'disabled_wait', intval($order['notif_msg_id'] ?? 0));
+                continue;
+            }
+
+            // اگر اکانت تمدید/شارژ شد و دیگر در وضعیت هشدار یا پایان نیست، پیام قبلی پاک و وضعیت اعلان آزاد می‌شود.
+            if($notif != 0 || $storedKind !== ''){
+                wizwiz_warn_clear_notification($order, true);
             }
         }
         file_put_contents("warnOffset.txt", $warnOffset + $limit);
@@ -293,7 +435,6 @@ if($orders){
 }
 
 // مرحله حذف خودکار: فقط وقتی گزینه حذف خودکار روشن است. پاکسازی رکوردهای حذف‌شده از پنل مستقل از این گزینه انجام می‌شود.
-$autoDeleteConfigs = wizwiz_warn_setting_value('CLEAN_OLD_CONFIGS_AUTO', 'off') === 'on';
 $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `notif` > 0 AND `notif` < ? LIMIT 50");
 $stmt->bind_param("i", $time);
 $stmt->execute();
