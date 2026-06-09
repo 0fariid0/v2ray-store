@@ -230,6 +230,144 @@ if($data == 'runAutoApproveOrdersNow' && ($from_id == $admin || $userInfo['isAdm
     exit();
 }
 
+if($data == 'setReportGroupChat' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("📌 آیدی گروه/کانال گزارش را ارسال کنید.\n\nبرای دسته‌بندی با تاپیک، بهتر است یک <b>سوپرگروه Forum</b> بسازی، ربات را ادمین کنی، سپس آیدی گروه مثل <code>-1001234567890</code> را بفرستی.\n\nاگر گروه معمولی یا کانال بدهی، گزارش‌ها بدون تاپیک ارسال می‌شوند.", $cancelKey, 'HTML');
+    setUser('setReportGroupChat');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setReportGroupChat' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $chat = trim((string)$text);
+    $botInfo = bot('getMe');
+    $botId = (is_object($botInfo) && !empty($botInfo->ok) && isset($botInfo->result->id)) ? intval($botInfo->result->id) : 0;
+    $result = $botId ? bot('getChatMember', ['chat_id'=>$chat, 'user_id'=>$botId]) : null;
+    if(is_object($result) && !empty($result->ok) && isset($result->result->status) && in_array($result->result->status, ['administrator','creator'], true)){
+        setSettings('rewardChannel', $chat);
+        // مقصد عوض شده؛ تاپیک‌های قبلی دیگر معتبر نیستند.
+        if(function_exists('wizwiz_saveReportTopicStore')) wizwiz_saveReportTopicStore([]);
+        setUser();
+        sendMessage("✅ مقصد گزارش‌ها تنظیم شد: <code>" . wizwiz_h($chat) . "</code>", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else{
+        sendMessage("❌ ربات داخل این گروه/کانال ادمین نیست یا آیدی اشتباه است.\nلطفاً ربات را ادمین کن و آیدی را دوباره بفرست.", $cancelKey, 'HTML');
+    }
+    exit();
+}
+if($data == 'toggleReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(wizwiz_reportForumEnabled()){
+        wizwiz_reportDeleteAllTopics();
+        setSettings('wizReportForumState', 'off');
+        alert('تاپیک‌های گزارش خاموش و حذف شدند.');
+    }else{
+        setSettings('wizReportForumState', 'on');
+        alert('حالت تاپیک فعال شد. با اولین گزارش، تاپیک مربوطه ساخته می‌شود.');
+    }
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'deleteAllReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_reportDeleteAllTopics();
+    alert('تاپیک‌های ذخیره‌شده حذف شدند.');
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'rebuildReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!wizwiz_reportForumEnabled()) setSettings('wizReportForumState', 'on');
+    $made = 0;
+    foreach(wizwiz_reportTopicItems() as $topicKey => $info){
+        if(!wizwiz_reportTopicHasEnabledEvents($topicKey)) continue;
+        $events = $info['events'] ?? [];
+        $eventKey = count($events) ? $events[0] : 'daily_stats';
+        $thread = wizwiz_reportEnsureTopic($eventKey);
+        if($thread > 0) $made++;
+    }
+    alert($made > 0 ? 'تاپیک‌ها ساخته/ترمیم شدند.' : 'ساخت تاپیک ناموفق بود؛ گروه باید Forum باشد و ربات دسترسی مدیریت تاپیک داشته باشد.', $made <= 0);
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'toggleReportBackupBotDb' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $new = wizwiz_backupBotDbEnabled() ? 'off' : 'on';
+    setSettings('wizBackupBotDbState', $new);
+    if($new === 'off' && !wizwiz_anyPanelDbBackupEnabled()) wizwiz_reportDeleteTopic('database');
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if(($data == 'setReportBackupInterval' || $data == 'setReportBackupTime') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("⏱ فاصله اجرای بکاپ دیتابیس را بفرستید.
+
+مثال‌ها:
+<code>30 دقیقه</code>
+<code>نیم ساعت</code>
+<code>1 ساعت</code>
+<code>24 ساعت</code>
+
+عدد تنها هم به دقیقه حساب می‌شود. حداقل مجاز ۱۰ دقیقه است.", $cancelKey, 'HTML');
+    setUser('setReportBackupInterval');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setReportBackupInterval' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $minutes = function_exists('wizwiz_parseBackupIntervalMinutes') ? wizwiz_parseBackupIntervalMinutes($text) : intval($text);
+    if($minutes >= 10){
+        setSettings('wizReportBackupIntervalMinutes', $minutes);
+        setSettings('wizReportBackupLastTs', time());
+        setUser();
+        $pretty = function_exists('wizwiz_formatMinutesFa') ? wizwiz_formatMinutesFa($minutes) : ($minutes . ' دقیقه');
+        sendMessage("✅ فاصله بکاپ دیتابیس روی <b>" . wizwiz_h($pretty) . "</b> تنظیم شد.
+
+از این لحظه، بکاپ بعدی بعد از همین فاصله اجرا می‌شود. برای ارسال فوری می‌توانید از گزینه <b>اجرای بکاپ الان</b> استفاده کنید.", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else{
+        sendMessage("❌ مقدار وارد شده درست نیست. مثال: <code>30 دقیقه</code> یا <code>1 ساعت</code>
+حداقل مجاز ۱۰ دقیقه است.", null, 'HTML');
+    }
+    exit();
+}
+if($data == 'setReportBackupItemDelay' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("⏳ فاصله بین بکاپ دیتابیس ربات و هر پنل را به ثانیه بفرستید.
+
+مثال: <code>15</code>
+عدد پیشنهادی: ۱۰ تا ۳۰ ثانیه
+حداکثر مجاز: ۳۰۰ ثانیه", $cancelKey, 'HTML');
+    setUser('setReportBackupItemDelay');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setReportBackupItemDelay' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $map = ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9'];
+    $sec = intval(strtr(trim((string)$text), $map));
+    if($sec >= 0 && $sec <= 300){
+        setSettings('wizReportBackupItemDelaySeconds', $sec);
+        setUser();
+        sendMessage("✅ فاصله بین ارسال هر بکاپ روی <b>{$sec} ثانیه</b> تنظیم شد.", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    }else{
+        sendMessage("❌ عدد باید بین ۰ تا ۳۰۰ ثانیه باشد.", null, 'HTML');
+    }
+    exit();
+}
+if($data == 'resetReportBackupSchedule' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setSettings('wizReportBackupLastTs', 0);
+    alert('زمان‌بندی بکاپ ریست شد. در اولین اجرای کران، اگر بکاپ فعال باشد اجرا می‌شود.');
+    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'runReportDbBackupsNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    alert('بکاپ در حال اجراست؛ اگر دیتابیس بزرگ باشد کمی زمان می‌برد.');
+    $res = wizwiz_runReportDatabaseBackups(true);
+    editText($message_id, ($res['ok'] ? "✅ " : "❌ ") . wizwiz_h($res['message'] ?? 'انجام شد') . "\n\n" . wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if($data == 'reportPanelDbBackupMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getReportPanelBackupMenuText(), wizwiz_getReportPanelBackupMenuKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^togglePanelDbBackup(\d+)$/', $data ?? '', $mm) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($mm[1]);
+    $key = 'wizPanelDbBackup_' . $sid;
+    $new = wizwiz_panelDbBackupEnabled($sid) ? 'off' : 'on';
+    setSettings($key, $new);
+    if($new === 'off' && !wizwiz_backupBotDbEnabled() && !wizwiz_anyPanelDbBackupEnabled()) wizwiz_reportDeleteTopic('database');
+    editText($message_id, wizwiz_getReportPanelBackupMenuText(), wizwiz_getReportPanelBackupMenuKeys(), 'HTML');
+    exit();
+}
 if($data == 'reportChannelSettingsMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
     exit();
@@ -273,7 +411,8 @@ if($data == 'sendDailyChannelStatsNow' && ($from_id == $admin || $userInfo['isAd
 if(preg_match('/^toggleReportEvent_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $match[1];
     if(array_key_exists($key, wizwiz_reportEventItems())){
-        wizwiz_reportToggleSetting(wizwiz_reportEventKey($key), 'on');
+        $newState = wizwiz_reportToggleSetting(wizwiz_reportEventKey($key), 'on');
+        if($newState === 'off') wizwiz_reportDeleteTopicForEvent($key);
         editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
@@ -1882,7 +2021,7 @@ if(preg_match('/^decreaseWalletUser(\d+)/',$userInfo['step'], $match) && $text !
 }
 if($data=="editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🤗|لطفاً ربات رو در کانال ادمین کن و آیدی کانال رو بفرست",$cancelKey);
+    sendMessage("🤗|لطفاً ربات را در گروه/کانال گزارش ادمین کن و آیدی گروه/کانال را بفرست",$cancelKey);
     setUser($data);
 }
 if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -1896,7 +2035,7 @@ if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo[
             exit();
         }
     }
-    sendMessage("😡|ای بابا ،ربات هنوز تو کانال عضو نشده، اول ربات رو تو کانال ادمین کن و آیدیش رو بفرست");
+    sendMessage("😡|ربات هنوز داخل گروه/کانال گزارش ادمین نیست. اول ربات را ادمین کن و آیدیش را دوباره بفرست.");
 }
 if($data=="editLockChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();

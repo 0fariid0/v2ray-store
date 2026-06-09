@@ -482,6 +482,7 @@ update_crons_for_domain() {
     grep -v "wizwizxui-timebot/settings/warnusers.php" | \
     grep -v "wizwizxui-timebot/settings/gift2all.php" | \
     grep -v "wizwizxui-timebot/settings/tronChecker.php" | \
+    grep -v "wizwizxui-timebot/settings/reportGroupBackup.php" | \
     grep -v "backupnutif.php" > "${old_cron}.new" || true
 
     {
@@ -491,6 +492,7 @@ update_crons_for_domain() {
         echo "* * * * * curl -fsS https://${domain}/wizwizxui-timebot/settings/warnusers.php >/dev/null 2>&1"
         echo "* * * * * curl -fsS https://${domain}/wizwizxui-timebot/settings/gift2all.php >/dev/null 2>&1"
         echo "*/3 * * * * curl -fsS https://${domain}/wizwizxui-timebot/settings/tronChecker.php >/dev/null 2>&1"
+        echo "* * * * * php ${BOT_DIR}/settings/reportGroupBackup.php >/dev/null 2>&1"
         [ -n "$pathsss" ] && echo "* * * * * curl -fsS https://${domain}/${pathsss}/backupnutif.php >/dev/null 2>&1"
     } | sort -u | crontab -
 
@@ -687,7 +689,7 @@ run_delete() {
     fi
     [ -n "$pathsss" ] && rm -rf "/var/www/html/wizpanel${pathsss}" 2>/dev/null || true
     rm -rf "$BOT_DIR" 2>/dev/null || true
-    (crontab -l 2>/dev/null | grep -v "messagewizwiz.php" | grep -v "rewardReport.php" | grep -v "warnusers.php" | grep -v "backupnutif.php" | grep -v "gift2all.php" | grep -v "tronChecker.php") | crontab -
+    (crontab -l 2>/dev/null | grep -v "messagewizwiz.php" | grep -v "rewardReport.php" | grep -v "warnusers.php" | grep -v "backupnutif.php" | grep -v "gift2all.php" | grep -v "tronChecker.php" | grep -v "reportGroupBackup.php") | crontab -
     success "Removed successfully."
 }
 

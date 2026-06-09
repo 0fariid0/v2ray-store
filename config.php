@@ -1890,11 +1890,30 @@ function wizwiz_buttonIsRealApproveAction($button){
     if(!is_array($button)) return false;
     $text = trim((string)($button['text'] ?? ''));
     $callback = strtolower(trim((string)($button['callback_data'] ?? '')));
-    $plainText = preg_replace('/^[✅☑️✔️\s]+/u', '', $text);
+    $plainText = trim(preg_replace('/^[✅☑️✔️\s]+/u', '', $text));
 
-    // سبز فقط برای تأیید واقعی بماند، نه خرید، شارژ، افزودن، آپدیت و منوهای معمولی.
-    if(preg_match('/^(accept|approve|confirm)(payment|new|renew|increase|order|pay|cart|receipt)?/i', $callback)) return true;
-    if(preg_match('/^(تأیید|تایید|قبول|ثبت نهایی|بله،?\s*تأیید|بله،?\s*تایید)/u', $plainText)) return true;
+    // سبز فقط برای تاییدهای واقعی بماند. کلماتی مثل approved در فیلترها نباید سبز شوند.
+    $approveCallbacks = [
+        'accept', 'approvepayment', 'approverenewacc', 'approveincreaseday', 'approveincreasevolume',
+        'approvenewmember', 'confirmswitchserver', 'adminhelpconfirmdelete', 'resetalltestaccountsconfirm'
+    ];
+    foreach($approveCallbacks as $prefix){
+        if(strpos($callback, $prefix) === 0) return true;
+    }
+
+    if(preg_match('/^(تأیید|تایید|قبول|ثبت نهایی|بله،?\s*تأیید|بله،?\s*تایید|تأیید و|تایید و)/u', $plainText)) return true;
+    return false;
+}
+
+function wizwiz_buttonHasVisibleAction($button){
+    if(!is_array($button)) return false;
+    $actionKeys = [
+        'callback_data', 'url', 'web_app', 'login_url', 'switch_inline_query', 'switch_inline_query_current_chat',
+        'switch_inline_query_chosen_chat', 'pay', 'copy_text', 'request_contact', 'request_location', 'request_poll'
+    ];
+    foreach($actionKeys as $key){
+        if(array_key_exists($key, $button) && $button[$key] !== null && $button[$key] !== '') return true;
+    }
     return false;
 }
 
@@ -1902,19 +1921,14 @@ function wizwiz_buttonStyleByCallback($button){
     if(!is_array($button)) return $button;
     if(!isset($button['text'])) return $button;
 
-    // Telegram Bot API فقط این سه مقدار را برای style قبول می‌کند.
-    // مقدارهای دیگر مثل secondary باعث خطای reply_markup و از کار افتادن دکمه‌ها می‌شوند.
+    // فقط استایل‌های قابل قبول نگه داشته می‌شود تا دکمه‌ها به خاطر style اشتباه سفید/بی‌رنگ یا خراب نشوند.
     $allowedStyles = ['danger', 'success', 'primary'];
     $callback = (string)($button['callback_data'] ?? '');
-    $haystack = (string)($button['text'] ?? '') . ' ' . $callback;
+    $text = (string)($button['text'] ?? '');
+    $haystack = $text . ' ' . $callback;
+    $hasAction = wizwiz_buttonHasVisibleAction($button);
 
-    // عنوان‌های غیرعملیاتی بهتر است بی‌رنگ بمانند تا کل ربات رنگی/سبز نشود.
-    if($callback === 'wizwizch' || $callback === ''){
-        unset($button['style']);
-        return $button;
-    }
-
-    $dangerWords = ['delete', 'del', 'remove', 'ban', 'reject', 'disable', 'decrease', 'cancel', 'clear', 'off', 'stop', 'لغو', 'حذف', 'بن', 'مسدود', 'رد', 'غیرفعال', 'کاهش', 'پاک', 'خاموش', 'توقف', '❌', '🗑', '🧹', '➖'];
+    $dangerWords = ['delete', 'del', 'remove', 'ban', 'reject', 'disable', 'decrease', 'cancel', 'clear', 'off', 'stop', 'deny', 'decline', 'لغو', 'حذف', 'بن', 'مسدود', 'رد', 'غیرفعال', 'کاهش', 'پاک', 'خاموش', 'توقف', 'انصراف', '❌', '🗑', '🧹', '➖'];
     foreach($dangerWords as $w){
         if(wizwiz_textContains($haystack, $w)){
             $button['style'] = 'danger';
@@ -1922,26 +1936,26 @@ function wizwiz_buttonStyleByCallback($button){
         }
     }
 
-    if(isset($button['style'])){
-        $button['style'] = strtolower(trim((string)$button['style']));
-        if(!in_array($button['style'], $allowedStyles, true)){
-            unset($button['style']);
-            return $button;
-        }
-        if($button['style'] === 'success' && !wizwiz_buttonIsRealApproveAction($button)){
-            // success قبلاً همه‌جا استفاده شده بود و باعث سبز شدن کل ربات می‌شد.
-            // فقط تأییدها سبز بمانند؛ بقیه دکمه‌های مثبت/عملیاتی آبی شوند.
-            $button['style'] = 'primary';
-        }
-        return $button;
-    }
-
     if(wizwiz_buttonIsRealApproveAction($button)){
         $button['style'] = 'success';
         return $button;
     }
 
-    $primaryWords = ['buy', 'renew', 'increase', 'enable', 'pay', 'gift', 'join', 'gettest', 'add', 'generate', 'on', 'back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'settings', 'menu', 'list', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'فعال', 'پرداخت', 'هدیه', 'عضویت', 'افزودن', 'معاف', 'ساخت', 'روشن', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک', 'تنظیم', 'مدیریت', 'لیست', '➕', '🔄'];
+    if(isset($button['style'])){
+        $button['style'] = strtolower(trim((string)$button['style']));
+        if(!in_array($button['style'], $allowedStyles, true)){
+            // style نامعتبر را به primary تبدیل می‌کنیم تا دکمه یک‌دفعه سفید نشود.
+            $button['style'] = 'primary';
+            return $button;
+        }
+        if($button['style'] === 'success' && !wizwiz_buttonIsRealApproveAction($button)){
+            // فقط تایید واقعی سبز باشد؛ بقیه اکشن‌های مثبت آبی شوند.
+            $button['style'] = 'primary';
+        }
+        return $button;
+    }
+
+    $primaryWords = ['buy', 'renew', 'increase', 'enable', 'pay', 'gift', 'join', 'gettest', 'add', 'generate', 'on', 'back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'settings', 'menu', 'list', 'status', 'report', 'backup', 'domain', 'token', 'ssl', 'start', 'run', 'continue', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'فعال', 'پرداخت', 'هدیه', 'عضویت', 'افزودن', 'معاف', 'ساخت', 'روشن', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'بروزرسانی', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک', 'تنظیم', 'مدیریت', 'لیست', 'وضعیت', 'گزارش', 'بکاپ', 'دامنه', 'توکن', 'شروع', 'ادامه', '➕', '🔄', '📊', '⚙️', '🛠'];
     foreach($primaryWords as $w){
         if(wizwiz_textContains($haystack, $w)){
             $button['style'] = 'primary';
@@ -1949,10 +1963,16 @@ function wizwiz_buttonStyleByCallback($button){
         }
     }
 
-    // دکمه‌هایی که معنی رنگشان مشخص نیست بی‌رنگ بمانند.
+    // از این به بعد هر دکمه‌ای که واقعاً اکشن دارد، primary می‌گیرد تا مشکل سفید شدن تصادفی رفع شود.
+    // فقط دکمه‌های کاملاً نمایشی/بدون اکشن بی‌رنگ می‌مانند.
+    if($hasAction){
+        $button['style'] = 'primary';
+        return $button;
+    }
+
+    unset($button['style']);
     return $button;
 }
-
 
 
 function wizwiz_styleInlineKeyboard($keyboard){
@@ -4914,7 +4934,7 @@ function getGateWaysKeys(){
         ],
         [
             ['text'=>$rewaredChannel,'callback_data'=>'editRewardChannel'],
-            ['text'=>"کانال گزارش درآمد",'callback_data'=>'wizwizch']
+            ['text'=>"گروه/کانال گزارش",'callback_data'=>'wizwizch']
             ],
         [
             ['text'=>$lockChannel,'callback_data'=>'editLockChannel'],
@@ -10684,6 +10704,570 @@ function wizwiz_formatUserLine($userId, $name = '', $username = ''){
     return "👤 کاربر: <a href='tg://user?id={$userId}'>" . wizwiz_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . wizwiz_h($username);
 }
 
+
+// ===== WizWiz report group topics + database backup tools =====
+function wizwiz_reportForumEnabled(){
+    global $botState;
+    return (($botState['wizReportForumState'] ?? 'off') === 'on');
+}
+
+function wizwiz_reportTopicItems(){
+    return [
+        'purchase' => ['title'=>'🛒 خرید و پرداخت', 'events'=>['purchase_started','auto_approved']],
+        'test' => ['title'=>'🧪 اکانت تست', 'events'=>['test_account']],
+        'location' => ['title'=>'🌎 تغییر لوکیشن', 'events'=>['server_switched']],
+        'stats' => ['title'=>'📊 آمار ربات', 'events'=>['daily_stats']],
+        'errors' => ['title'=>'⚠️ خطاها و هشدارها', 'events'=>['approval_failed','admin_order_send_failed']],
+        'database' => ['title'=>'🗄 بکاپ دیتابیس', 'events'=>['database_backup']],
+    ];
+}
+
+function wizwiz_reportTopicKeyForEvent($eventKey){
+    $eventKey = trim((string)$eventKey);
+    foreach(wizwiz_reportTopicItems() as $key => $info){
+        if(in_array($eventKey, $info['events'], true)) return $key;
+    }
+    return 'general';
+}
+
+function wizwiz_reportTopicStore(){
+    global $botState;
+    $raw = $botState['wizReportForumTopics'] ?? '';
+    if(is_array($raw)) return $raw;
+    $raw = trim((string)$raw);
+    if($raw === '') return [];
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function wizwiz_saveReportTopicStore($topics){
+    if(!is_array($topics)) $topics = [];
+    setSettings('wizReportForumTopics', json_encode($topics, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function wizwiz_reportTopicEnabled($topicKey){
+    $topicKey = trim((string)$topicKey);
+    if($topicKey === '') return false;
+    global $botState;
+    return (($botState['wizReportTopicState_' . $topicKey] ?? 'on') === 'on');
+}
+
+function wizwiz_reportTopicHasEnabledEvents($topicKey){
+    $items = wizwiz_reportTopicItems();
+    if(!isset($items[$topicKey])) return true;
+    foreach($items[$topicKey]['events'] as $eventKey){
+        if(wizwiz_reportIsEnabled(wizwiz_reportEventKey($eventKey), 'on')) return true;
+    }
+    return false;
+}
+
+function wizwiz_reportEnsureTopic($eventKey){
+    $chat = wizwiz_getIncomeReportChatId();
+    if($chat === null || trim((string)$chat) === '') return 0;
+    if(!wizwiz_reportForumEnabled()) return 0;
+
+    $topicKey = wizwiz_reportTopicKeyForEvent($eventKey);
+    if(!wizwiz_reportTopicEnabled($topicKey)) return 0;
+
+    $items = wizwiz_reportTopicItems();
+    $title = $items[$topicKey]['title'] ?? ('📌 ' . $topicKey);
+    $topics = wizwiz_reportTopicStore();
+    $threadId = intval($topics[$topicKey] ?? 0);
+    if($threadId > 0) return $threadId;
+
+    $res = bot('createForumTopic', [
+        'chat_id' => $chat,
+        'name' => $title,
+    ]);
+    if(is_object($res) && !empty($res->ok) && isset($res->result->message_thread_id)){
+        $threadId = intval($res->result->message_thread_id);
+        if($threadId > 0){
+            $topics[$topicKey] = $threadId;
+            wizwiz_saveReportTopicStore($topics);
+            return $threadId;
+        }
+    }
+    return 0;
+}
+
+function wizwiz_reportDeleteTopic($topicKey){
+    $chat = wizwiz_getIncomeReportChatId();
+    $topicKey = trim((string)$topicKey);
+    if($chat === null || trim((string)$chat) === '' || $topicKey === '') return false;
+    $topics = wizwiz_reportTopicStore();
+    $threadId = intval($topics[$topicKey] ?? 0);
+    unset($topics[$topicKey]);
+    wizwiz_saveReportTopicStore($topics);
+    if($threadId <= 0) return false;
+    $res = bot('deleteForumTopic', [
+        'chat_id' => $chat,
+        'message_thread_id' => $threadId,
+    ]);
+    return is_object($res) && !empty($res->ok);
+}
+
+function wizwiz_reportDeleteTopicForEvent($eventKey){
+    $topicKey = wizwiz_reportTopicKeyForEvent($eventKey);
+    if(!wizwiz_reportTopicHasEnabledEvents($topicKey)) return wizwiz_reportDeleteTopic($topicKey);
+    return false;
+}
+
+function wizwiz_reportDeleteAllTopics(){
+    $topics = wizwiz_reportTopicStore();
+    foreach(array_keys($topics) as $topicKey){
+        wizwiz_reportDeleteTopic($topicKey);
+    }
+    wizwiz_saveReportTopicStore([]);
+}
+
+function wizwiz_reportSendMessage($title, $body, $keyboard = null, $eventKey = null){
+    $chat = wizwiz_getIncomeReportChatId();
+    if($chat === null || trim((string)$chat) === '') return null;
+    $keyboard = wizwiz_styleReplyMarkup($keyboard);
+    $payload = [
+        'chat_id' => $chat,
+        'text' => $title . "\n\n" . $body,
+        'reply_markup' => $keyboard,
+        'parse_mode' => 'HTML',
+        '_timeout' => 20,
+    ];
+    if($eventKey !== null){
+        $threadId = wizwiz_reportEnsureTopic($eventKey);
+        if($threadId > 0) $payload['message_thread_id'] = $threadId;
+    }
+    $res = bot('sendMessage', $payload);
+    return $res;
+}
+
+function wizwiz_telegramSendLocalDocument($chatId, $filePath, $caption = '', $parse = 'HTML', $threadId = 0){
+    global $botToken;
+    $chatId = trim((string)$chatId);
+    $filePath = (string)$filePath;
+    if($chatId === '' || !is_file($filePath)) return null;
+    if(!class_exists('CURLFile')) return null;
+
+    $post = [
+        'chat_id' => $chatId,
+        'document' => new CURLFile($filePath),
+        'caption' => (string)$caption,
+        'parse_mode' => $parse,
+    ];
+    $threadId = intval($threadId);
+    if($threadId > 0) $post['message_thread_id'] = $threadId;
+
+    $ch = curl_init('https://api.telegram.org/bot' . $botToken . '/sendDocument');
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $post);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 120);
+    $res = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if($err) return (object)['ok'=>false, 'description'=>$err];
+    $decoded = json_decode((string)$res);
+    return $decoded ?: (object)['ok'=>false, 'description'=>(string)$res];
+}
+
+function wizwiz_reportSendLocalDocument($filePath, $caption = '', $eventKey = 'database_backup'){
+    $chat = wizwiz_getIncomeReportChatId();
+    if($chat === null || trim((string)$chat) === '') return null;
+    $threadId = wizwiz_reportEnsureTopic($eventKey);
+    return wizwiz_telegramSendLocalDocument($chat, $filePath, $caption, 'HTML', $threadId);
+}
+
+function wizwiz_backupBotDbEnabled(){
+    global $botState;
+    return (($botState['wizBackupBotDbState'] ?? 'off') === 'on');
+}
+
+function wizwiz_reportBackupTime(){
+    // Backward-compatible helper for old installs. The new backup scheduler is interval-based.
+    global $botState;
+    $time = trim((string)($botState['wizReportBackupTime'] ?? '03:30'));
+    if(!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $time)) $time = '03:30';
+    return $time;
+}
+
+function wizwiz_reportBackupIntervalMinutes(){
+    global $botState;
+    $minutes = intval($botState['wizReportBackupIntervalMinutes'] ?? 1440);
+    if($minutes < 10) $minutes = 10;
+    if($minutes > 43200) $minutes = 43200; // 30 days
+    return $minutes;
+}
+
+function wizwiz_reportBackupItemDelaySeconds(){
+    global $botState;
+    $seconds = intval($botState['wizReportBackupItemDelaySeconds'] ?? 15);
+    if($seconds < 0) $seconds = 0;
+    if($seconds > 300) $seconds = 300;
+    return $seconds;
+}
+
+function wizwiz_formatMinutesFa($minutes){
+    $minutes = intval($minutes);
+    if($minutes <= 0) return 'نامعتبر';
+    if($minutes % 1440 === 0){
+        $d = intval($minutes / 1440);
+        return $d == 1 ? 'هر روز' : 'هر ' . $d . ' روز';
+    }
+    if($minutes % 60 === 0){
+        $h = intval($minutes / 60);
+        return $h == 1 ? 'هر ۱ ساعت' : 'هر ' . $h . ' ساعت';
+    }
+    return 'هر ' . $minutes . ' دقیقه';
+}
+
+function wizwiz_parseBackupIntervalMinutes($input){
+    $txt = trim((string)$input);
+    if($txt === '') return 0;
+    $map = ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9'];
+    $txt = strtr($txt, $map);
+    $lower = function_exists('mb_strtolower') ? mb_strtolower($txt, 'UTF-8') : strtolower($txt);
+    $lower = str_replace(['هر', 'یک', 'يه', 'یك'], ['', '1', '1', '1'], $lower);
+    $lower = trim(preg_replace('/\s+/u', ' ', $lower));
+    if(strpos($lower, 'نیم') !== false || strpos($lower, 'نيم') !== false) return 30;
+    if(preg_match('/(\d+)\s*(روز|day|days|d)\b/u', $lower, $m)) return max(10, intval($m[1]) * 1440);
+    if(preg_match('/(\d+)\s*(ساعت|hour|hours|h)\b/u', $lower, $m)) return max(10, intval($m[1]) * 60);
+    if(preg_match('/(\d+)\s*(دقیقه|دقيقه|min|mins|minute|minutes|m)\b/u', $lower, $m)) return max(10, intval($m[1]));
+    if(preg_match('/^\d+$/', $lower)) return max(10, intval($lower));
+    return 0;
+}
+
+function wizwiz_reportBackupLastTimestamp(){
+    global $botState;
+    $ts = intval($botState['wizReportBackupLastTs'] ?? 0);
+    if($ts <= 0){
+        // Compatibility with the previous daily scheduler.
+        $lastDate = trim((string)($botState['wizReportBackupLastDate'] ?? ''));
+        if(preg_match('/^\d{4}-\d{2}-\d{2}$/', $lastDate)){
+            $tmp = strtotime($lastDate . ' ' . wizwiz_reportBackupTime());
+            if($tmp) $ts = intval($tmp);
+        }
+    }
+    return $ts;
+}
+
+function wizwiz_reportBackupNextTimestamp(){
+    $last = wizwiz_reportBackupLastTimestamp();
+    if($last <= 0) return 0;
+    return $last + (wizwiz_reportBackupIntervalMinutes() * 60);
+}
+
+function wizwiz_reportBackupDue(){
+    $last = wizwiz_reportBackupLastTimestamp();
+    if($last <= 0) return true;
+    return time() >= ($last + (wizwiz_reportBackupIntervalMinutes() * 60));
+}
+
+function wizwiz_panelDbBackupEnabled($serverId){
+    global $botState;
+    $serverId = intval($serverId);
+    if($serverId <= 0) return false;
+    return (($botState['wizPanelDbBackup_' . $serverId] ?? 'off') === 'on');
+}
+
+function wizwiz_anyPanelDbBackupEnabled(){
+    global $connection;
+    $res = @($connection->query("SELECT `id` FROM `server_info`"));
+    if(!$res) return false;
+    while($row = $res->fetch_assoc()){
+        if(wizwiz_panelDbBackupEnabled(intval($row['id']))) return true;
+    }
+    return false;
+}
+
+function wizwiz_backupFeatureEnabled(){
+    return wizwiz_reportIsEnabled(wizwiz_reportEventKey('database_backup'), 'on') && (wizwiz_backupBotDbEnabled() || wizwiz_anyPanelDbBackupEnabled());
+}
+
+function wizwiz_makeTempDir($prefix = 'wizwiz_backup_'){
+    $base = sys_get_temp_dir();
+    $dir = $base . '/' . $prefix . date('Ymd_His') . '_' . mt_rand(1000,9999);
+    if(!is_dir($dir)) @mkdir($dir, 0700, true);
+    return is_dir($dir) ? $dir : $base;
+}
+
+function wizwiz_gzipFileIfPossible($file){
+    $file = (string)$file;
+    if(!is_file($file)) return $file;
+    $gz = $file . '.gz';
+    if(function_exists('gzopen')){
+        $in = @fopen($file, 'rb');
+        $out = @gzopen($gz, 'wb9');
+        if($in && $out){
+            while(!feof($in)) gzwrite($out, fread($in, 1024 * 1024));
+            fclose($in); gzclose($out);
+            @unlink($file);
+            if(is_file($gz)) return $gz;
+        }
+        if($in) @fclose($in);
+        if($out) @gzclose($out);
+    }
+    return $file;
+}
+
+function wizwiz_createBotDatabaseBackupFile(){
+    global $dbUserName, $dbPassword, $dbName;
+    $dir = wizwiz_makeTempDir('wizwiz_bot_db_');
+    $file = $dir . '/wizwiz_bot_db_' . date('Y-m-d_H-i-s') . '.sql';
+    $cmd = 'MYSQL_PWD=' . escapeshellarg((string)$dbPassword) . ' mysqldump --single-transaction --quick --default-character-set=utf8mb4 -u ' . escapeshellarg((string)$dbUserName) . ' ' . escapeshellarg((string)$dbName) . ' > ' . escapeshellarg($file) . ' 2>' . escapeshellarg($file . '.err');
+    @exec($cmd, $out, $code);
+    if($code !== 0 || !is_file($file) || filesize($file) <= 0){
+        $err = is_file($file . '.err') ? trim((string)@file_get_contents($file . '.err')) : '';
+        return ['ok'=>false, 'message'=>$err !== '' ? $err : 'mysqldump اجرا نشد یا خروجی خالی بود.'];
+    }
+    @unlink($file . '.err');
+    return ['ok'=>true, 'file'=>$file];
+}
+
+function wizwiz_panelLoginSessionForBackup($server){
+    $panel = rtrim((string)($server['panel_url'] ?? ''), '/');
+    if($panel === '') return ['ok'=>false, 'message'=>'آدرس پنل خالی است.'];
+    $loginUrl = $panel . '/login';
+    $post = ['username'=>$server['username'] ?? '', 'password'=>$server['password'] ?? ''];
+    $header = [];
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $loginUrl,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query($post),
+        CURLOPT_HEADER => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => false,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_HTTPHEADER => function_exists('wizwiz_panelLoginHeaders') ? wizwiz_panelLoginHeaders($ch, $loginUrl) : [],
+    ]);
+    $response = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if($err) return ['ok'=>false, 'message'=>$err];
+    $headerText = substr((string)$response, 0, strpos((string)$response, "\r\n\r\n") ?: 0);
+    $session = function_exists('wizwiz_sanaeiCollectCookiesFromHeader') ? wizwiz_sanaeiCollectCookiesFromHeader($headerText) : '';
+    $body = substr((string)$response, (strpos((string)$response, "\r\n\r\n") ?: -4) + 4);
+    $decoded = json_decode($body, true);
+    if(!$session && is_array($decoded) && empty($decoded['success'])) return ['ok'=>false, 'message'=>($decoded['msg'] ?? 'ورود به پنل ناموفق بود.')];
+    return ['ok'=>true, 'panel'=>$panel, 'session'=>$session];
+}
+
+function wizwiz_panelBackupFileNameFromHeaders($headers, $fallback = 'x-ui.db'){
+    $headers = (string)$headers;
+    if(preg_match('/filename\*?=(?:UTF-8\'\')?["\']?([^"\'\r\n;]+)/i', $headers, $m)){
+        $name = urldecode(trim($m[1], " \t\r\n\"'"));
+        $name = basename($name);
+        if($name !== '') return $name;
+    }
+    return $fallback;
+}
+
+function wizwiz_isValidPanelBackupBody($body, $headers = ''){
+    if($body === false || $body === null) return false;
+    $body = (string)$body;
+    if(strlen($body) < 64) return false;
+    if(strncmp($body, "SQLite format 3\0", 16) === 0) return true;
+
+    $trim = ltrim(substr($body, 0, 2048));
+    if($trim === '') return false;
+    if($trim[0] === '{' || $trim[0] === '[') return false;
+    if(stripos($trim, '<!doctype') === 0 || stripos($trim, '<html') !== false || stripos($trim, '<head') !== false) return false;
+
+    $headers = strtolower((string)$headers);
+    if(strpos($headers, 'content-disposition:') !== false && strpos($headers, 'attachment') !== false) return true;
+    if(strpos($headers, 'application/octet-stream') !== false || strpos($headers, 'application/x-sqlite3') !== false || strpos($headers, 'application/vnd.sqlite3') !== false) return true;
+
+    // Last safe fallback for old x-ui forks: a non-json/non-html binary response from getDb.
+    return true;
+}
+
+function wizwiz_downloadPanelDatabaseBackup($server){
+    $serverId = intval($server['id'] ?? 0);
+    $title = trim((string)($server['title'] ?? ('server_' . $serverId)));
+    $type = trim((string)($server['type'] ?? ''));
+    if($type === 'marzban') return ['ok'=>false, 'message'=>'بکاپ مستقیم دیتابیس برای مرزبان از طریق API عمومی این ربات پشتیبانی نمی‌شود.'];
+
+    $login = wizwiz_panelLoginSessionForBackup($server);
+    if(empty($login['ok'])) return $login;
+
+    $panel = rtrim((string)$login['panel'], '/');
+    $session = (string)($login['session'] ?? '');
+
+    // 3x-ui/Sanaei uses the panel API path below for downloading x-ui.db.
+    // Keep legacy paths as fallback for older x-ui forks.
+    $endpoints = [
+        '/panel/api/server/getDb',
+        '/server/getDb',
+        '/xui/server/getDb',
+    ];
+
+    $dir = wizwiz_makeTempDir('wizwiz_panel_db_');
+    $lastError = '';
+
+    foreach($endpoints as $endpoint){
+        $url = $panel . $endpoint;
+        $headers = [];
+        if($session !== '') $headers[] = 'Cookie: ' . $session;
+        if($type === 'sanaei_new' && function_exists('wizwiz_sanaeiNewCsrfToken')){
+            $csrf = wizwiz_sanaeiNewCsrfToken(null, $panel, $session);
+            if($csrf !== '') $headers[] = 'X-CSRF-Token: ' . $csrf;
+        }
+        $ch = curl_init();
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $url,
+            CURLOPT_HTTPGET => true,
+            CURLOPT_HEADER => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 120,
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+        $response = curl_exec($ch);
+        $err = curl_error($ch);
+        $http = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+        $headerSize = intval(curl_getinfo($ch, CURLINFO_HEADER_SIZE));
+        curl_close($ch);
+
+        if($err){
+            $lastError = $endpoint . ': ' . $err;
+            continue;
+        }
+        if($response === false || $http >= 400){
+            $lastError = $endpoint . ': HTTP ' . $http;
+            continue;
+        }
+
+        $rawHeaders = substr((string)$response, 0, $headerSize);
+        $body = substr((string)$response, $headerSize);
+        if(!wizwiz_isValidPanelBackupBody($body, $rawHeaders)){
+            $json = json_decode((string)$body, true);
+            if(is_array($json)){
+                $lastError = $endpoint . ': ' . ($json['msg'] ?? $json['message'] ?? $json['error'] ?? 'پاسخ JSON بود، نه فایل دیتابیس.');
+            }else{
+                $lastError = $endpoint . ': پاسخ فایل معتبر نبود.';
+            }
+            continue;
+        }
+
+        $fallbackName = 'x-ui.db';
+        $fileName = wizwiz_panelBackupFileNameFromHeaders($rawHeaders, $fallbackName);
+        // Telegram must receive the original DB file, not a compressed/gzipped copy.
+        // Keep the canonical 3x-ui filename unless the panel explicitly sends another filename.
+        if($fileName === '' || strpos($fileName, '.') === false) $fileName = $fallbackName;
+        $file = $dir . '/' . $fileName;
+        @file_put_contents($file, $body);
+        if(is_file($file) && filesize($file) > 64){
+            return ['ok'=>true, 'file'=>$file, 'endpoint'=>$endpoint, 'filename'=>$fileName];
+        }
+        $lastError = $endpoint . ': ذخیره فایل ناموفق بود.';
+    }
+
+    return ['ok'=>false, 'message'=>'هیچکدام از مسیرهای دانلود دیتابیس پنل فایل معتبر برنگرداند. آخرین خطا: ' . ($lastError !== '' ? $lastError : 'نامشخص')];
+}
+
+function wizwiz_runReportDatabaseBackups($manual = false){
+    global $connection, $botState;
+    if(!wizwiz_reportIsEnabled(wizwiz_reportEventKey('database_backup'), 'on') && !$manual) return ['ok'=>false, 'message'=>'گزارش بکاپ دیتابیس خاموش است.'];
+    if(!$manual && !wizwiz_reportBackupDue()){
+        $next = wizwiz_reportBackupNextTimestamp();
+        $nextTxt = $next > 0 ? (function_exists('jdate') ? jdate('Y/m/d H:i', $next) : date('Y/m/d H:i', $next)) : 'نامشخص';
+        return ['ok'=>true, 'message'=>'هنوز زمان بکاپ بعدی نرسیده است. زمان بعدی: ' . $nextTxt];
+    }
+
+    $tasks = [];
+    if(wizwiz_backupBotDbEnabled()){
+        $tasks[] = ['type'=>'bot', 'id'=>0, 'title'=>'دیتابیس ربات'];
+    }
+
+    $sql = "SELECT si.`id`, si.`title`, sc.`panel_url`, sc.`username`, sc.`password`, sc.`type` FROM `server_info` si LEFT JOIN `server_config` sc ON sc.`id` = si.`id` ORDER BY si.`id` ASC";
+    $servers = @($connection->query($sql));
+    if($servers){
+        while($server = $servers->fetch_assoc()){
+            $sid = intval($server['id']);
+            if(!wizwiz_panelDbBackupEnabled($sid)) continue;
+            $tasks[] = ['type'=>'panel', 'id'=>$sid, 'title'=>trim((string)($server['title'] ?? ('سرور ' . $sid))), 'server'=>$server];
+        }
+    }
+
+    $summary = [];
+    if(count($tasks) == 0){
+        $summary[] = 'هیچ بکاپی برای ارسال فعال نبود.';
+    }
+
+    $delay = wizwiz_reportBackupItemDelaySeconds();
+    $idx = 0;
+    $total = count($tasks);
+    foreach($tasks as $task){
+        $idx++;
+        if($idx > 1 && $delay > 0) @sleep($delay);
+
+        if(($task['type'] ?? '') === 'bot'){
+            $res = wizwiz_createBotDatabaseBackupFile();
+            if(!empty($res['ok'])){
+                $cap = "🗄 <b>بکاپ جدید دیتابیس ربات</b>\n🔢 مورد: <b>{$idx}/{$total}</b>\n🕒 " . wizwiz_h(function_exists('jdate') ? jdate('Y/m/d H:i', time()) : date('Y/m/d H:i'));
+                $send = wizwiz_reportSendLocalDocument($res['file'], $cap, 'database_backup');
+                $summary[] = (is_object($send) && !empty($send->ok)) ? '✅ دیتابیس ربات ارسال شد.' : '❌ ارسال دیتابیس ربات ناموفق بود.';
+                @unlink($res['file']); @rmdir(dirname($res['file']));
+            }else{
+                $summary[] = '❌ بکاپ دیتابیس ربات ناموفق بود: ' . ($res['message'] ?? 'خطای نامشخص');
+            }
+            continue;
+        }
+
+        if(($task['type'] ?? '') === 'panel'){
+            $sid = intval($task['id'] ?? 0);
+            $title = trim((string)($task['title'] ?? ('سرور ' . $sid)));
+            $res = wizwiz_downloadPanelDatabaseBackup($task['server'] ?? []);
+            if(!empty($res['ok'])){
+                $cap = "🗄 <b>بکاپ دیتابیس پنل</b>\n🖥 سرور: <b>" . wizwiz_h($title) . "</b>\n🆔 شناسه: <code>$sid</code>\n🔢 مورد: <b>{$idx}/{$total}</b>\n⏳ فاصله بین بکاپ‌ها: <b>" . wizwiz_h($delay) . " ثانیه</b>\n🕒 " . wizwiz_h(function_exists('jdate') ? jdate('Y/m/d H:i', time()) : date('Y/m/d H:i'));
+                $send = wizwiz_reportSendLocalDocument($res['file'], $cap, 'database_backup');
+                $summary[] = (is_object($send) && !empty($send->ok)) ? "✅ بکاپ پنل {$title} ارسال شد." : "❌ ارسال بکاپ پنل {$title} ناموفق بود.";
+                @unlink($res['file']); @rmdir(dirname($res['file']));
+            }else{
+                $summary[] = '❌ بکاپ پنل ' . $title . ' ناموفق بود: ' . ($res['message'] ?? 'خطای نامشخص');
+            }
+        }
+    }
+
+    if(!$manual){
+        setSettings('wizReportBackupLastTs', time());
+        setSettings('wizReportBackupLastDate', date('Y-m-d'));
+    }
+    if(count($summary) == 0) $summary[] = 'هیچ بکاپی برای ارسال فعال نبود.';
+    $intervalTxt = wizwiz_formatMinutesFa(wizwiz_reportBackupIntervalMinutes());
+    $body = "⏱ فاصله اجرای بکاپ: <b>" . wizwiz_h($intervalTxt) . "</b>\n⏳ اجرای ترتیبی: <b>فعال</b>\n\n" . implode("\n", array_map('wizwiz_h', $summary));
+    wizwiz_reportEvent('🗄 گزارش بکاپ دیتابیس', $body, null, 'database_backup');
+    return ['ok'=>true, 'message'=>implode("\n", $summary)];
+}
+
+function wizwiz_getReportPanelBackupMenuText(){
+    return "🗄 <b>بکاپ دیتابیس پنل‌ها</b>\n\nاز این بخش مشخص می‌کنی بکاپ دیتابیس کدام پنل‌ها داخل تاپیک دیتابیس ارسال شود.\n\nتوجه: ربات برای X-UI/3x-ui/Sanaei فایل اصلی دیتابیس پنل را بدون فشرده‌سازی دانلود و ارسال می‌کند. برای 3x-ui/Sanaei نام فایل معمولاً x-ui.db است.";
+}
+
+function wizwiz_getReportPanelBackupMenuKeys(){
+    global $connection, $buttonValues;
+    $rows = [];
+    $res = @($connection->query("SELECT si.`id`, si.`title`, sc.`type` FROM `server_info` si LEFT JOIN `server_config` sc ON sc.`id` = si.`id` ORDER BY si.`id` ASC"));
+    if($res && $res->num_rows > 0){
+        while($row = $res->fetch_assoc()){
+            $sid = intval($row['id']);
+            $state = wizwiz_panelDbBackupEnabled($sid) ? '✅' : '❌';
+            $title = trim((string)($row['title'] ?? ('سرور ' . $sid)));
+            $type = trim((string)($row['type'] ?? ''));
+            $rows[] = [[
+                'text' => $state . ' ' . $title . ($type !== '' ? ' | ' . $type : ''),
+                'callback_data' => 'togglePanelDbBackup' . $sid,
+                'style' => 'primary'
+            ]];
+        }
+    }else{
+        $rows[] = [[ 'text'=>'سروری ثبت نشده است', 'callback_data'=>'wizwizch' ]];
+    }
+    $rows[] = [[ 'text'=>'⬅️ بازگشت', 'callback_data'=>'reportChannelSettingsMenu', 'style'=>'primary' ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
 function wizwiz_getIncomeReportChatId(){
     global $botState, $admin;
     $chat = trim((string)($botState['rewardChannel'] ?? ''));
@@ -10697,7 +11281,9 @@ function wizwiz_reportEventItems(){
         'server_switched' => '🌎 تغییر لوکیشن/سرور',
         'auto_approved' => '🤖 تأیید خودکار سفارش',
         'approval_failed' => '⚠️ خطای تأیید خودکار',
-        'daily_stats' => '📊 آمار روزانه'
+        'admin_order_send_failed' => '⚠️ خطای ارسال رسید/سفارش به ادمین',
+        'daily_stats' => '📊 آمار روزانه',
+        'database_backup' => '🗄 بکاپ دیتابیس'
     ];
 }
 
@@ -10869,11 +11455,7 @@ function wizwiz_liveStatsSnapshot($forDaily = false){
 
 function wizwiz_reportEvent($title, $body, $keyboard = null, $eventKey = null){
     if($eventKey !== null && !wizwiz_reportIsEnabled(wizwiz_reportEventKey($eventKey), 'on')) return null;
-    $chat = wizwiz_getIncomeReportChatId();
-    if($chat === null || $chat === '') return null;
-    // اعلان‌ها جدا از آمار هستند؛ آمار فقط در گزارش روزانه/ارسال دستی ارسال می‌شود.
-    $msg = $title . "\n\n" . $body;
-    $res = sendMessage($msg, $keyboard, 'HTML', $chat);
+    $res = wizwiz_reportSendMessage($title, $body, $keyboard, $eventKey);
     if(is_object($res) && isset($res->ok) && $res->ok) return $res;
 
     $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
@@ -10881,7 +11463,7 @@ function wizwiz_reportEvent($title, $body, $keyboard = null, $eventKey = null){
         $removed = false;
         $safeKeyboard = wizwiz_stripPrivateUserButtons($keyboard, $removed);
         if($removed){
-            return sendMessage($msg, $safeKeyboard, 'HTML', $chat);
+            return wizwiz_reportSendMessage($title, $body, $safeKeyboard, $eventKey);
         }
     }
     return $res;
@@ -10899,7 +11481,16 @@ function wizwiz_sendDailyChannelStats($manual = false){
     if(!wizwiz_reportIsEnabled(wizwiz_reportEventKey('daily_stats'), 'on') && !$manual) return false;
     $chat = wizwiz_getIncomeReportChatId();
     if($chat === null || $chat === '') return false;
-    sendMessage(wizwiz_buildDailyChannelStatsText($manual), null, 'HTML', $chat);
+    $text = wizwiz_buildDailyChannelStatsText($manual);
+    $threadId = wizwiz_reportEnsureTopic('daily_stats');
+    $payload = [
+        'chat_id' => $chat,
+        'text' => $text,
+        'parse_mode' => 'HTML',
+        '_timeout' => 20,
+    ];
+    if($threadId > 0) $payload['message_thread_id'] = $threadId;
+    bot('sendMessage', $payload);
     return true;
 }
 
@@ -10920,29 +11511,68 @@ function wizwiz_processDailyChannelStats($force = false){
 
 function wizwiz_getReportSettingsMenuText(){
     $dailyState = wizwiz_reportIsEnabled('wizReportDailyState', 'off') ? 'روشن ✅' : 'خاموش ❌';
+    $forumState = wizwiz_reportForumEnabled() ? 'فعال ✅' : 'غیرفعال ❌';
+    $botDbState = wizwiz_backupBotDbEnabled() ? 'روشن ✅' : 'خاموش ❌';
     $time = wizwiz_reportTime();
     global $botState;
+    $backupInterval = wizwiz_formatMinutesFa(wizwiz_reportBackupIntervalMinutes());
+    $backupDelay = wizwiz_reportBackupItemDelaySeconds();
     $last = trim((string)($botState['wizReportLastDailyDate'] ?? ''));
     if($last === '') $last = 'ارسال نشده';
-    return "📊 <b>تنظیمات آمار و اعلان کانال</b>\n\n" .
+    $backupLastTs = wizwiz_reportBackupLastTimestamp();
+    $backupLast = $backupLastTs > 0 ? (function_exists('jdate') ? jdate('Y/m/d H:i', $backupLastTs) : date('Y/m/d H:i', $backupLastTs)) : 'ارسال نشده';
+    $backupNextTs = wizwiz_reportBackupNextTimestamp();
+    $backupNext = $backupNextTs > 0 ? (function_exists('jdate') ? jdate('Y/m/d H:i', $backupNextTs) : date('Y/m/d H:i', $backupNextTs)) : 'در اولین اجرای کران';
+    $chat = trim((string)($botState['rewardChannel'] ?? ''));
+    if($chat === '') $chat = 'تنظیم نشده';
+    return "📊 <b>تنظیمات گروه/کانال گزارش</b>\n\n" .
+           "📌 مقصد گزارش: <code>" . wizwiz_h($chat) . "</code>\n" .
+           "🧵 دسته‌بندی با تاپیک گروه: <b>$forumState</b>\n" .
            "🔔 آمار روزانه: <b>$dailyState</b>\n" .
-           "🕘 ساعت ارسال روزانه: <b>$time</b>\n" .
-           "📌 آخرین ارسال روزانه: <b>" . wizwiz_h($last) . "</b>\n" .
-           "📎 آمار داخل اعلان‌ها: <b>جدا شده ✅</b>\n\n" .
-           "اعلان خرید، تست و تأیید خودکار هرکدام پیام مخصوص خودشان را دارند. از دکمه‌های پایین می‌توانی خود اعلان‌ها، جزئیات داخل اعلان‌ها و آیتم‌های آمار را روشن/خاموش کنی.";
+           "🕘 ساعت ارسال آمار: <b>$time</b>\n" .
+           "📌 آخرین آمار روزانه: <b>" . wizwiz_h($last) . "</b>\n\n" .
+           "🗄 بکاپ جدید دیتابیس ربات به گروه: <b>$botDbState</b>\n" .
+           "⏱ فاصله بکاپ دیتابیس: <b>" . wizwiz_h($backupInterval) . "</b>\n" .
+           "⏳ فاصله بین هر بکاپ: <b>" . wizwiz_h($backupDelay) . " ثانیه</b>\n" .
+           "📌 آخرین بکاپ دیتابیس: <b>" . wizwiz_h($backupLast) . "</b>\n" .
+           "⏭ بکاپ بعدی: <b>" . wizwiz_h($backupNext) . "</b>\n\n" .
+           "بکاپ‌ها به‌صورت صفی و یکی‌یکی ارسال می‌شوند تا دیتابیس ربات و پنل‌ها همزمان dump نشوند و فشار روی سرور کم بماند. اگر حالت تاپیک فعال باشد، ربات گزارش‌ها را داخل تاپیک‌های جدا مثل خرید، آمار، خطا، تغییر لوکیشن و دیتابیس ارسال می‌کند.";
 }
 
 function wizwiz_getReportSettingsMenuKeys(){
     global $buttonValues;
     $rows = [];
     $rows[] = [
+        ['text'=>'📌 تنظیم گروه/کانال گزارش', 'callback_data'=>'setReportGroupChat', 'style'=>'primary'],
+        ['text'=>(wizwiz_reportForumEnabled() ? 'خاموش کردن تاپیک‌ها ❌' : 'فعال‌سازی تاپیک‌ها ✅'), 'callback_data'=>'toggleReportForumTopics', 'style'=> wizwiz_reportForumEnabled() ? 'danger' : 'success']
+    ];
+    $rows[] = [
+        ['text'=>'🧵 ساخت/ترمیم تاپیک‌ها', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary'],
+        ['text'=>'🗑 حذف همه تاپیک‌ها', 'callback_data'=>'deleteAllReportForumTopics', 'style'=>'danger']
+    ];
+    $rows[] = [
         ['text'=>(wizwiz_reportIsEnabled('wizReportDailyState', 'off') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success'],
-        ['text'=>'🕘 تنظیم ساعت', 'callback_data'=>'setDailyChannelStatsTime', 'style'=>'primary']
+        ['text'=>'🕘 ساعت آمار', 'callback_data'=>'setDailyChannelStatsTime', 'style'=>'primary']
     ];
     $rows[] = [
         ['text'=>'📤 ارسال آمار الان', 'callback_data'=>'sendDailyChannelStatsNow', 'style'=>'success']
     ];
-    $rows[] = [[ 'text'=>'🔔 نوع اعلان‌هایی که به کانال بروند', 'callback_data'=>'wizwizch', 'style'=>'primary' ]];
+
+    $rows[] = [[ 'text'=>'🗄 تنظیمات بکاپ دیتابیس', 'callback_data'=>'wizwizch', 'style'=>'primary' ]];
+    $rows[] = [
+        ['text'=>(wizwiz_backupBotDbEnabled() ? '✅ بکاپ دیتابیس ربات' : '❌ بکاپ دیتابیس ربات'), 'callback_data'=>'toggleReportBackupBotDb', 'style'=>'primary'],
+        ['text'=>'⏱ فاصله بکاپ', 'callback_data'=>'setReportBackupInterval', 'style'=>'primary']
+    ];
+    $rows[] = [
+        ['text'=>'⏳ فاصله بین ارسال‌ها', 'callback_data'=>'setReportBackupItemDelay', 'style'=>'primary'],
+        ['text'=>'🔄 ریست زمان‌بندی بکاپ', 'callback_data'=>'resetReportBackupSchedule', 'style'=>'primary']
+    ];
+    $rows[] = [
+        ['text'=>'🖥 بکاپ دیتابیس پنل‌ها', 'callback_data'=>'reportPanelDbBackupMenu', 'style'=>'primary'],
+        ['text'=>'📦 اجرای بکاپ الان', 'callback_data'=>'runReportDbBackupsNow', 'style'=>'success']
+    ];
+
+    $rows[] = [[ 'text'=>'🔔 نوع اعلان‌هایی که به گزارش بروند', 'callback_data'=>'wizwizch', 'style'=>'primary' ]];
     foreach(wizwiz_reportEventItems() as $key => $title){
         $state = wizwiz_reportIsEnabled(wizwiz_reportEventKey($key), 'on') ? '✅' : '❌';
         $rows[] = [[ 'text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportEvent_' . $key, 'style'=>'primary' ]];
