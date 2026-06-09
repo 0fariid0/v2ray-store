@@ -38,6 +38,30 @@ if(wizwiz_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
 
+if(!function_exists('wizwiz_appendServerPlanToChannelReport')){
+    function wizwiz_appendServerPlanToChannelReport($msg, $serverTitle = '', $planTitle = ''){
+        $msg = (string)$msg;
+        $serverTitle = trim((string)$serverTitle);
+        $planTitle = trim((string)$planTitle);
+        $lines = [];
+        $esc = function($value){ return function_exists('wizwiz_h') ? wizwiz_h($value) : htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); };
+
+        // بعضی قالب‌های قدیمیِ پیام خرید داخل دیتابیس فقط «نام سرویس/ریمارک» دارند و پلن واقعی را نشان نمی‌دهند.
+        // اینجا بدون دست زدن به تنظیمات ذخیره‌شده، سرور و پلن را به گزارش کانال/ادمین اضافه می‌کنیم.
+        if($serverTitle !== '' && strpos($msg, 'سرور') === false){
+            $lines[] = '🖥 سرور: <b>' . $esc($serverTitle) . '</b>';
+        }
+        if($planTitle !== '' && strpos($msg, 'پلن') === false){
+            $lines[] = '📦 پلن: <b>' . $esc($planTitle) . '</b>';
+        }
+
+        if(count($lines) == 0) return $msg;
+        return rtrim($msg) . "
+" . implode("
+", $lines);
+    }
+}
+
 // لغو امن خرید/پرداخت کارت‌به‌کارت در مرحله ارسال رسید
 if(function_exists('wizwiz_isCartToCartReceiptStep') && wizwiz_isCartToCartReceiptStep($userInfo['step'] ?? '', $wizReceiptStepMatch) && (($text ?? '') == ($buttonValues['cancel'] ?? ''))){
     $hashId = $wizReceiptStepMatch[2] ?? '';
@@ -110,6 +134,28 @@ if($data == 'setAutoApproveMinutes' && ($from_id == $admin || $userInfo['isAdmin
     setUser('setAutoApproveMinutes');
     exit();
 }
+if($data == 'autoApproveTypesMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getAutoApproveTypesText(), wizwiz_getAutoApproveTypesKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleAutoApproveType_(.+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $items = function_exists('wizwiz_autoApproveTypeItems') ? wizwiz_autoApproveTypeItems() : [];
+    $key = $match[1];
+    if(array_key_exists($key, $items)){
+        $types = wizwiz_getAutoApproveTypes();
+        $types[$key] = (($types[$key] ?? 'on') === 'on') ? 'off' : 'on';
+        wizwiz_saveAutoApproveTypes($types);
+        editText($message_id, wizwiz_getAutoApproveTypesText(), wizwiz_getAutoApproveTypesKeys(), 'HTML');
+    }else alert('گزینه معتبر نیست.', true);
+    exit();
+}
+if(preg_match('/^setAllAutoApproveTypes_(on|off)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $types = [];
+    foreach(wizwiz_autoApproveTypeItems() as $key => $item) $types[$key] = $match[1];
+    wizwiz_saveAutoApproveTypes($types);
+    editText($message_id, wizwiz_getAutoApproveTypesText(), wizwiz_getAutoApproveTypesKeys(), 'HTML');
+    exit();
+}
 if(($userInfo['step'] ?? '') == 'setAutoApproveMinutes' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text) && intval($text) >= 1 && intval($text) <= 1440){
         setSettings('autoApproveMinutes', intval($text));
@@ -121,6 +167,61 @@ if(($userInfo['step'] ?? '') == 'setAutoApproveMinutes' && $text != $buttonValue
     }
     exit();
 }
+if($data == 'autoApproveBlockedUsersMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    exit();
+}
+if($data == 'addAutoApproveBlockedUser' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("🚫 آیدی عددی کاربری که نباید رسیدهایش خودکار تأیید شود را ارسال کنید.\n\nمی‌توانید پیام کاربر را هم فوروارد کنید.\nمثال: <code>6073739858</code>", $cancelKey, 'HTML');
+    setUser('addAutoApproveBlockedUser');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addAutoApproveBlockedUser' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = 0;
+    if(isset($update->message->forward_from->id)) $targetId = intval($update->message->forward_from->id);
+    elseif(preg_match('/(\d{5,15})/', (string)$text, $m)) $targetId = intval($m[1]);
+
+    if($targetId > 0){
+        wizwiz_addAutoApproveBlockedUser($targetId);
+        setUser();
+        sendMessage("✅ کاربر <code>$targetId</code> از تأیید خودکار مستثنی شد.", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    }else{
+        sendMessage('❌ آیدی معتبر پیدا نشد. فقط آیدی عددی کاربر را ارسال کنید.', $cancelKey, 'HTML');
+    }
+    exit();
+}
+if($data == 'removeAutoApproveBlockedUserManual' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("➖ آیدی عددی کاربری که می‌خواهید از لیست بلاک تأیید خودکار حذف شود را ارسال کنید.", $cancelKey, 'HTML');
+    setUser('removeAutoApproveBlockedUserManual');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'removeAutoApproveBlockedUserManual' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetId = 0;
+    if(isset($update->message->forward_from->id)) $targetId = intval($update->message->forward_from->id);
+    elseif(preg_match('/(\d{5,15})/', (string)$text, $m)) $targetId = intval($m[1]);
+
+    if($targetId > 0){
+        wizwiz_removeAutoApproveBlockedUser($targetId);
+        setUser();
+        sendMessage("✅ کاربر <code>$targetId</code> از لیست بلاک تأیید خودکار حذف شد.", $removeKeyboard, 'HTML');
+        sendMessage(wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    }else{
+        sendMessage('❌ آیدی معتبر پیدا نشد. فقط آیدی عددی کاربر را ارسال کنید.', $cancelKey, 'HTML');
+    }
+    exit();
+}
+if(preg_match('/^removeAutoApproveBlockedUser(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_removeAutoApproveBlockedUser(intval($match[1]));
+    editText($message_id, wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    exit();
+}
+if($data == 'clearAutoApproveBlockedUsers' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_saveAutoApproveBlockedUsers([]);
+    editText($message_id, wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    exit();
+}
+
 if($data == 'runAutoApproveOrdersNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $result = wizwiz_processAutoApproveOrders(true, 10);
     $msg = "🚀 بررسی دستی تأیید خودکار انجام شد.\n\nتعداد تأیید شده: " . intval($result['processed']);
@@ -754,6 +855,130 @@ if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($f
         setSettings($match[1], $newValue);
     }
     editText($message_id,$mainValues['change_bot_settings_message'],getBotSettingKeys());
+}
+
+
+if($data == "switchLocationSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    exit();
+}
+if($data == "toggleSwitchCostMode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $settings = wizwiz_getServerSwitchSettings();
+    $modes = ['auto', 'percent', 'manual'];
+    $currentIndex = array_search($settings['mode'], $modes, true);
+    if($currentIndex === false) $currentIndex = 0;
+    $settings['mode'] = $modes[($currentIndex + 1) % count($modes)];
+    wizwiz_saveServerSwitchSettings($settings);
+    editText($message_id, wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    exit();
+}
+if(in_array($data, ['editSwitchDefaultGb','editSwitchPercent','editSwitchMinGb','editSwitchDailyLimit'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    if($data == 'editSwitchDefaultGb'){
+        sendMessage("🔻 حجم ثابت کسر برای تغییر سرور را به گیگابایت وارد کنید.\nمثال: <code>1.5</code>", $cancelKey, "HTML");
+    }elseif($data == 'editSwitchPercent'){
+        sendMessage("📊 درصد عمومی کسر حجم در حالت درصدی را وارد کنید.\nمثال: اگر <code>15</code> وارد کنید، از سرویس ۳۰ گیگ مقدار ۴.۵ گیگ و از سرویس ۵ گیگ مقدار ۰.۷۵ گیگ کم می‌شود.", $cancelKey, "HTML");
+    }elseif($data == 'editSwitchMinGb'){
+        sendMessage("🔹 حداقل حجم کسر در حالت خودکار/درصدی را به گیگابایت وارد کنید.\nمثال: <code>0.5</code>", $cancelKey, "HTML");
+    }else{
+        sendMessage("🕘 تعداد دفعات مجاز تغییر سرور/لوکیشن برای هر کانفیگ در هر روز را وارد کنید.\nمثال: <code>1</code> یعنی روزی یک‌بار، <code>2</code> یعنی روزی دو بار.\nبرای نامحدود کردن کاربر عادی عدد <code>0</code> را وارد کنید.", $cancelKey, "HTML");
+    }
+    setUser($data);
+    exit();
+}
+if(in_array($userInfo['step'] ?? '', ['editSwitchDefaultGb','editSwitchPercent','editSwitchMinGb','editSwitchDailyLimit'], true) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $settings = wizwiz_getServerSwitchSettings();
+    if($userInfo['step'] == 'editSwitchDailyLimit'){
+        if(!ctype_digit(trim((string)$text)) || intval($text) < 0){
+            sendMessage("لطفاً یک عدد صحیح صفر یا بزرگ‌تر وارد کنید.", $cancelKey);
+            exit();
+        }
+        $settings['daily_limit'] = intval($text);
+    }else{
+        if(!is_numeric($text) || floatval($text) < 0){
+            sendMessage("لطفاً مقدار را فقط به عدد وارد کنید. مثال: 1.5", $cancelKey);
+            exit();
+        }
+        if($userInfo['step'] == 'editSwitchPercent' && floatval($text) > 100){
+            sendMessage("درصد نمی‌تواند بیشتر از 100 باشد. مثال: 15", $cancelKey);
+            exit();
+        }
+        if($userInfo['step'] == 'editSwitchDefaultGb') $settings['default_gb'] = floatval($text);
+        elseif($userInfo['step'] == 'editSwitchPercent') $settings['percent'] = floatval($text);
+        else $settings['min_gb'] = floatval($text);
+    }
+    wizwiz_saveServerSwitchSettings($settings);
+    setUser();
+    sendMessage("✅ تنظیمات تغییر سرور ذخیره شد.", $removeKeyboard);
+    sendMessage(wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    exit();
+}
+if($data == 'selectSwitchPairFrom' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, "🌎 سرور مبدا را برای تنظیم حجم ثابت انتخاب کنید:", wizwiz_getSwitchPairFromKeys(false, 'gb'), "HTML");
+    exit();
+}
+if($data == 'selectSwitchPairPercentFrom' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, "🌎 سرور مبدا را برای تنظیم درصد اختصاصی انتخاب کنید:", wizwiz_getSwitchPairFromKeys(false, 'percent'), "HTML");
+    exit();
+}
+if($data == 'selectSwitchPairDeleteFrom' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, "🗑 سرور مبدا مسیر اختصاصی را انتخاب کنید:", wizwiz_getSwitchPairFromKeys(true), "HTML");
+    exit();
+}
+if(preg_match('/^switchPairFrom(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, "🌎 سرور مقصد را انتخاب کنید:", wizwiz_getSwitchPairToKeys($match[1], false, 'gb'), "HTML");
+    exit();
+}
+if(preg_match('/^switchPairPercentFrom(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, "🌎 سرور مقصد را انتخاب کنید:", wizwiz_getSwitchPairToKeys($match[1], false, 'percent'), "HTML");
+    exit();
+}
+if(preg_match('/^switchPairDeleteFrom(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, "🗑 سرور مقصد مسیری که می‌خواهید حذف شود را انتخاب کنید:", wizwiz_getSwitchPairToKeys($match[1], true), "HTML");
+    exit();
+}
+if(preg_match('/^switchPairTo(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    $fromTitle = wizwiz_switchGetServerTitle($match[1]);
+    $toTitle = wizwiz_switchGetServerTitle($match[2]);
+    sendMessage("🔻 حجم کسر اختصاصی مسیر زیر را به گیگابایت وارد کنید:\n\n<b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nمثال: <code>2</code>", $cancelKey, "HTML");
+    setUser('editSwitchPairCost' . intval($match[1]) . '_' . intval($match[2]));
+    exit();
+}
+if(preg_match('/^switchPairPercentTo(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    $fromTitle = wizwiz_switchGetServerTitle($match[1]);
+    $toTitle = wizwiz_switchGetServerTitle($match[2]);
+    sendMessage("📊 درصد کسر اختصاصی مسیر زیر را وارد کنید:\n\n<b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nمثال: <code>15</code> یعنی ۱۵٪ از حجم باقی‌مانده کم شود.\nبرای سرویس ۳۰ گیگ می‌شود ۴.۵ گیگ و برای سرویس ۵ گیگ می‌شود ۰.۷۵ گیگ.", $cancelKey, "HTML");
+    setUser('editSwitchPairPercent' . intval($match[1]) . '_' . intval($match[2]));
+    exit();
+}
+if(preg_match('/^switchPairDeleteTo(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_deleteSwitchPairCostGb($match[1], $match[2]);
+    editText($message_id, "✅ تنظیم اختصاصی این مسیر حذف شد.\nاز این بعد برای این مسیر، تنظیمات عمومی اعمال می‌شود.", wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    exit();
+}
+if(preg_match('/^editSwitchPairCost(\d+)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || floatval($text) < 0){
+        sendMessage("لطفاً مقدار حجم را فقط به عدد وارد کنید. مثال: 2.5", $cancelKey);
+        exit();
+    }
+    wizwiz_setSwitchPairCostGb($match[1], $match[2], floatval($text));
+    setUser();
+    sendMessage("✅ حجم ثابت اختصاصی مسیر ذخیره شد.", $removeKeyboard);
+    sendMessage(wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    exit();
+}
+if(preg_match('/^editSwitchPairPercent(\d+)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || floatval($text) < 0 || floatval($text) > 100){
+        sendMessage("لطفاً درصد را بین 0 تا 100 وارد کنید. مثال: 15", $cancelKey);
+        exit();
+    }
+    wizwiz_setSwitchPairPercent($match[1], $match[2], floatval($text));
+    setUser();
+    sendMessage("✅ درصد اختصاصی مسیر ذخیره شد.", $removeKeyboard);
+    sendMessage(wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    exit();
 }
 
 if($data=="adminTextSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -1897,6 +2122,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     $stmt->bind_param("i", $server_id);
     $stmt->execute();
     $serverInfo = $stmt->get_result()->fetch_assoc();
+    $serverTitle = $serverInfo['title'] ?? '';
     $srv_remark = $serverInfo['remark'];
     $stmt->close();
     $savedinfo = file_get_contents('settings/temp.txt');
@@ -2527,6 +2753,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     }
     $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                 [$serverTitle, 'ارزی ریالی', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);
+    $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
     
     sendMessage($msg,$keys,"html", $admin);
 }
@@ -2841,10 +3068,35 @@ if($userInfo['step'] == "messageToSpeceficUser" && $text != $buttonValues['cance
     }
 }
 
+if($data == 'broadcastQueueStatus' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $queue = function_exists('farid_getActiveBroadcastQueue') ? farid_getActiveBroadcastQueue() : null;
+    if(!$queue){
+        editText($message_id, "✅ در حال حاضر هیچ ارسال/فوروارد همگانی فعالی در صف نیست.", getAdminKeysPlus(), 'HTML');
+        exit();
+    }
+    $txt = function_exists('farid_formatBroadcastQueueText') ? farid_formatBroadcastQueueText($queue, true) : farid_getActiveBroadcastQueueText();
+    $key = function_exists('farid_getBroadcastStatusKeyboard') ? farid_getBroadcastStatusKeyboard($queue['id']) : getAdminKeysPlus();
+    editText($message_id, $txt, $key, 'HTML');
+    exit();
+}
+if(preg_match('/^broadcastQueueCancel(\d+)$/', $data, $bqCancel) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $qid = intval($bqCancel[1]);
+    $stmt = $connection->prepare("DELETE FROM `send_list` WHERE `id` = ? AND `state` = 1 AND `type` != 'updateConfigs'");
+    $stmt->bind_param('i', $qid);
+    $stmt->execute();
+    $affected = $stmt->affected_rows;
+    $stmt->close();
+    if($affected > 0) editText($message_id, "🛑 صف ارسال/فوروارد همگانی متوقف و حذف شد.", getAdminKeysPlus(), 'HTML');
+    else editText($message_id, "⚠️ صف موردنظر پیدا نشد یا قبلاً پایان یافته است.", getAdminKeysPlus(), 'HTML');
+    exit();
+}
+
 if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $queueText = function_exists('farid_getActiveBroadcastQueueText') ? farid_getActiveBroadcastQueueText() : null;
     if($queueText !== null){
-        sendMessage($queueText);
+        $queue = function_exists('farid_getActiveBroadcastQueue') ? farid_getActiveBroadcastQueue() : null;
+        $key = ($queue && function_exists('farid_getBroadcastStatusKeyboard')) ? farid_getBroadcastStatusKeyboard($queue['id']) : null;
+        sendMessage($queueText, $key, 'HTML');
         exit();
     }
 
@@ -3981,8 +4233,10 @@ if(preg_match('/^yesSend2All(\d+)/', $data,$match) && ($from_id == $admin || $us
     $targetTitle = farid_getBroadcastTargetTitle($target);
     $targetCount = farid_countBroadcastTargets($target);
 
-    $stmt = $connection->prepare("UPDATE `send_list` SET `state` = 1, `offset` = 0 WHERE `id` = ?") ;
-    $stmt->bind_param('i', $match[1]);
+    $targetCountForQueue = intval($targetCount);
+    $nowForQueue = time();
+    $stmt = $connection->prepare("UPDATE `send_list` SET `state` = 1, `offset` = 0, `last_user_id` = 0, `total_count` = ?, `sent_count` = 0, `failed_count` = 0, `blocked_count` = 0, `last_report_at` = 0, `pause_until` = 0, `started_at` = 0, `updated_at` = ? WHERE `id` = ?") ;
+    $stmt->bind_param('iii', $targetCountForQueue, $nowForQueue, $match[1]);
     $stmt->execute();
     $stmt->close();
     
@@ -3992,7 +4246,9 @@ if(preg_match('/^yesSend2All(\d+)/', $data,$match) && ($from_id == $admin || $us
 if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $queueText = function_exists('farid_getActiveBroadcastQueueText') ? farid_getActiveBroadcastQueueText() : null;
     if($queueText !== null){
-        sendMessage($queueText);
+        $queue = function_exists('farid_getActiveBroadcastQueue') ? farid_getActiveBroadcastQueue() : null;
+        $key = ($queue && function_exists('farid_getBroadcastStatusKeyboard')) ? farid_getBroadcastStatusKeyboard($queue['id']) : null;
+        sendMessage($queueText, $key, 'HTML');
         exit();
     }
 
@@ -4850,6 +5106,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         ]]);
     $msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                 ['کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_custom_account_request']);
+    $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle ?? '', $file_detail['title'] ?? '');
     sendMessage($msg,$keys,"html", $admin);
 }
 if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
@@ -4997,6 +5254,16 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
         $catname = $stmt->get_result()->fetch_assoc()['title'];
         $stmt->close();
         $filename = $catname." ".$res['title']; 
+        $serverTitle = '';
+        if(!empty($res['server_id'])){
+            $stmt = $connection->prepare("SELECT `title` FROM `server_info` WHERE `id`=? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param("i", $res['server_id']);
+                $stmt->execute();
+                $serverTitle = $stmt->get_result()->fetch_assoc()['title'] ?? '';
+                $stmt->close();
+            }
+        }
         $fileprice = $payInfo['price'];
         $remark = $payInfo['description'];
         
@@ -5005,6 +5272,7 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
     
         $msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                             ["کارت به کارت", $from_id, $username, $first_name, $fileprice, $remark,$volume, $days], $mainValues['buy_custom_account_request']);
+        $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle ?? '', $filename ?? ($res['title'] ?? ''));
         $keyboard = json_encode(['inline_keyboard' => [
             [
                 ['text' => $buttonValues['approve'], 'callback_data' => "accept" . $match[1], 'style' => 'success'],
@@ -5599,10 +5867,15 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
             ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"wizwizch"]
         ],
         ]]);
-    if($payInfo['type'] == "RENEW_SCONFIG"){$msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
-                ['کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['renew_account_request_message']);}
-    else{$msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
-                [$serverTitle, 'کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);}
+    if($payInfo['type'] == "RENEW_SCONFIG"){
+        $msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
+                ['کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['renew_account_request_message']);
+    }
+    else{
+        $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
+                [$serverTitle, 'کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);
+        $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
+    }
 
     sendMessage($msg,$keys,"html", $admin);
 }
@@ -5702,8 +5975,13 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
         sendMessage($mainValues['order_buy_sent'],$removeKeyboard);
         sendMessage($mainValues['reached_main_menu'],getMainKeys());
     
-        if($payInfo['agent_count'] != 0) $msg = str_replace(['ACCOUNT-COUNT', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK"],[$payInfo['agent_count'], 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename], $mainValues['buy_new_much_account_request']);
-        else $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],[$serverTitle, 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename, $volume, $days], $mainValues['buy_new_account_request']);
+        if($payInfo['agent_count'] != 0) {
+            $msg = str_replace(['ACCOUNT-COUNT', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK"],[$payInfo['agent_count'], 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename], $mainValues['buy_new_much_account_request']);
+        }
+        else {
+            $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],[$serverTitle, 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename, $volume, $days], $mainValues['buy_new_account_request']);
+        }
+        $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle, $filename);
 
         $keyboard = wizwiz_adminPendingOrderKeyboard($match[1], $uid);
         setUser('', 'temp');
@@ -10246,6 +10524,176 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
     sendMessage($msg, $keys,"html", $admin);
     exit;
 }
+
+if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
+    $oid = intval($match[1]);
+    $order = wizwiz_switchGetOrder($oid);
+    if(!$order){
+        alert($mainValues['config_not_found'] ?? 'کانفیگ یافت نشد', true);
+        exit();
+    }
+    $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
+    $ownerId = intval($order['userid'] ?? 0);
+    if(!$isAdminSwitch && $ownerId != $from_id){
+        alert('⛔️ شما به این کانفیگ دسترسی ندارید', true);
+        exit();
+    }
+    if(!$isAdminSwitch && (($botState['switchLocationState'] ?? 'off') != 'on')){
+        alert('⛔️ تغییر سرور در حال حاضر غیرفعال است.', true);
+        exit();
+    }
+    if(intval($order['amount'] ?? 0) <= 0 && intval($order['agent_bought'] ?? 0) == 0){
+        alert('اکانت تست یا سرویس رایگان قابل تغییر سرور نیست.', true);
+        exit();
+    }
+    if(intval($order['expire_date'] ?? 0) > 0 && intval($order['expire_date']) < time()){
+        alert('سرویس شما غیرفعال است. لطفاً ابتدا آن را تمدید کنید.', true);
+        exit();
+    }
+    $live = farid_switchGetOrderLiveState($order);
+    if(empty($live['ok'])){
+        alert('⛔️ ' . ($live['message'] ?? 'امکان بررسی حجم سرویس وجود ندارد.'), true);
+        exit();
+    }
+    $remainingGb = floatval($live['remaining_gb'] ?? 0);
+    if($remainingGb <= 0){
+        alert('حجم سرویس شما تمام شده است. لطفاً ابتدا آن را تمدید یا شارژ کنید.', true);
+        exit();
+    }
+    $settings = wizwiz_getServerSwitchSettings();
+    if(!$isAdminSwitch && intval($settings['daily_limit']) > 0 && wizwiz_switchUsedToday($oid, $ownerId) >= intval($settings['daily_limit'])){
+        alert('⛔️ برای هر کانفیگ فقط ' . intval($settings['daily_limit']) . ' بار در روز می‌توانید تغییر سرور انجام دهید.', true);
+        exit();
+    }
+
+    $currentServer = intval($order['server_id'] ?? 0);
+    $stmt = $connection->prepare("SELECT `id`, `title`, `ucount` FROM `server_info` WHERE `active` = 1 AND `state` = 1 AND `id` != ? ORDER BY `id` DESC");
+    $stmt->bind_param('i', $currentServer);
+    $stmt->execute();
+    $servers = $stmt->get_result();
+    $stmt->close();
+    $keyboard = [];
+    while($srv = $servers->fetch_assoc()){
+        $sid = intval($srv['id']);
+        if(!$isAdminSwitch && intval($srv['ucount'] ?? 0) <= 0) continue;
+        $cost = wizwiz_calcSwitchDeductionGb($order, $sid, $remainingGb);
+        $changeGb = floatval($cost['change_gb'] ?? ($cost['deduct_gb'] ?? 0));
+        $changeType = ($cost['change_type'] ?? 'deduct');
+        if($changeType === 'deduct' && $remainingGb <= $changeGb){
+            $label = $srv['title'] . ' (حجم کافی نیست)';
+        }else{
+            $sign = ($changeType === 'add') ? '+' : '-';
+            $label = $srv['title'] . ' (' . $sign . wizwiz_switchFormatGb($changeGb) . 'GB)';
+        }
+        $keyboard[] = ['text'=>$label, 'callback_data'=>'switchSrvPreview' . $sid . '_' . $oid];
+    }
+    if(empty($keyboard)){
+        alert('در حال حاضر هیچ سرور فعالی برای تغییر سرور وجود ندارد.', true);
+        exit();
+    }
+    $keyboard = array_chunk($keyboard, 1);
+    $keyboard[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>($isAdminSwitch ? 'userOrderDetails' . $oid . '_0' : 'orderDetails' . $oid)]];
+    $msg = "🌎 <b>تغییر سرور کانفیگ</b>\n\n" .
+           "🔮 نام سرویس: <b>" . htmlspecialchars((string)$order['remark'], ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📦 حجم باقی‌مانده فعلی: <b>" . wizwiz_switchFormatGb($remainingGb) . " GB</b>\n\n" .
+           "سرور مقصد را انتخاب کنید. عدد داخل پرانتز مقدار حجمی است که بابت تغییر سرور کم یا اضافه می‌شود.";
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+
+if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
+    $sid = intval($match[1]);
+    $oid = intval($match[2]);
+    $order = wizwiz_switchGetOrder($oid);
+    if(!$order){ alert($mainValues['config_not_found'] ?? 'کانفیگ یافت نشد', true); exit(); }
+    $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
+    $ownerId = intval($order['userid'] ?? 0);
+    if(!$isAdminSwitch && $ownerId != $from_id){ alert('⛔️ شما به این کانفیگ دسترسی ندارید', true); exit(); }
+    $live = farid_switchGetOrderLiveState($order);
+    if(empty($live['ok'])){ alert('⛔️ ' . ($live['message'] ?? 'امکان بررسی حجم سرویس وجود ندارد.'), true); exit(); }
+    $remainingGb = floatval($live['remaining_gb'] ?? 0);
+    $cost = wizwiz_calcSwitchDeductionGb($order, $sid, $remainingGb);
+    $changeGb = floatval($cost['change_gb'] ?? ($cost['deduct_gb'] ?? 0));
+    $changeType = ($cost['change_type'] ?? 'deduct');
+    if($changeType === 'deduct' && $remainingGb <= $changeGb){
+        alert('حجم باقی‌مانده برای این تغییر کافی نیست. حجم باقی‌مانده: ' . wizwiz_switchFormatGb($remainingGb) . 'GB، حجم موردنیاز: ' . wizwiz_switchFormatGb($changeGb) . 'GB', true);
+        exit();
+    }
+    $fromTitle = wizwiz_switchGetServerTitle($order['server_id']);
+    $toTitle = wizwiz_switchGetServerTitle($sid);
+    $afterGb = ($changeType === 'add') ? ($remainingGb + $changeGb) : max(0, $remainingGb - $changeGb);
+    $priceDiff = number_format(intval($cost['price_diff'] ?? 0));
+    $reason = htmlspecialchars((string)($cost['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $changeLine = ($changeType === 'add')
+        ? "🔺 حجم افزایشی: <b>" . wizwiz_switchFormatGb($changeGb) . " GB</b>\n"
+        : "🔻 حجم کسرشونده: <b>" . wizwiz_switchFormatGb($changeGb) . " GB</b>\n";
+    $msg = "⚠️ <b>تأیید تغییر سرور</b>\n\n" .
+           "🔮 سرویس: <b>" . htmlspecialchars((string)$order['remark'], ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📍 از: <b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📍 به: <b>" . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\n" .
+           "📦 حجم فعلی: <b>" . wizwiz_switchFormatGb($remainingGb) . " GB</b>\n" .
+           $changeLine .
+           "✅ حجم بعد از تغییر: <b>" . wizwiz_switchFormatGb($afterGb) . " GB</b>\n" .
+           "💰 اختلاف قیمت شناسایی‌شده: <b>{$priceDiff} تومان</b>\n" .
+           "🧮 روش محاسبه: {$reason}\n\n" .
+           "بعد از تأیید، کانفیگ از سرور قبلی حذف می‌شود و لینک جدید در یک پیام جداگانه برای کاربر ارسال می‌شود.";
+    $keyboard = json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ تأیید و تغییر سرور', 'callback_data'=>'confirmSwitchServer' . $sid . '_' . $oid, 'style'=>'success']],
+        [['text'=>'⬅️ بازگشت به انتخاب سرور', 'callback_data'=>'switchLocation' . $oid]],
+    ]], JSON_UNESCAPED_UNICODE);
+    editText($message_id, $msg, $keyboard, 'HTML');
+    exit();
+}
+
+if(preg_match('/^confirmSwitchServer(\d+)_(\d+)$/', $data, $match)){
+    alert($mainValues['please_wait_message'] ?? 'لطفاً صبر کنید...');
+    $sid = intval($match[1]);
+    $oid = intval($match[2]);
+    $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
+    $result = farid_switchOrderServer($oid, $sid, $from_id, $isAdminSwitch);
+    if(empty($result['ok'])){
+        alert('⛔️ ' . ($result['message'] ?? 'تغییر سرور انجام نشد.'), true);
+        exit();
+    }
+
+    $ownerId = intval($result['owner_id'] ?? 0);
+    $newRemark = $result['new_remark'] ?? '-';
+    $links = $result['links'] ?? [];
+    if($ownerId > 0){
+        $resultChangeType = ($result['change_type'] ?? 'deduct');
+        $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
+        $resultChangeLine = ($resultChangeType === 'add')
+            ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
+            : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+        $extra = "✅ سرور سرویس شما تغییر کرد.\n" .
+                 "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
+                 $resultChangeLine .
+                 "📦 حجم باقی‌مانده جدید: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
+        farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+    }
+    if(function_exists('wizwiz_notifyServerSwitch')){
+        wizwiz_notifyServerSwitch($result, $from_id, $isAdminSwitch);
+    }
+
+    $backCb = $isAdminSwitch ? ('userOrderDetails' . $oid . '_0') : ('orderDetails' . $oid);
+    $resultChangeType = ($result['change_type'] ?? 'deduct');
+    $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
+    $resultChangeLine = ($resultChangeType === 'add')
+        ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
+        : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+    $msg = "✅ سرور کانفیگ با موفقیت تغییر کرد.\n\n" .
+           "🔮 نام جدید: <b>" . htmlspecialchars((string)$newRemark, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📍 مقصد: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           $resultChangeLine .
+           "📦 حجم باقی‌مانده: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
+           "لینک جدید در پیام جداگانه برای کاربر ارسال شد.";
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>'📄 مشاهده جزئیات سرویس', 'callback_data'=>$backCb]],
+        [['text'=>$buttonValues['back_to_main'] ?? 'منوی اصلی', 'callback_data'=>'mainMenu']],
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+
 if(preg_match('/switchLocation(.+)_(.+)_(.+)_(.+)/', $data,$match)){
     $order_id = $match[1];
     $server_id = $match[2];
@@ -10352,6 +10800,52 @@ if(preg_match('/switchLocation(.+)_(.+)_(.+)_(.+)/', $data,$match)){
     editText($message_id, ' 📍 لطفاً برای تغییر لوکیشن سرویس فعلی, یکی از سرورها را انتخاب کنید👇',json_encode([
             'inline_keyboard' => $keyboard
         ]));
+}
+if(preg_match('/^switchServer(\d+)_(\d+)$/',$data,$match)){
+    $sid = intval($match[1]);
+    $oid = intval($match[2]);
+    $isAdminSwitch = ($from_id == $admin || (!empty($userInfo['isAdmin'])));
+    $result = farid_switchOrderServer($oid, $sid, $from_id, $isAdminSwitch);
+    if(empty($result['ok'])){
+        alert('⛔️ ' . ($result['message'] ?? 'تغییر سرور انجام نشد.'), true);
+        exit;
+    }
+
+    $ownerId = intval($result['owner_id'] ?? $from_id);
+    $links = $result['links'] ?? [];
+    $newRemark = (string)($result['new_remark'] ?? '');
+    if($ownerId > 0 && !empty($links)){
+        $resultChangeType = ($result['change_type'] ?? 'deduct');
+        $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
+        $resultChangeLine = ($resultChangeType === 'add')
+            ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
+            : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+        $extra = "✅ سرور سرویس شما تغییر کرد.\n" .
+                 "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
+                 $resultChangeLine .
+                 "📦 حجم باقی‌مانده جدید: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
+        farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+    }
+    if(function_exists('wizwiz_notifyServerSwitch')){
+        wizwiz_notifyServerSwitch($result, $from_id, $isAdminSwitch);
+    }
+
+    $resultChangeType = ($result['change_type'] ?? 'deduct');
+    $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
+    $resultChangeLine = ($resultChangeType === 'add')
+        ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
+        : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+    $msg = "✅ سرور کانفیگ با موفقیت تغییر کرد.\n\n" .
+           "🔮 نام جدید: <b>" . htmlspecialchars($newRemark, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           $resultChangeLine .
+           "📦 حجم باقی‌مانده: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
+           "لینک جدید در یک پیام جداگانه برای کاربر ارسال شد.";
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>'🔙 بازگشت به جزئیات کانفیگ', 'callback_data'=>'orderDetails' . intval($result['order_id'] ?? $oid)]],
+        [['text'=>$buttonValues['back_to_main'] ?? 'منوی اصلی', 'callback_data'=>'mainMenu']],
+    ]]), 'HTML');
+    exit;
 }
 if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
     $sid = $match[1];
@@ -12312,6 +12806,125 @@ if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == tr
 ";
     editText($message_id, $msg, getAdminKeysPlus());
 }
+
+if(in_array($data ?? '', ['faqMenu', 'tutorialsMenu', 'reciveApplications'], true)){
+    $helpType = (($data ?? '') === 'faqMenu') ? 'faq' : 'tutorial';
+    editText($message_id, wizwiz_helpUserMenuText($helpType), wizwiz_helpUserMenuKeys($helpType), 'HTML');
+    exit();
+}
+if(preg_match('/^help(Faq|Tut)Item_(\d+)$/', $data ?? '', $match)){
+    $helpType = ($match[1] === 'Faq') ? 'faq' : 'tutorial';
+    editText($message_id, wizwiz_helpUserItemText($helpType, $match[2]), wizwiz_helpUserItemKeys($helpType), 'HTML');
+    exit();
+}
+
+if($data == 'adminHelpMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_helpAdminHomeText(), wizwiz_helpAdminHomeKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpList_(faq|tutorial)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_helpAdminListText($match[1]), wizwiz_helpAdminListKeys($match[1]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpItem_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpToggle_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    if($item){
+        wizwiz_helpUpdateItem($match[1], $match[2], ['enabled'=>empty($item['enabled'])]);
+        editText($message_id, wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    }else alert('مورد پیدا نشد.', true);
+    exit();
+}
+if(preg_match('/^adminHelpDelete_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
+    editText($message_id, "🗑 آیا از حذف این مورد مطمئن هستید؟\n\n<b>" . wizwiz_h($item['title']) . "</b>", wizwiz_helpAdminDeleteKeys($match[1], $match[2]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpConfirmDelete_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    wizwiz_helpDeleteItem($match[1], $match[2]);
+    editText($message_id, wizwiz_helpAdminListText($match[1]), wizwiz_helpAdminListKeys($match[1]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpAdd_(faq|tutorial)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $cfg = wizwiz_helpTypeConfig($match[1]);
+    sendMessage("➕ لطفاً عنوان مورد جدید برای <b>" . wizwiz_h($cfg['title']) . "</b> را ارسال کنید.", $cancelKey, 'HTML');
+    setUser('adminHelpAddTitle_' . $match[1]);
+    setUser('', 'temp');
+    exit();
+}
+if(preg_match('/^adminHelpEditTitle_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
+    sendMessage("✏️ عنوان جدید را ارسال کنید:\n\nعنوان فعلی: <b>" . wizwiz_h($item['title']) . "</b>", $cancelKey, 'HTML');
+    setUser('adminHelpEditTitle_' . $match[1] . '_' . intval($match[2]));
+    exit();
+}
+if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
+    sendMessage("📝 متن جدید را ارسال کنید.\n\nمی‌توانید متن چندخطی بفرستید.", $cancelKey, 'HTML');
+    setUser('adminHelpEditText_' . $match[1] . '_' . intval($match[2]));
+    exit();
+}
+if(preg_match('/^adminHelpAddTitle_(faq|tutorial)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $title = trim((string)$text);
+    if($title === ''){
+        sendMessage('عنوان نمی‌تواند خالی باشد. دوباره ارسال کنید.');
+        exit();
+    }
+    setUser(function_exists('wizwiz_helpLimitText') ? wizwiz_helpLimitText($title, 120) : $title, 'temp');
+    setUser('adminHelpAddText_' . $match[1]);
+    sendMessage("📝 حالا متن کامل این مورد را ارسال کنید.\n\nعنوان: <b>" . wizwiz_h($title) . "</b>", $cancelKey, 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpAddText_(faq|tutorial)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $title = trim((string)($userInfo['temp'] ?? ''));
+    $body = trim((string)$text);
+    if($title === ''){
+        setUser('adminHelpAddTitle_' . $match[1]);
+        sendMessage('عنوان ذخیره نشده بود. لطفاً عنوان را دوباره ارسال کنید.', $cancelKey, 'HTML');
+        exit();
+    }
+    if($body === ''){
+        sendMessage('متن نمی‌تواند خالی باشد. دوباره ارسال کنید.');
+        exit();
+    }
+    wizwiz_helpAddItem($match[1], $title, $body);
+    setUser();
+    setUser('', 'temp');
+    sendMessage('✅ مورد جدید ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(wizwiz_helpAdminListText($match[1]), wizwiz_helpAdminListKeys($match[1]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpEditTitle_(faq|tutorial)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $title = trim((string)$text);
+    if($title === ''){
+        sendMessage('عنوان نمی‌تواند خالی باشد. دوباره ارسال کنید.');
+        exit();
+    }
+    wizwiz_helpUpdateItem($match[1], $match[2], ['title'=>$title]);
+    setUser();
+    sendMessage('✅ عنوان ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $body = trim((string)$text);
+    if($body === ''){
+        sendMessage('متن نمی‌تواند خالی باشد. دوباره ارسال کنید.');
+        exit();
+    }
+    wizwiz_helpUpdateItem($match[1], $match[2], ['body'=>$body]);
+    setUser();
+    sendMessage('✅ متن ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    exit();
+}
+
 if($data == 'reciveApplications') {
     $stmt = $connection->prepare("SELECT * FROM `needed_sofwares` WHERE `status`=1");
     $stmt->execute();
@@ -12478,15 +13091,21 @@ function getAdminKeysPlus(){
     $keys[] = [['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'wizwizch', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['tickets_list'], 'callback_data'=>'ticketsList', 'style'=>'primary'],
-        ['text'=>$buttonValues['message_to_all'], 'callback_data'=>'message2All', 'style'=>'success']
+        ['text'=>$buttonValues['message_to_all'], 'callback_data'=>'message2All', 'style'=>'primary']
     ];
     $keys[] = [
-        ['text'=>$buttonValues['forward_to_all'], 'callback_data'=>'forwardToAll', 'style'=>'success'],
+        ['text'=>$buttonValues['forward_to_all'], 'callback_data'=>'forwardToAll', 'style'=>'primary'],
+        ['text'=>'📊 وضعیت صف همگانی', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary']
+    ];
+    $keys[] = [
         ['text'=>$buttonValues['main_button_settings'], 'callback_data'=>'mainMenuButtons', 'style'=>'primary']
     ];
     $keys[] = [
         ['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'userButtonSettings', 'style'=>'primary'],
         ['text'=>'📝 تنظیم متن خوش‌آمدگویی', 'callback_data'=>'adminTextSettings', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>'📚 مدیریت FAQ و آموزش‌ها', 'callback_data'=>'adminHelpMenu', 'style'=>'primary']
     ];
 
     $keys[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
@@ -13751,6 +14370,9 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
         // cache برای جلوگیری از چند بار Query و Update یک سفارش در همان Batch
         $orderCache = [];
         $linksCache = [];
+        $sentOrderIds = $job['sent_order_ids'] ?? [];
+        if(!is_array($sentOrderIds)) $sentOrderIds = [];
+        $sentOrderIds = array_map('intval', $sentOrderIds);
 
         foreach($slice as $token){
             $processedNow++;
@@ -13819,34 +14441,20 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
                 continue;
             }
 
-            // ارسال فقط همان لینکِ منطبق (بر اساس Index ذخیره‌شده در دیتابیس)
+            // در فیلتر دامنه/آدرس هم باید خروجی مثل «بروزرسانی لینک» کاربر باشد:
+            // یعنی بعد از بازسازی لینک‌ها، همه دامنه‌ها/آی‌پی‌های ثبت‌شده برای همان کانفیگ
+            // در یک پیام جدید برای کاربر ارسال شود، نه فقط همان لینکی که با دامنه جستجو شده بود.
             $toUser = intval($order['userid'] ?? 0);
-            if($toUser > 0){
+            if($toUser > 0 && !in_array($oid, $sentOrderIds, true)){
                 $remark = $order['remark'] ?? "-";
-
-                $toSend = $links;
-
-                if(is_array($links)){
-                    // تلاش می‌کنیم همان index را ارسال کنیم
-                    if(isset($links[$idx])){
-                        $toSend = [$links[$idx]];
-                    }else{
-                        $vals = array_values($links);
-                        if(isset($vals[$idx])){
-                            $toSend = [$vals[$idx]];
-                        }else{
-                            // fallback: اگر index پیدا نشد، همه لینک‌های تولیدشده ارسال شود
-                            $toSend = $links;
-                        }
-                    }
-                }
-
-                farid_sendUpdatedConfigToUser($toUser, $remark, $toSend);
+                farid_sendUpdatedConfigToUser($toUser, $remark, $links);
                 $stats['sent']++;
+                $sentOrderIds[] = $oid;
             }
         }
 
         $job['offset'] = $offset + $processedNow;
+        $job['sent_order_ids'] = array_values(array_unique(array_map('intval', $sentOrderIds)));
     }
 
     // ✅ حالت: فیلتر شده با لیست آی‌دی‌ها (سفارش‌ها)
@@ -14338,6 +14946,545 @@ function farid_generateUpdatedVrayLinks($order){
     }
 
     return getConnectionLink($server_id, $uuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+}
+
+
+function farid_switchIsMarzbanType($type){
+    return trim((string)$type) === 'marzban';
+}
+
+function farid_switchGetServerConfig($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function farid_switchGetServerInfo($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT * FROM `server_info` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function farid_switchExpiryToSeconds($expiry){
+    $expiry = intval($expiry);
+    if($expiry <= 0) return 0;
+    if(strlen((string)$expiry) > 10) return intval(substr((string)$expiry, 0, -3));
+    return $expiry;
+}
+
+function farid_switchExpiryToMillis($expiry){
+    $expiry = intval($expiry);
+    if($expiry <= 0) return 0;
+    if(strlen((string)$expiry) > 10) return $expiry;
+    return $expiry * 1000;
+}
+
+function farid_switchFindXuiInboundInfo($serverId, $inboundId, $uuid = ''){
+    $serverId = intval($serverId);
+    $inboundId = intval($inboundId);
+    $uuid = trim((string)$uuid);
+    $json = getJson($serverId);
+    if(!$json || !isset($json->obj) || !is_array($json->obj)) return null;
+    foreach($json->obj as $row){
+        if($inboundId > 0 && intval($row->id ?? 0) != $inboundId) continue;
+        $settings = @json_decode($row->settings);
+        $clients = is_object($settings) && isset($settings->clients) && is_array($settings->clients) ? $settings->clients : [];
+        $client = null;
+        if($uuid !== ''){
+            foreach($clients as $c){
+                if((isset($c->id) && (string)$c->id === $uuid) || (isset($c->password) && (string)$c->password === $uuid)){
+                    $client = $c;
+                    break;
+                }
+            }
+            if($inboundId <= 0 && !$client) continue;
+        }
+        $stream = @json_decode($row->streamSettings);
+        return [
+            'row' => $row,
+            'client' => $client,
+            'id' => intval($row->id ?? 0),
+            'port' => intval($row->port ?? 0),
+            'protocol' => (string)($row->protocol ?? ''),
+            'netType' => is_object($stream) ? (string)($stream->network ?? '') : '',
+            'security' => is_object($stream) ? (string)($stream->security ?? 'none') : 'none',
+        ];
+    }
+    return null;
+}
+
+
+function farid_switchClientExistsInInbound($serverId, $inboundId, $uuid = '', $email = ''){
+    $serverId = intval($serverId);
+    $inboundId = intval($inboundId);
+    $uuid = trim((string)$uuid);
+    $email = trim((string)$email);
+    if($serverId <= 0 || $inboundId <= 0 || ($uuid === '' && $email === '')) return false;
+
+    $json = getJson($serverId);
+    if(!$json || !isset($json->obj) || !is_array($json->obj)) return false;
+    foreach($json->obj as $row){
+        if(intval($row->id ?? 0) != $inboundId) continue;
+        $settings = $row->settings ?? '{}';
+        if(is_string($settings)) $settings = @json_decode($settings, true);
+        elseif(is_object($settings)) $settings = json_decode(json_encode($settings), true);
+        if(!is_array($settings)) return false;
+        $clients = $settings['clients'] ?? [];
+        if(!is_array($clients)) return false;
+        foreach($clients as $client){
+            if(is_object($client)) $client = json_decode(json_encode($client), true);
+            if(!is_array($client)) continue;
+            $cid = trim((string)($client['id'] ?? ''));
+            $pwd = trim((string)($client['password'] ?? ''));
+            $cem = trim((string)($client['email'] ?? ''));
+            if($uuid !== '' && ($cid === $uuid || $pwd === $uuid)) return true;
+            if($email !== '' && $cem === $email) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+function farid_switchSanaeiNewAttachClientToInbound($serverId, $inboundId, $clientArr){
+    global $connection;
+    $serverId = intval($serverId);
+    $inboundId = intval($inboundId);
+    if($serverId <= 0 || $inboundId <= 0 || !is_array($clientArr)) return null;
+
+    $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $serverInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$serverInfo || ($serverInfo['type'] ?? '') !== 'sanaei_new') return null;
+
+    $panelUrl = rtrim((string)($serverInfo['panel_url'] ?? ''), '/');
+    if($panelUrl === '') return null;
+    $serverName = (string)($serverInfo['username'] ?? '');
+    $serverPass = (string)($serverInfo['password'] ?? '');
+
+    $loginUrl = $panelUrl . '/login';
+    $curl = curl_init();
+    curl_setopt($curl, CURLOPT_URL, $loginUrl);
+    curl_setopt($curl, CURLOPT_FOLLOWLOCATION, 1);
+    curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($curl, CURLOPT_POST, 1);
+    curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($curl, CURLOPT_TIMEOUT, 8);
+    curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query(['username'=>$serverName, 'password'=>$serverPass]));
+    curl_setopt($curl, CURLOPT_HTTPHEADER, function_exists('wizwiz_panelLoginHeaders') ? wizwiz_panelLoginHeaders($curl, $loginUrl) : []);
+    curl_setopt($curl, CURLOPT_HEADER, 1);
+    $loginResponseRaw = curl_exec($curl);
+    if($loginResponseRaw === false){ curl_close($curl); return null; }
+    $headerSize = curl_getinfo($curl, CURLINFO_HEADER_SIZE);
+    $header = substr($loginResponseRaw, 0, $headerSize);
+    $body = substr($loginResponseRaw, $headerSize);
+    preg_match('/^Set-Cookie:\s*([^;]*)/mi', $header, $match);
+    $session = $match[1] ?? '';
+    $loginJson = json_decode((string)$body, true);
+    if(empty($session) || !is_array($loginJson) || empty($loginJson['success'])){ curl_close($curl); return is_array($loginJson) ? (object)$loginJson : null; }
+
+    $clientArr['email'] = (string)($clientArr['email'] ?? ('sw-' . time() . rand(100,999)));
+    if(!isset($clientArr['enable'])) $clientArr['enable'] = true;
+    if(!isset($clientArr['subId']) || $clientArr['subId'] === '') $clientArr['subId'] = RandomString(16);
+
+    $attempts = [
+        [
+            'url' => $panelUrl . '/panel/api/inbounds/addClient',
+            'payload' => ['id' => $inboundId, 'settings' => ['clients' => [$clientArr]]],
+        ],
+        [
+            'url' => $panelUrl . '/panel/api/inbounds/addClient',
+            'payload' => ['id' => $inboundId, 'settings' => json_encode(['clients' => [$clientArr]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+        ],
+        [
+            'url' => $panelUrl . '/panel/api/clients/add',
+            'payload' => ['client' => $clientArr, 'inboundIds' => [$inboundId], 'inbounds' => [$inboundId], 'inbound_ids' => [$inboundId]],
+        ],
+    ];
+
+    $last = null;
+    foreach($attempts as $attempt){
+        if(function_exists('wizwiz_sanaeiNewJsonPost')){
+            wizwiz_sanaeiNewJsonPost($curl, $attempt['url'], $session, $attempt['payload']);
+        }else{
+            curl_setopt_array($curl, [
+                CURLOPT_URL => $attempt['url'],
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CUSTOMREQUEST => 'POST',
+                CURLOPT_POSTFIELDS => json_encode($attempt['payload'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                CURLOPT_HTTPHEADER => ['User-Agent: Mozilla/5.0', 'Accept: application/json', 'Content-Type: application/json', 'Cookie: ' . $session],
+                CURLOPT_SSL_VERIFYHOST => false,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_HEADER => false,
+            ]);
+        }
+        $raw = curl_exec($curl);
+        $decoded = json_decode((string)$raw);
+        $last = $decoded ?: $raw;
+        if(is_object($decoded) && !empty($decoded->success)) break;
+        $msg = is_object($decoded) ? (string)($decoded->msg ?? '') : (string)$raw;
+        // Duplicate email/id can still mean the client exists globally; the caller verifies actual inbound attachment.
+        if(stripos($msg, 'duplicate') !== false) break;
+    }
+    curl_close($curl);
+    return $last;
+}
+
+function farid_switchBuildInboundLinks($serverId, $uuid, $protocol, $remark, $targetInbound, $inboundId, $custom){
+    $custom = is_array($custom) ? $custom : [];
+    $customPath = $custom['customPath'] ?? false;
+    $customPort = $custom['customPort'] ?? 0;
+    // برای sanaei_new نباید لینک از لیست global clients گرفته شود؛ چون ممکن است لینک قدیمی/پورت قبلی برگردد.
+    // مقدار رشته خالی باعث می‌شود getConnectionLink لینک را از خود inbound مقصد بسازد.
+    $customSni = array_key_exists('customSni', $custom) ? $custom['customSni'] : '';
+    if($customSni === null) $customSni = '';
+    $customDomain = $custom['customDomain'] ?? null;
+    return getConnectionLink(
+        intval($serverId),
+        (string)$uuid,
+        (string)$protocol,
+        (string)$remark,
+        intval($targetInbound['port'] ?? 0),
+        (string)($targetInbound['netType'] ?? ''),
+        intval($inboundId),
+        false,
+        $customPath,
+        $customPort,
+        $customSni,
+        $customDomain
+    );
+}
+
+function farid_switchGetOrderLiveState($order){
+    if(!is_array($order)) return ['ok'=>false, 'message'=>'اطلاعات سفارش نامعتبر است.'];
+    $serverId = intval($order['server_id'] ?? 0);
+    $serverConfig = farid_switchGetServerConfig($serverId);
+    if(!$serverConfig) return ['ok'=>false, 'message'=>'تنظیمات سرور فعلی پیدا نشد.'];
+    $serverType = (string)($serverConfig['type'] ?? '');
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $remark = (string)($order['remark'] ?? '');
+    $inboundId = intval($order['inbound_id'] ?? 0);
+
+    if(farid_switchIsMarzbanType($serverType)){
+        $info = getMarzbanUser($serverId, $remark);
+        if(!$info || isset($info->detail)) return ['ok'=>false, 'message'=>'کانفیگ در پنل مرزبان پیدا نشد یا پنل پاسخ نامعتبر داد.'];
+        $total = intval($info->data_limit ?? 0);
+        $used = intval($info->used_traffic ?? 0);
+        $remaining = max(0, $total - $used);
+        $expire = intval($info->expire ?? 0);
+        return [
+            'ok' => true,
+            'panel_type' => 'marzban',
+            'remaining_bytes' => $remaining,
+            'remaining_gb' => round($remaining / 1073741824, 2),
+            'expire_seconds' => $expire,
+            'expire_millis' => $expire > 0 ? $expire * 1000 : 0,
+            'protocol' => 'marzban',
+            'port' => 0,
+            'netType' => '',
+            'security' => '',
+            'limitIp' => 0,
+            'flow' => '',
+            'uniqid' => $uuid,
+        ];
+    }
+
+    if($inboundId > 0){
+        $inboundInfo = farid_switchFindXuiInboundInfo($serverId, $inboundId, $uuid);
+        if(!$inboundInfo || empty($inboundInfo['client'])) return ['ok'=>false, 'message'=>'کلاینت داخل inbound فعلی پیدا نشد.'];
+        $preview = deleteClient($serverId, $inboundId, $uuid, 0);
+        if($preview === null || !is_array($preview)) return ['ok'=>false, 'message'=>'امکان دریافت وضعیت حجم از پنل فعلی وجود ندارد.'];
+        $total = intval($preview['total'] ?? 0);
+        $up = intval($preview['up'] ?? 0);
+        $down = intval($preview['down'] ?? 0);
+        $remaining = max(0, $total - $up - $down);
+        $client = $inboundInfo['client'];
+        $clientId = trim((string)($client->id ?? ($client->password ?? $uuid)));
+        return [
+            'ok' => true,
+            'panel_type' => 'xui',
+            'remaining_bytes' => $remaining,
+            'remaining_gb' => round($remaining / 1073741824, 2),
+            'expire_seconds' => farid_switchExpiryToSeconds($preview['expiryTime'] ?? 0),
+            'expire_millis' => farid_switchExpiryToMillis($preview['expiryTime'] ?? 0),
+            'protocol' => $inboundInfo['protocol'],
+            'port' => $inboundInfo['port'],
+            'netType' => $inboundInfo['netType'],
+            'security' => $inboundInfo['security'],
+            'limitIp' => intval($preview['limitIp'] ?? ($client->limitIp ?? 0)),
+            'flow' => (string)($preview['flow'] ?? ($client->flow ?? '')),
+            'uniqid' => $clientId !== '' ? $clientId : $uuid,
+        ];
+    }
+
+    $preview = deleteInbound($serverId, $uuid, 0);
+    if($preview === null || !is_array($preview)) return ['ok'=>false, 'message'=>'امکان دریافت وضعیت این کانفیگ از پنل فعلی وجود ندارد.'];
+    $remaining = intval($preview['volume'] ?? 0);
+    if($remaining <= 0){
+        $remaining = max(0, intval($preview['total'] ?? 0) - intval($preview['up'] ?? 0) - intval($preview['down'] ?? 0));
+    }
+    return [
+        'ok' => true,
+        'panel_type' => 'xui',
+        'remaining_bytes' => $remaining,
+        'remaining_gb' => round($remaining / 1073741824, 2),
+        'expire_seconds' => farid_switchExpiryToSeconds($preview['expiryTime'] ?? 0),
+        'expire_millis' => farid_switchExpiryToMillis($preview['expiryTime'] ?? 0),
+        'protocol' => (string)($preview['protocol'] ?? ($order['protocol'] ?? '')),
+        'port' => intval($preview['port'] ?? 0),
+        'netType' => (string)($preview['netType'] ?? ''),
+        'security' => (string)($preview['security'] ?? 'none'),
+        'limitIp' => 0,
+        'flow' => '',
+        'uniqid' => (string)($preview['uniqid'] ?? $uuid),
+    ];
+}
+
+function farid_switchMakeRemark($targetServerId, $ownerId){
+    global $connection, $botState;
+    $targetServerId = intval($targetServerId);
+    $ownerId = intval($ownerId);
+    $stmt = $connection->prepare("SELECT `remark` FROM `server_info` WHERE `id` = ? LIMIT 1");
+    $stmt->bind_param('i', $targetServerId);
+    $stmt->execute();
+    $srvRemark = (string)($stmt->get_result()->fetch_assoc()['remark'] ?? 'srv');
+    $stmt->close();
+    if(($botState['remark'] ?? '') == 'digits') return $srvRemark . '-' . rand(10000,99999);
+    return $srvRemark . '-' . $ownerId . '-' . rand(1111,99999);
+}
+
+function farid_switchPlanCustomFields($plan){
+    if(!is_array($plan)) $plan = [];
+    return [
+        'customPath' => $plan['custom_path'] ?? null,
+        'customPort' => $plan['custom_port'] ?? 0,
+        'customSni' => $plan['custom_sni'] ?? null,
+        'customDomain' => $plan['custom_domain'] ?? null,
+        'flow' => (isset($plan['flow']) && $plan['flow'] != 'None') ? $plan['flow'] : '',
+    ];
+}
+
+function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSwitch = false){
+    global $connection, $botState;
+    $orderId = intval($orderId);
+    $targetServerId = intval($targetServerId);
+    $actorId = intval($actorId);
+    $isAdminSwitch = (bool)$isAdminSwitch;
+    $order = wizwiz_switchGetOrder($orderId);
+    if(!$order) return ['ok'=>false, 'message'=>'کانفیگ پیدا نشد.'];
+    $ownerId = intval($order['userid'] ?? 0);
+    if(!$isAdminSwitch && $ownerId !== $actorId) return ['ok'=>false, 'message'=>'شما به این کانفیگ دسترسی ندارید.'];
+    if(!$isAdminSwitch && (($botState['switchLocationState'] ?? 'off') != 'on')) return ['ok'=>false, 'message'=>'تغییر سرور در حال حاضر غیرفعال است.'];
+    if(intval($order['amount'] ?? 0) <= 0 && intval($order['agent_bought'] ?? 0) == 0) return ['ok'=>false, 'message'=>'اکانت تست یا سرویس رایگان قابل تغییر سرور نیست.'];
+    if(intval($order['server_id'] ?? 0) === $targetServerId) return ['ok'=>false, 'message'=>'سرور مقصد با سرور فعلی یکی است.'];
+    if(intval($order['expire_date'] ?? 0) > 0 && intval($order['expire_date']) < time()) return ['ok'=>false, 'message'=>'سرویس غیرفعال است؛ ابتدا باید تمدید شود.'];
+
+    $targetInfo = farid_switchGetServerInfo($targetServerId);
+    if(!$targetInfo || intval($targetInfo['active'] ?? 0) != 1 || intval($targetInfo['state'] ?? 0) != 1) return ['ok'=>false, 'message'=>'سرور مقصد فعال نیست.'];
+    if(!$isAdminSwitch && intval($targetInfo['ucount'] ?? 0) <= 0) return ['ok'=>false, 'message'=>'ظرفیت سرور مقصد تمام شده است.'];
+
+    $settings = wizwiz_getServerSwitchSettings();
+    if(!$isAdminSwitch && intval($settings['daily_limit']) > 0 && wizwiz_switchUsedToday($orderId, $ownerId) >= intval($settings['daily_limit'])){
+        return ['ok'=>false, 'message'=>'برای هر کانفیگ فقط ' . intval($settings['daily_limit']) . ' بار در روز امکان تغییر سرور دارید.'];
+    }
+
+    $oldServerId = intval($order['server_id'] ?? 0);
+    $oldConfig = farid_switchGetServerConfig($oldServerId);
+    $targetConfig = farid_switchGetServerConfig($targetServerId);
+    if(!$oldConfig || !$targetConfig) return ['ok'=>false, 'message'=>'تنظیمات سرور مبدا یا مقصد پیدا نشد.'];
+    $oldType = (string)($oldConfig['type'] ?? '');
+    $targetType = (string)($targetConfig['type'] ?? '');
+
+    // برای جلوگیری از باگ، جابه‌جایی بین مرزبان و X-UI را انجام نمی‌دهیم.
+    if(farid_switchIsMarzbanType($oldType) xor farid_switchIsMarzbanType($targetType)){
+        return ['ok'=>false, 'message'=>'تغییر مستقیم بین مرزبان و X-UI پشتیبانی نمی‌شود. سرور مقصد باید هم‌نوع سرور فعلی باشد.'];
+    }
+
+    $live = farid_switchGetOrderLiveState($order);
+    if(empty($live['ok'])) return ['ok'=>false, 'message'=>$live['message'] ?? 'امکان بررسی وضعیت فعلی سرویس وجود ندارد.'];
+    $remainingBytes = intval($live['remaining_bytes'] ?? 0);
+    $remainingGb = $remainingBytes / 1073741824;
+    if($remainingBytes <= 0) return ['ok'=>false, 'message'=>'حجم سرویس تمام شده است.'];
+
+    $cost = wizwiz_calcSwitchDeductionGb($order, $targetServerId, $remainingGb);
+    $changeType = ($cost['change_type'] ?? 'deduct');
+    $changeGb = floatval($cost['change_gb'] ?? ($cost['deduct_gb'] ?? 0));
+    $changeBytes = (int)floor($changeGb * 1073741824);
+    if($changeType === 'deduct' && $remainingBytes <= $changeBytes){
+        return ['ok'=>false, 'message'=>'حجم باقی‌مانده برای این تغییر کافی نیست. حجم باقی‌مانده: ' . wizwiz_switchFormatGb($remainingGb) . 'GB، کسر موردنیاز: ' . wizwiz_switchFormatGb($changeGb) . 'GB'];
+    }
+    $newBytes = ($changeType === 'add') ? ($remainingBytes + $changeBytes) : max(0, $remainingBytes - $changeBytes);
+    $newVolumeGb = round($newBytes / 1073741824, 2);
+    if($newVolumeGb <= 0) return ['ok'=>false, 'message'=>'بعد از تغییر سرور، حجم قابل استفاده‌ای باقی نمی‌ماند.'];
+
+    $targetPlan = $cost['target_plan'] ?? null;
+    if(!is_array($targetPlan)) $targetPlan = wizwiz_switchGetPlan($order['fileid'] ?? 0);
+    $targetPlanId = intval($cost['target_plan_id'] ?? ($order['fileid'] ?? 0));
+    if($targetPlanId <= 0) $targetPlanId = intval($order['fileid'] ?? 0);
+    $custom = farid_switchPlanCustomFields($targetPlan);
+    $newRemark = farid_switchMakeRemark($targetServerId, $ownerId);
+    $oldRemark = (string)($order['remark'] ?? '');
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $sourceInboundId = intval($order['inbound_id'] ?? 0);
+    $targetInboundId = intval($targetPlan['inbound_id'] ?? 0);
+    if($targetInboundId <= 0 && $sourceInboundId > 0) $targetInboundId = $sourceInboundId;
+    $links = [];
+    $deleteOldAction = null;
+    $newToken = (string)($order['token'] ?? '');
+    $newUuid = $uuid;
+    $newProtocol = (string)($order['protocol'] ?? ($live['protocol'] ?? ''));
+
+    if(farid_switchIsMarzbanType($oldType) && farid_switchIsMarzbanType($targetType)){
+        $expireSeconds = intval($live['expire_seconds'] ?? 0);
+        $daysLeft = $expireSeconds > 0 ? max(1, (int)ceil(($expireSeconds - time()) / 86400)) : 3650;
+        $response = addMarzbanUser($targetServerId, $newRemark, $newVolumeGb, $daysLeft, $targetPlanId);
+        if(!is_object($response) || empty($response->success)){
+            if(is_object($response) && ($response->msg ?? '') == 'User already exists'){
+                $newRemark .= rand(1111,99999);
+                $response = addMarzbanUser($targetServerId, $newRemark, $newVolumeGb, $daysLeft, $targetPlanId);
+            }
+        }
+        if(!is_object($response) || empty($response->success)){
+            $msg = is_object($response) ? ($response->msg ?? 'خطای نامشخص') : 'پاسخ نامعتبر پنل مقصد';
+            return ['ok'=>false, 'message'=>'ساخت کانفیگ در سرور مقصد انجام نشد: ' . $msg];
+        }
+        $links = is_array($response->vray_links ?? null) ? $response->vray_links : [];
+        $newToken = str_replace('/sub/', '', (string)($response->sub_link ?? ''));
+        $newUuid = $newToken;
+        $deleteOldAction = ['type'=>'marzban'];
+    }else{
+        if($targetInboundId > 0){
+            $targetInbound = farid_switchFindXuiInboundInfo($targetServerId, $targetInboundId, '');
+            if(!$targetInbound) return ['ok'=>false, 'message'=>'Inbound مقصد با آیدی ' . $targetInboundId . ' پیدا نشد. لطفاً inbound_id پلن سرور مقصد را بررسی کنید.'];
+            $protocol = $targetInbound['protocol'] ?: ($live['protocol'] ?? $newProtocol);
+            $idLabel = ($protocol == 'trojan') ? 'password' : 'id';
+            $flow = trim((string)($custom['flow'] !== '' ? $custom['flow'] : ($live['flow'] ?? '')));
+            $newArr = [
+                $idLabel => $uuid,
+                'email' => $newRemark,
+                'enable' => true,
+                'limitIp' => intval($live['limitIp'] ?? 0),
+                'totalGB' => $newBytes,
+                'expiryTime' => intval($live['expire_millis'] ?? 0),
+                'subId' => RandomString(16),
+            ];
+            if($flow !== '') $newArr['flow'] = $flow;
+            $response = addInboundAccount($targetServerId, '', $targetInboundId, 1, $newRemark, 0, intval($live['limitIp'] ?? 0), $newArr, $targetPlanId);
+            if(is_object($response) && empty($response->success) && strstr((string)($response->msg ?? ''), 'Duplicate email')){
+                $newRemark .= RandomString(4, 'small');
+                $newArr['email'] = $newRemark;
+                $response = addInboundAccount($targetServerId, '', $targetInboundId, 1, $newRemark, 0, intval($live['limitIp'] ?? 0), $newArr, $targetPlanId);
+            }
+            if($response === null) return ['ok'=>false, 'message'=>'اتصال به سرور مقصد برقرار نشد.'];
+            if($response === 'inbound not Found') return ['ok'=>false, 'message'=>'Inbound مقصد پیدا نشد.'];
+            if(!is_object($response) || empty($response->success)){
+                $msg = is_object($response) ? ($response->msg ?? 'خطای نامشخص') : 'پاسخ نامعتبر پنل مقصد';
+                return ['ok'=>false, 'message'=>'ساخت کانفیگ در سرور مقصد انجام نشد: ' . $msg];
+            }
+
+            if(($targetType ?? '') === 'sanaei_new' && !farid_switchClientExistsInInbound($targetServerId, $targetInboundId, $uuid, $newRemark)){
+                farid_switchSanaeiNewAttachClientToInbound($targetServerId, $targetInboundId, $newArr);
+                if(!farid_switchClientExistsInInbound($targetServerId, $targetInboundId, $uuid, $newRemark)){
+                    return ['ok'=>false, 'message'=>'کانفیگ در سنایی جدید ساخته شد اما به inbound مقصد وصل نشد. لطفاً inbound_id پلن مقصد را بررسی کنید.'];
+                }
+            }
+
+            $targetInbound = farid_switchFindXuiInboundInfo($targetServerId, $targetInboundId, $uuid) ?: $targetInbound;
+            $links = farid_switchBuildInboundLinks($targetServerId, $uuid, $protocol, $newRemark, $targetInbound, $targetInboundId, $custom);
+            $deleteOldAction = ($sourceInboundId > 0)
+                ? ['type'=>'client', 'inbound_id'=>$sourceInboundId, 'uuid'=>$uuid]
+                : ['type'=>'inbound', 'uuid'=>$uuid];
+            $newProtocol = $protocol;
+        }else{
+            $uniqid = (string)($live['uniqid'] ?? $uuid);
+            $port = intval($live['port'] ?? rand(1111,65000));
+            $protocol = (string)($live['protocol'] ?? $newProtocol);
+            $netType = (string)($live['netType'] ?? 'tcp');
+            $security = (string)($live['security'] ?? 'none');
+            $expireMs = intval($live['expire_millis'] ?? 0);
+            $response = addUser($targetServerId, $uniqid, $protocol, $port, $expireMs, $newRemark, $newVolumeGb, $netType, $security, false, $targetPlanId);
+            if(is_object($response) && empty($response->success)){
+                if(strstr((string)($response->msg ?? ''), 'Duplicate email')) $newRemark .= RandomString(4, 'small');
+                if(strstr((string)($response->msg ?? ''), 'Port already exists')) $port = rand(1111,65000);
+                $response = addUser($targetServerId, $uniqid, $protocol, $port, $expireMs, $newRemark, $newVolumeGb, $netType, $security, false, $targetPlanId);
+            }
+            if($response === null) return ['ok'=>false, 'message'=>'اتصال به سرور مقصد برقرار نشد.'];
+            if(!is_object($response) || empty($response->success)){
+                $msg = is_object($response) ? ($response->msg ?? 'خطای نامشخص') : 'پاسخ نامعتبر پنل مقصد';
+                return ['ok'=>false, 'message'=>'ساخت کانفیگ در سرور مقصد انجام نشد: ' . $msg];
+            }
+            $links = getConnectionLink($targetServerId, $uniqid, $protocol, $newRemark, $port, $netType, 0, false, $custom['customPath'], $custom['customPort'], $custom['customSni'], $custom['customDomain']);
+            $deleteOldAction = ['type'=>'inbound', 'uuid'=>$uuid];
+            $newUuid = $uniqid;
+            $newProtocol = $protocol;
+        }
+    }
+
+    $links = wizwiz_normalizeConfigLinksArray($links);
+    if(empty($links)) return ['ok'=>false, 'message'=>'کانفیگ در مقصد ساخته شد، ولی لینک خروجی ساخته نشد. لطفاً از پنل بررسی کنید.'];
+
+    if(is_array($deleteOldAction)){
+        if(($deleteOldAction['type'] ?? '') === 'marzban'){
+            deleteMarzban($oldServerId, $oldRemark);
+        }elseif(($deleteOldAction['type'] ?? '') === 'client'){
+            deleteClient($oldServerId, intval($deleteOldAction['inbound_id'] ?? 0), (string)($deleteOldAction['uuid'] ?? $uuid), 1);
+        }elseif(($deleteOldAction['type'] ?? '') === 'inbound'){
+            deleteInbound($oldServerId, (string)($deleteOldAction['uuid'] ?? $uuid), 1);
+        }
+    }
+
+    $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE);
+    $newInboundId = intval($targetInboundId ?? 0);
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `server_id` = ?, `fileid` = ?, `inbound_id` = ?, `token` = ?, `uuid` = ?, `protocol` = ?, `link` = ?, `remark` = ?, `notif` = 0 WHERE `id` = ?");
+    $stmt->bind_param('iiisssssi', $targetServerId, $targetPlanId, $newInboundId, $newToken, $newUuid, $newProtocol, $linkJson, $newRemark, $orderId);
+    $stmt->execute();
+    $stmt->close();
+
+    $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` + 1 WHERE `id` = ?");
+    $stmt->bind_param('i', $oldServerId);
+    $stmt->execute();
+    $stmt->close();
+
+    $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = IF(`ucount` > 0, `ucount` - 1, `ucount`) WHERE `id` = ?");
+    $stmt->bind_param('i', $targetServerId);
+    $stmt->execute();
+    $stmt->close();
+
+    $logChangeGb = ($changeType === 'add') ? (-1 * $changeGb) : $changeGb;
+    wizwiz_recordSwitchLog($orderId, $ownerId, $oldServerId, $targetServerId, $oldRemark, $newRemark, $logChangeGb);
+
+    return [
+        'ok' => true,
+        'order_id' => $orderId,
+        'owner_id' => $ownerId,
+        'old_server_id' => $oldServerId,
+        'target_server_id' => $targetServerId,
+        'target_title' => wizwiz_switchGetServerTitle($targetServerId),
+        'old_remark' => $oldRemark,
+        'new_remark' => $newRemark,
+        'links' => $links,
+        'deduct_gb' => ($changeType === 'deduct' ? $changeGb : 0),
+        'change_gb' => $changeGb,
+        'change_type' => $changeType,
+        'remaining_gb_before' => round($remainingGb, 2),
+        'remaining_gb_after' => round($newVolumeGb, 2),
+    ];
 }
 
 function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage = null, $title = null){

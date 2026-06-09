@@ -224,6 +224,638 @@ function wizwiz_ensureBroadcastTargetColumn(){
 }
 wizwiz_ensureBroadcastTargetColumn();
 
+function wizwiz_ensureBroadcastQueueColumns(){
+    global $connection;
+
+    // ستون‌های جدید برای ارسال همگانی مرحله‌ای و بدون فشار روی CPU اضافه می‌شوند.
+    // از schema patch استفاده نمی‌کنیم تا اگر یک ستون به هر دلیل قبلاً اضافه نشده بود، در اجرای بعدی هم بررسی شود.
+    $columns = [
+        'last_user_id' => "ALTER TABLE `send_list` ADD `last_user_id` int(11) NOT NULL DEFAULT 0 AFTER `offset`",
+        'total_count' => "ALTER TABLE `send_list` ADD `total_count` int(11) NOT NULL DEFAULT 0 AFTER `target_type`",
+        'sent_count' => "ALTER TABLE `send_list` ADD `sent_count` int(11) NOT NULL DEFAULT 0 AFTER `total_count`",
+        'failed_count' => "ALTER TABLE `send_list` ADD `failed_count` int(11) NOT NULL DEFAULT 0 AFTER `sent_count`",
+        'blocked_count' => "ALTER TABLE `send_list` ADD `blocked_count` int(11) NOT NULL DEFAULT 0 AFTER `failed_count`",
+        'last_report_at' => "ALTER TABLE `send_list` ADD `last_report_at` int(11) NOT NULL DEFAULT 0 AFTER `blocked_count`",
+        'pause_until' => "ALTER TABLE `send_list` ADD `pause_until` int(11) NOT NULL DEFAULT 0 AFTER `last_report_at`",
+        'started_at' => "ALTER TABLE `send_list` ADD `started_at` int(11) NOT NULL DEFAULT 0 AFTER `pause_until`",
+        'updated_at' => "ALTER TABLE `send_list` ADD `updated_at` int(11) NOT NULL DEFAULT 0 AFTER `started_at`",
+    ];
+
+    foreach($columns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `send_list` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0){
+            @($connection->query($query));
+        }
+    }
+
+    $idx = @($connection->query("SHOW INDEX FROM `send_list` WHERE `Key_name` = 'idx_broadcast_state'"));
+    if($idx && $idx->num_rows == 0){
+        @($connection->query("ALTER TABLE `send_list` ADD INDEX `idx_broadcast_state` (`state`, `type`)"));
+    }
+}
+wizwiz_ensureBroadcastQueueColumns();
+
+
+function wizwiz_ensureServerSwitchTables(){
+    global $connection;
+
+    if(!function_exists('wizwiz_schemaPatchDone') || !wizwiz_schemaPatchDone('SERVER_SWITCH_V1')){
+        @($connection->query("CREATE TABLE IF NOT EXISTS `server_switch_logs` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `order_id` int(11) NOT NULL,
+            `user_id` bigint(20) NOT NULL,
+            `from_server_id` int(11) NOT NULL,
+            `to_server_id` int(11) NOT NULL,
+            `old_remark` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
+            `new_remark` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL,
+            `deducted_gb` float NOT NULL DEFAULT 0,
+            `created_at` int(11) NOT NULL,
+            PRIMARY KEY (`id`),
+            KEY `idx_order_created` (`order_id`, `created_at`),
+            KEY `idx_user_created` (`user_id`, `created_at`)
+        ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_persian_ci"));
+
+        @($connection->query("CREATE TABLE IF NOT EXISTS `server_switch_costs` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `from_server_id` int(11) NOT NULL,
+            `to_server_id` int(11) NOT NULL,
+            `volume_gb` float NOT NULL DEFAULT 0,
+            `percent_rate` float DEFAULT NULL,
+            `updated_at` int(11) NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_route` (`from_server_id`, `to_server_id`)
+        ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_persian_ci"));
+
+        if(function_exists('wizwiz_markSchemaPatchDone')) wizwiz_markSchemaPatchDone('SERVER_SWITCH_V1');
+    }
+
+    // نسخه‌های قبلی جدول هزینه مسیر را فقط با حجم ثابت می‌ساختند؛ این ستون برای حالت درصدی اضافه می‌شود.
+    if(!function_exists('wizwiz_schemaPatchDone') || !wizwiz_schemaPatchDone('SERVER_SWITCH_PERCENT_V1')){
+        @($connection->query("CREATE TABLE IF NOT EXISTS `server_switch_costs` (
+            `id` int(11) NOT NULL AUTO_INCREMENT,
+            `from_server_id` int(11) NOT NULL,
+            `to_server_id` int(11) NOT NULL,
+            `volume_gb` float NOT NULL DEFAULT 0,
+            `percent_rate` float DEFAULT NULL,
+            `updated_at` int(11) NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_route` (`from_server_id`, `to_server_id`)
+        ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_persian_ci"));
+        $col = @($connection->query("SHOW COLUMNS FROM `server_switch_costs` LIKE 'percent_rate'"));
+        if(!$col || $col->num_rows == 0){
+            @($connection->query("ALTER TABLE `server_switch_costs` ADD `percent_rate` float DEFAULT NULL AFTER `volume_gb`"));
+        }
+        if(function_exists('wizwiz_markSchemaPatchDone')) wizwiz_markSchemaPatchDone('SERVER_SWITCH_PERCENT_V1');
+    }
+}
+wizwiz_ensureServerSwitchTables();
+
+function wizwiz_switchGetSettingRaw(){
+    global $connection;
+    $type = 'SERVER_SWITCH_SETTINGS';
+    $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return $row['value'] ?? null;
+}
+
+function wizwiz_getServerSwitchSettings(){
+    $default = [
+        'mode' => 'auto',              // auto | manual | percent
+        'default_gb' => 1,             // only manual mode, unless pair override exists
+        'percent' => 10,               // percent of remaining volume in percent mode
+        'min_gb' => 0.5,               // minimum deduction in auto/percent mode
+        'daily_limit' => 1,            // per config per day for normal users; 0 means unlimited
+    ];
+    $raw = wizwiz_switchGetSettingRaw();
+    $data = is_string($raw) ? json_decode($raw, true) : [];
+    if(!is_array($data)) $data = [];
+    $data = array_merge($default, $data);
+    $allowedModes = ['auto', 'manual', 'percent'];
+    $data['mode'] = in_array(($data['mode'] ?? 'auto'), $allowedModes, true) ? $data['mode'] : 'auto';
+    $data['default_gb'] = max(0, floatval($data['default_gb'] ?? 1));
+    $data['percent'] = min(100, max(0, floatval($data['percent'] ?? 10)));
+    $data['min_gb'] = max(0, floatval($data['min_gb'] ?? 0.5));
+    $data['daily_limit'] = max(0, intval($data['daily_limit'] ?? 1));
+    return $data;
+}
+
+function wizwiz_saveServerSwitchSettings($settings){
+    global $connection;
+    if(!is_array($settings)) $settings = [];
+    $current = wizwiz_getServerSwitchSettings();
+    $settings = array_merge($current, $settings);
+    $allowedModes = ['auto', 'manual', 'percent'];
+    $settings['mode'] = in_array(($settings['mode'] ?? 'auto'), $allowedModes, true) ? $settings['mode'] : 'auto';
+    $settings['default_gb'] = max(0, floatval($settings['default_gb'] ?? 1));
+    $settings['percent'] = min(100, max(0, floatval($settings['percent'] ?? 10)));
+    $settings['min_gb'] = max(0, floatval($settings['min_gb'] ?? 0.5));
+    $settings['daily_limit'] = max(0, intval($settings['daily_limit'] ?? 1));
+
+    $type = 'SERVER_SWITCH_SETTINGS';
+    $value = json_encode($settings, JSON_UNESCAPED_UNICODE);
+    $stmt = @$connection->prepare("SELECT `id` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $exists = ($stmt->get_result()->num_rows > 0);
+    $stmt->close();
+    if($exists){
+        $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = ?");
+        $stmt->bind_param('ss', $value, $type);
+    }else{
+        $stmt = $connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        $stmt->bind_param('ss', $type, $value);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_switchFormatGb($gb){
+    $gb = floatval($gb);
+    if($gb < 0) $gb = 0;
+    return rtrim(rtrim(number_format($gb, 2, '.', ''), '0'), '.');
+}
+
+function wizwiz_switchGetServerTitle($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0) return '-';
+    $stmt = @$connection->prepare("SELECT `title` FROM `server_info` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return (string)$serverId;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return trim((string)($row['title'] ?? $serverId));
+}
+
+function wizwiz_switchGetOrder($orderId){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function wizwiz_switchGetPlan($planId){
+    global $connection;
+    $planId = intval($planId);
+    if($planId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function wizwiz_switchFindEquivalentPlan($currentPlan, $targetServerId){
+    global $connection;
+    if(!is_array($currentPlan)) return null;
+    $targetServerId = intval($targetServerId);
+    if($targetServerId <= 0) return null;
+
+    $volume = floatval($currentPlan['volume'] ?? -1);
+    $days = floatval($currentPlan['days'] ?? -1);
+    $title = trim((string)($currentPlan['title'] ?? ''));
+    $type = trim((string)($currentPlan['type'] ?? ''));
+    $protocol = trim((string)($currentPlan['protocol'] ?? ''));
+
+    // Exact volume/days/title first.
+    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `active` = 1 AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 AND `title` = ? ORDER BY `price` DESC LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('idds', $targetServerId, $volume, $days, $title);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($row) return $row;
+    }
+
+    // Same volume/days/protocol/type.
+    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `active` = 1 AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 AND `protocol` = ? AND `type` = ? ORDER BY `price` DESC LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('iddss', $targetServerId, $volume, $days, $protocol, $type);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($row) return $row;
+    }
+
+    // Same volume/days fallback.
+    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `active` = 1 AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 ORDER BY `price` DESC LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('idd', $targetServerId, $volume, $days);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($row) return $row;
+    }
+
+    return null;
+}
+
+function wizwiz_getSwitchPairCostGb($fromServerId, $toServerId){
+    global $connection;
+    $fromServerId = intval($fromServerId);
+    $toServerId = intval($toServerId);
+    if($fromServerId <= 0 || $toServerId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT `volume_gb` FROM `server_switch_costs` WHERE `from_server_id` = ? AND `to_server_id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('ii', $fromServerId, $toServerId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return null;
+    return max(0, floatval($row['volume_gb']));
+}
+
+function wizwiz_getSwitchPairPercent($fromServerId, $toServerId){
+    global $connection;
+    $fromServerId = intval($fromServerId);
+    $toServerId = intval($toServerId);
+    if($fromServerId <= 0 || $toServerId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT `percent_rate` FROM `server_switch_costs` WHERE `from_server_id` = ? AND `to_server_id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('ii', $fromServerId, $toServerId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row || $row['percent_rate'] === null || $row['percent_rate'] === '') return null;
+    return min(100, max(0, floatval($row['percent_rate'])));
+}
+
+function wizwiz_switchPercentToGb($remainingGb, $percent, $minGb = 0){
+    $remainingGb = max(0, floatval($remainingGb));
+    $percent = min(100, max(0, floatval($percent)));
+    $minGb = max(0, floatval($minGb));
+    if($remainingGb <= 0 || $percent <= 0) return 0;
+    $deduct = $remainingGb * ($percent / 100);
+    if($minGb > 0) $deduct = max($minGb, $deduct);
+    // هیچ‌وقت بیشتر از حجم باقی‌مانده کم نکنیم تا سرویس خراب نشود.
+    return min($remainingGb, round($deduct, 2));
+}
+
+function wizwiz_setSwitchPairCostGb($fromServerId, $toServerId, $gb){
+    global $connection;
+    $fromServerId = intval($fromServerId);
+    $toServerId = intval($toServerId);
+    $gb = max(0, floatval($gb));
+    if($fromServerId <= 0 || $toServerId <= 0 || $fromServerId == $toServerId) return false;
+    $now = time();
+    $stmt = @$connection->prepare("SELECT `id` FROM `server_switch_costs` WHERE `from_server_id` = ? AND `to_server_id` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('ii', $fromServerId, $toServerId);
+    $stmt->execute();
+    $exists = ($stmt->get_result()->num_rows > 0);
+    $stmt->close();
+    if($exists){
+        $stmt = $connection->prepare("UPDATE `server_switch_costs` SET `volume_gb` = ?, `updated_at` = ? WHERE `from_server_id` = ? AND `to_server_id` = ?");
+        $stmt->bind_param('diii', $gb, $now, $fromServerId, $toServerId);
+    }else{
+        $stmt = $connection->prepare("INSERT INTO `server_switch_costs` (`from_server_id`, `to_server_id`, `volume_gb`, `updated_at`) VALUES (?, ?, ?, ?)");
+        $stmt->bind_param('iidi', $fromServerId, $toServerId, $gb, $now);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_setSwitchPairPercent($fromServerId, $toServerId, $percent){
+    global $connection;
+    $fromServerId = intval($fromServerId);
+    $toServerId = intval($toServerId);
+    $percent = min(100, max(0, floatval($percent)));
+    if($fromServerId <= 0 || $toServerId <= 0 || $fromServerId == $toServerId) return false;
+    $now = time();
+    $stmt = @$connection->prepare("SELECT `id` FROM `server_switch_costs` WHERE `from_server_id` = ? AND `to_server_id` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('ii', $fromServerId, $toServerId);
+    $stmt->execute();
+    $exists = ($stmt->get_result()->num_rows > 0);
+    $stmt->close();
+    if($exists){
+        $stmt = $connection->prepare("UPDATE `server_switch_costs` SET `percent_rate` = ?, `updated_at` = ? WHERE `from_server_id` = ? AND `to_server_id` = ?");
+        $stmt->bind_param('diii', $percent, $now, $fromServerId, $toServerId);
+    }else{
+        $stmt = $connection->prepare("INSERT INTO `server_switch_costs` (`from_server_id`, `to_server_id`, `volume_gb`, `percent_rate`, `updated_at`) VALUES (?, ?, 0, ?, ?)");
+        $stmt->bind_param('iidi', $fromServerId, $toServerId, $percent, $now);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_deleteSwitchPairCostGb($fromServerId, $toServerId){
+    global $connection;
+    $fromServerId = intval($fromServerId);
+    $toServerId = intval($toServerId);
+    if($fromServerId <= 0 || $toServerId <= 0) return false;
+    $stmt = @$connection->prepare("DELETE FROM `server_switch_costs` WHERE `from_server_id` = ? AND `to_server_id` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('ii', $fromServerId, $toServerId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_calcSwitchDeductionGb($order, $targetServerId, $remainingGb = null){
+    $settings = wizwiz_getServerSwitchSettings();
+    $fromServerId = intval($order['server_id'] ?? 0);
+    $targetServerId = intval($targetServerId);
+
+    // مسیر مستقیم یعنی همان چیزی که ادمین گفته از مبدا به مقصد اعمال شود.
+    // اگر مسیر مستقیم تنظیم نشده باشد ولی مسیر برعکس تنظیم شده باشد، همان مقدار به صورت معکوس محاسبه می‌شود؛ یعنی به حجم اضافه می‌شود.
+    $directPairPercent = wizwiz_getSwitchPairPercent($fromServerId, $targetServerId);
+    $directPairCost = wizwiz_getSwitchPairCostGb($fromServerId, $targetServerId);
+    $reversePairPercent = wizwiz_getSwitchPairPercent($targetServerId, $fromServerId);
+    $reversePairCost = wizwiz_getSwitchPairCostGb($targetServerId, $fromServerId);
+
+    $currentPlan = wizwiz_switchGetPlan($order['fileid'] ?? 0);
+    $targetPlan = wizwiz_switchFindEquivalentPlan($currentPlan, $targetServerId);
+
+    $sourcePrice = is_array($currentPlan) ? floatval($currentPlan['price'] ?? 0) : floatval($order['amount'] ?? 0);
+    $targetPrice = is_array($targetPlan) ? floatval($targetPlan['price'] ?? 0) : $sourcePrice;
+    $sourceVolume = is_array($currentPlan) ? floatval($currentPlan['volume'] ?? 0) : 0;
+    $targetVolume = is_array($targetPlan) ? floatval($targetPlan['volume'] ?? 0) : $sourceVolume;
+    $sourcePerGb = ($sourceVolume > 0 && $sourcePrice > 0) ? ($sourcePrice / $sourceVolume) : 0;
+    $targetPerGb = ($targetVolume > 0 && $targetPrice > 0) ? ($targetPrice / $targetVolume) : 0;
+    $pricePerGb = max($sourcePerGb, $targetPerGb);
+    if($pricePerGb <= 0 && $remainingGb !== null && floatval($remainingGb) > 0 && $sourcePrice > 0) $pricePerGb = $sourcePrice / floatval($remainingGb);
+
+    $remainingForPercent = ($remainingGb !== null) ? max(0, floatval($remainingGb)) : max(0, floatval($sourceVolume));
+    $reason = '';
+    $percentUsed = null;
+    $changeType = 'deduct'; // deduct = کم کردن حجم، add = اضافه کردن حجم
+    $pairMode = 'none';
+
+    if($directPairPercent !== null){
+        $pairMode = 'direct_percent';
+        $percentUsed = $directPairPercent;
+        $amount = wizwiz_switchPercentToGb($remainingForPercent, $directPairPercent, $settings['min_gb']);
+        $changeType = 'deduct';
+        $reason = 'درصد اختصاصی مسیر توسط ادمین: ' . wizwiz_switchFormatGb($directPairPercent) . '% از حجم باقی‌مانده کم می‌شود';
+    }elseif($directPairCost !== null && floatval($directPairCost) > 0){
+        $pairMode = 'direct_fixed';
+        $amount = $directPairCost;
+        $changeType = 'deduct';
+        $reason = 'هزینه ثابت اختصاصی مسیر توسط ادمین کم می‌شود';
+    }elseif($reversePairPercent !== null){
+        $pairMode = 'reverse_percent';
+        $percentUsed = $reversePairPercent;
+        $amount = wizwiz_switchPercentToGb($remainingForPercent, $reversePairPercent, $settings['min_gb']);
+        $changeType = 'add';
+        $reason = 'مسیر برگشتیِ درصد اختصاصی ادمین: ' . wizwiz_switchFormatGb($reversePairPercent) . '% به حجم باقی‌مانده اضافه می‌شود';
+    }elseif($reversePairCost !== null && floatval($reversePairCost) > 0){
+        $pairMode = 'reverse_fixed';
+        $amount = $reversePairCost;
+        $changeType = 'add';
+        $reason = 'مسیر برگشتیِ هزینه ثابت ادمین به حجم اضافه می‌شود';
+    }else{
+        // وقتی هزینه اختصاصی مسیر وجود ندارد، اگر پلن مقصد ارزان‌تر باشد، تغییر به نفع کاربر است و حجم اضافه می‌شود.
+        // اگر پلن مقصد گران‌تر باشد، از حجم کم می‌شود. اگر قیمت‌ها نامشخص/برابر باشند، رفتار قبلی حفظ می‌شود و کسر حجم انجام می‌گیرد.
+        $isCheaperTarget = ($sourcePrice > 0 && $targetPrice > 0 && $targetPrice < $sourcePrice);
+        $changeType = $isCheaperTarget ? 'add' : 'deduct';
+
+        if($settings['mode'] === 'manual'){
+            $amount = floatval($settings['default_gb']);
+            $reason = $changeType === 'add' ? 'حجم ثابت برگشت به سرور ارزان‌تر اضافه می‌شود' : 'هزینه ثابت تنظیم‌شده توسط ادمین کم می‌شود';
+        }elseif($settings['mode'] === 'percent'){
+            $percentUsed = floatval($settings['percent']);
+            $amount = wizwiz_switchPercentToGb($remainingForPercent, $percentUsed, $settings['min_gb']);
+            $reason = $changeType === 'add'
+                ? 'محاسبه درصدی برگشت به سرور ارزان‌تر: ' . wizwiz_switchFormatGb($percentUsed) . '% به حجم باقی‌مانده اضافه می‌شود'
+                : 'محاسبه درصدی: ' . wizwiz_switchFormatGb($percentUsed) . '% از حجم باقی‌مانده کم می‌شود';
+        }else{
+            $diff = abs($targetPrice - $sourcePrice);
+            $ratioPercent = ($diff > 0 && max($targetPrice, $sourcePrice) > 0) ? (($diff / max($targetPrice, $sourcePrice)) * 100) : 0;
+            $autoGbByPercent = ($ratioPercent > 0 && $remainingForPercent > 0) ? wizwiz_switchPercentToGb($remainingForPercent, $ratioPercent, 0) : 0;
+            $autoGbByPrice = ($pricePerGb > 0 && $diff > 0) ? ($diff / $pricePerGb) : 0;
+            $autoGb = max($autoGbByPercent, $autoGbByPrice);
+            $amount = max(floatval($settings['min_gb']), $autoGb);
+            $percentUsed = $ratioPercent > 0 ? $ratioPercent : null;
+            $reason = $changeType === 'add' ? 'محاسبه خودکار برگشت به سرور ارزان‌تر؛ اختلاف قیمت به حجم اضافه می‌شود' : 'محاسبه خودکار متعادل از اختلاف قیمت پلن‌ها؛ حجم کم می‌شود';
+            if(!is_array($targetPlan)){
+                $reason = $changeType === 'add'
+                    ? 'پلن هم‌حجم در سرور مقصد پیدا نشد؛ حداقل حجم برگشتی اضافه می‌شود'
+                    : 'پلن هم‌حجم در سرور مقصد پیدا نشد؛ حداقل کسر حجم اعمال می‌شود';
+            }
+        }
+    }
+
+    $amount = max(0, round(floatval($amount ?? 0), 2));
+    if($changeType === 'deduct' && $remainingGb !== null) $amount = min(max(0, floatval($remainingGb)), $amount);
+
+    return [
+        'deduct_gb' => $amount, // برای سازگاری با کدهای قبلی، مقدار خام اینجا نگه داشته شده است.
+        'change_gb' => $amount,
+        'change_type' => $changeType,
+        'is_addition' => ($changeType === 'add'),
+        'signed_change_gb' => ($changeType === 'add' ? $amount : -$amount),
+        'reason' => $reason,
+        'mode' => $settings['mode'],
+        'pair_mode' => $pairMode,
+        'percent_used' => $percentUsed,
+        'source_price' => intval($sourcePrice),
+        'target_price' => intval($targetPrice),
+        'price_diff' => intval(abs($targetPrice - $sourcePrice)),
+        'current_plan_id' => is_array($currentPlan) ? intval($currentPlan['id']) : 0,
+        'target_plan_id' => is_array($targetPlan) ? intval($targetPlan['id']) : intval($order['fileid'] ?? 0),
+        'target_plan' => is_array($targetPlan) ? $targetPlan : null,
+        'settings' => $settings,
+    ];
+}
+
+function wizwiz_switchTodayStart(){
+    $today = strtotime(date('Y-m-d 00:00:00'));
+    return $today ?: (time() - 86400);
+}
+
+function wizwiz_switchUsedToday($orderId, $userId){
+    global $connection;
+    $orderId = intval($orderId);
+    $userId = intval($userId);
+    $start = wizwiz_switchTodayStart();
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS `cnt` FROM `server_switch_logs` WHERE `order_id` = ? AND `user_id` = ? AND `created_at` >= ?");
+    if(!$stmt) return 0;
+    $stmt->bind_param('iii', $orderId, $userId, $start);
+    $stmt->execute();
+    $cnt = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+    return $cnt;
+}
+
+function wizwiz_recordSwitchLog($orderId, $userId, $fromServerId, $toServerId, $oldRemark, $newRemark, $deductGb){
+    global $connection;
+    $now = time();
+    $orderId = intval($orderId); $userId = intval($userId); $fromServerId = intval($fromServerId); $toServerId = intval($toServerId);
+    $deductGb = floatval($deductGb);
+    $stmt = @$connection->prepare("INSERT INTO `server_switch_logs` (`order_id`, `user_id`, `from_server_id`, `to_server_id`, `old_remark`, `new_remark`, `deducted_gb`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    if(!$stmt) return false;
+    $stmt->bind_param('iiiissdi', $orderId, $userId, $fromServerId, $toServerId, $oldRemark, $newRemark, $deductGb, $now);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function wizwiz_switchRouteCostLabel($rowOrFrom, $toServerId = null){
+    if(is_array($rowOrFrom)){
+        $percent = ($rowOrFrom['percent_rate'] ?? null);
+        $gb = floatval($rowOrFrom['volume_gb'] ?? 0);
+    }else{
+        $percent = wizwiz_getSwitchPairPercent($rowOrFrom, $toServerId);
+        $gb = wizwiz_getSwitchPairCostGb($rowOrFrom, $toServerId);
+    }
+    $parts = [];
+    if($percent !== null && $percent !== '') $parts[] = wizwiz_switchFormatGb($percent) . '%';
+    if($gb !== null && floatval($gb) > 0) $parts[] = wizwiz_switchFormatGb($gb) . 'GB';
+    return implode(' / ', $parts);
+}
+
+function wizwiz_switchDailyLimitText($limit){
+    $limit = intval($limit);
+    return $limit <= 0 ? 'نامحدود' : ($limit . ' بار در روز برای هر کانفیگ');
+}
+
+function wizwiz_getSwitchSettingsMenuText(){
+    global $connection;
+    $s = wizwiz_getServerSwitchSettings();
+    $modeTitles = [
+        'auto' => 'خودکار متعادل از اختلاف قیمت پلن‌ها',
+        'percent' => 'درصدی از حجم باقی‌مانده',
+        'manual' => 'دستی / حجم ثابت'
+    ];
+    $modeText = $modeTitles[$s['mode']] ?? $modeTitles['auto'];
+    $txt = "🌎 <b>تنظیمات تغییر سرور</b>
+
+" .
+           "از این بخش می‌توانید مشخص کنید هنگام جابه‌جایی کانفیگ بین سرورها چه مقدار حجم از سرویس کم شود.
+" .
+           "در حالت درصدی، کسر حجم متناسب با حجم سرویس است؛ مثلاً ۱۵٪ برای ۳۰ گیگ می‌شود ۴.۵ گیگ و برای ۵ گیگ می‌شود ۰.۷۵ گیگ.
+
+" .
+           "⚙️ حالت محاسبه: <b>{$modeText}</b>
+" .
+           "📊 درصد عمومی: <b>" . wizwiz_switchFormatGb($s['percent']) . "%</b>
+" .
+           "🔻 حجم ثابت دستی: <b>" . wizwiz_switchFormatGb($s['default_gb']) . " GB</b>
+" .
+           "🔹 حداقل کسر در حالت خودکار/درصدی: <b>" . wizwiz_switchFormatGb($s['min_gb']) . " GB</b>
+" .
+           "🕘 سقف کاربر عادی: <b>" . wizwiz_switchDailyLimitText($s['daily_limit']) . "</b>
+
+" .
+           "ادمین از محدودیت روزانه معاف است. برای نامحدود کردن کاربر عادی عدد <code>0</code> را وارد کنید. اگر برای مسیر خاص درصد تعیین کنید، همان درصد اولویت دارد؛ اگر درصد مسیر نباشد ولی حجم ثابت مسیر باشد، همان حجم ثابت اعمال می‌شود.";
+
+    $stmt = @$connection->prepare("SELECT * FROM `server_switch_costs` ORDER BY `from_server_id`, `to_server_id` LIMIT 20");
+    if($stmt){
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if($res && $res->num_rows > 0){
+            $txt .= "
+
+📌 <b>تنظیمات اختصاصی مسیرها:</b>
+";
+            while($row = $res->fetch_assoc()){
+                $label = wizwiz_switchRouteCostLabel($row);
+                if($label === '') continue;
+                $from = wizwiz_switchGetServerTitle($row['from_server_id']);
+                $to = wizwiz_switchGetServerTitle($row['to_server_id']);
+                $txt .= "• " . htmlspecialchars($from, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($to, ENT_QUOTES, 'UTF-8') . ": <b>{$label}</b>
+";
+            }
+        }
+        $stmt->close();
+    }
+    return $txt;
+}
+
+function wizwiz_getSwitchSettingsMenuKeys(){
+    $s = wizwiz_getServerSwitchSettings();
+    $modeNames = ['auto'=>'خودکار', 'percent'=>'درصدی', 'manual'=>'دستی'];
+    $modeText = $modeNames[$s['mode']] ?? 'خودکار';
+    return wizwiz_inlineKeyboardJson([
+        [
+            ['text'=>'حالت: ' . $modeText, 'callback_data'=>'toggleSwitchCostMode', 'style'=>'primary'],
+            ['text'=>'تغییر حالت محاسبه', 'callback_data'=>'wizwizch']
+        ],
+        [
+            ['text'=>wizwiz_switchFormatGb($s['percent']) . '%', 'callback_data'=>'editSwitchPercent', 'style'=>'primary'],
+            ['text'=>'درصد عمومی', 'callback_data'=>'wizwizch']
+        ],
+        [
+            ['text'=>wizwiz_switchFormatGb($s['default_gb']) . ' GB', 'callback_data'=>'editSwitchDefaultGb', 'style'=>'primary'],
+            ['text'=>'حجم ثابت دستی', 'callback_data'=>'wizwizch']
+        ],
+        [
+            ['text'=>wizwiz_switchFormatGb($s['min_gb']) . ' GB', 'callback_data'=>'editSwitchMinGb', 'style'=>'primary'],
+            ['text'=>'حداقل کسر', 'callback_data'=>'wizwizch']
+        ],
+        [
+            ['text'=>wizwiz_switchDailyLimitText($s['daily_limit']), 'callback_data'=>'editSwitchDailyLimit', 'style'=>'primary'],
+            ['text'=>'محدودیت روزانه کاربر', 'callback_data'=>'wizwizch']
+        ],
+        [
+            ['text'=>'➕ درصد اختصاصی مسیر', 'callback_data'=>'selectSwitchPairPercentFrom', 'style'=>'success']
+        ],
+        [
+            ['text'=>'➕ حجم ثابت اختصاصی مسیر', 'callback_data'=>'selectSwitchPairFrom', 'style'=>'success']
+        ],
+        [
+            ['text'=>'🗑 حذف تنظیم اختصاصی مسیر', 'callback_data'=>'selectSwitchPairDeleteFrom', 'style'=>'danger']
+        ],
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'botSettings']]
+    ]);
+}
+
+function wizwiz_getSwitchPairFromKeys($deleteMode = false, $mode = 'gb'){
+    global $connection;
+    $res = @$connection->query("SELECT `id`, `title` FROM `server_info` WHERE `active` = 1 ORDER BY `id` DESC");
+    $rows = [];
+    if($res){
+        while($row = $res->fetch_assoc()){
+            $prefix = $deleteMode ? 'switchPairDeleteFrom' : ($mode === 'percent' ? 'switchPairPercentFrom' : 'switchPairFrom');
+            $cb = $prefix . intval($row['id']);
+            $rows[] = ['text'=>(string)$row['title'], 'callback_data'=>$cb];
+        }
+    }
+    $keyboard = array_chunk($rows, 2);
+    $keyboard[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'switchLocationSettings']];
+    return wizwiz_inlineKeyboardJson($keyboard);
+}
+
+function wizwiz_getSwitchPairToKeys($fromServerId, $deleteMode = false, $mode = 'gb'){
+    global $connection;
+    $fromServerId = intval($fromServerId);
+    $res = @$connection->query("SELECT `id`, `title` FROM `server_info` WHERE `active` = 1 AND `id` <> " . $fromServerId . " ORDER BY `id` DESC");
+    $rows = [];
+    if($res){
+        while($row = $res->fetch_assoc()){
+            $to = intval($row['id']);
+            $label = (string)$row['title'];
+            $current = wizwiz_switchRouteCostLabel($fromServerId, $to);
+            if($current !== '') $label .= ' (' . $current . ')';
+            $prefix = $deleteMode ? 'switchPairDeleteTo' : ($mode === 'percent' ? 'switchPairPercentTo' : 'switchPairTo');
+            $cb = $prefix . $fromServerId . '_' . $to;
+            $rows[] = ['text'=>$label, 'callback_data'=>$cb];
+        }
+    }
+    $keyboard = array_chunk($rows, 2);
+    $keyboard[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'switchLocationSettings']];
+    return wizwiz_inlineKeyboardJson($keyboard);
+}
+
 function farid_normalizeBroadcastTarget($target){
     $target = trim((string)$target);
     // برای سازگاری با صف‌های قدیمی، targetهای قبلی هنوز شناخته می‌شوند؛
@@ -293,35 +925,95 @@ function farid_getBroadcastTargetKeyboard($mode = 'message'){
     ]], JSON_UNESCAPED_UNICODE);
 }
 
-function farid_getActiveBroadcastQueueText(){
-    global $connection;
-    $stmt = $connection->prepare("SELECT * FROM `send_list` WHERE `state` = 1 AND `type` != 'updateConfigs' LIMIT 1");
-    $stmt->execute();
-    $info = $stmt->get_result();
-    $stmt->close();
+function farid_getBroadcastThrottleSettings(){
+    global $botState;
+    $batchSize = intval($botState['broadcast_batch_size'] ?? 60);
+    $delayMs = intval($botState['broadcast_delay_ms'] ?? 150);
+    $maxRuntime = intval($botState['broadcast_max_runtime'] ?? 22);
+    $progressInterval = intval($botState['broadcast_progress_interval'] ?? 120);
 
-    if($info->num_rows <= 0) return null;
-    $sendInfo = $info->fetch_assoc();
+    if($batchSize < 1) $batchSize = 1;
+    if($batchSize > 100) $batchSize = 100;
+    if($delayMs < 80) $delayMs = 80;
+    if($delayMs > 2000) $delayMs = 2000;
+    if($maxRuntime < 8) $maxRuntime = 8;
+    if($maxRuntime > 50) $maxRuntime = 50;
+    if($progressInterval < 30) $progressInterval = 30;
+
+    return [
+        'batch_size' => $batchSize,
+        'delay_ms' => $delayMs,
+        'max_runtime' => $maxRuntime,
+        'progress_interval' => $progressInterval,
+    ];
+}
+
+function farid_formatBroadcastQueueText($sendInfo, $includeSettings = false){
     $offset = intval($sendInfo['offset'] ?? 0);
     $type = $sendInfo['type'] ?? 'text';
     $target = farid_normalizeBroadcastTarget($sendInfo['target_type'] ?? 'all');
-    $usersCount = farid_countBroadcastTargets($target);
+    $usersCount = intval($sendInfo['total_count'] ?? 0);
+    if($usersCount <= 0) $usersCount = farid_countBroadcastTargets($target);
     $leftMessages = max(0, $usersCount - $offset);
     $targetTitle = farid_getBroadcastTargetTitle($target);
+    $sent = intval($sendInfo['sent_count'] ?? 0);
+    $failed = intval($sendInfo['failed_count'] ?? 0);
+    $blocked = intval($sendInfo['blocked_count'] ?? 0);
+    $pauseUntil = intval($sendInfo['pause_until'] ?? 0);
+    $statusLine = ($pauseUntil > time()) ? ("⏸ توقف موقت تا " . date('H:i:s', $pauseUntil)) : "🟢 در حال پردازش مرحله‌ای";
+    $title = ($type == 'forwardall') ? 'فوروارد همگانی' : 'پیام همگانی';
+    $doneLabel = ($type == 'forwardall') ? 'فوروارد شده' : 'ارسال شده';
 
-    if($type == 'forwardall'){
-        return "❗️ یک فوروارد همگانی در صف انتشار است. لطفاً تا پایان عملیات صبور باشید.\n\n" .
-               "🎯 گروه مخاطب: $targetTitle\n" .
-               "🔰 تعداد مخاطبان: $usersCount\n" .
-               "☑️ فوروارد شده: $offset\n" .
-               "📣 باقی‌مانده: $leftMessages";
-    }
-
-    return "❗️ یک پیام همگانی در صف انتشار است. لطفاً تا پایان عملیات صبور باشید.\n\n" .
+    $txt = "❗️ یک $title در صف انتشار است.\n\n" .
+           "$statusLine\n" .
            "🎯 گروه مخاطب: $targetTitle\n" .
            "🔰 تعداد مخاطبان: $usersCount\n" .
-           "☑️ ارسال شده: $offset\n" .
+           "☑️ پردازش‌شده: $offset\n" .
+           "📨 $doneLabel: $sent\n" .
+           "⛔️ ناموفق: $failed\n" .
+           "🚫 بلاک/غیرفعال: $blocked\n" .
            "📣 باقی‌مانده: $leftMessages";
+
+    if($includeSettings){
+        $st = farid_getBroadcastThrottleSettings();
+        $txt .= "\n\n⚙️ تنظیمات فشار کنترل‌شده:\n" .
+                "📦 هر اجرا: {$st['batch_size']} پیام\n" .
+                "⏱ فاصله هر پیام: {$st['delay_ms']} میلی‌ثانیه\n" .
+                "⌛️ حداکثر زمان هر اجرا: {$st['max_runtime']} ثانیه";
+    }
+
+    return $txt;
+}
+
+function farid_getActiveBroadcastQueue(){
+    global $connection;
+    $stmt = $connection->prepare("SELECT * FROM `send_list` WHERE `state` = 1 AND `type` != 'updateConfigs' ORDER BY `id` ASC LIMIT 1");
+    $stmt->execute();
+    $info = $stmt->get_result();
+    $stmt->close();
+    if($info->num_rows <= 0) return null;
+    return $info->fetch_assoc();
+}
+
+function farid_getActiveBroadcastQueueText(){
+    $sendInfo = farid_getActiveBroadcastQueue();
+    if(!$sendInfo) return null;
+    return farid_formatBroadcastQueueText($sendInfo, false);
+}
+
+function farid_getBroadcastStatusKeyboard($sendId = 0){
+    $sendId = intval($sendId);
+    $rows = [];
+    if($sendId > 0){
+        $rows[] = [
+            ['text'=>'🔄 بروزرسانی وضعیت', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary'],
+            ['text'=>'🛑 توقف و حذف صف', 'callback_data'=>'broadcastQueueCancel' . $sendId, 'style'=>'danger']
+        ];
+    }else{
+        $rows[] = [['text'=>'🔄 بروزرسانی وضعیت', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary']];
+    }
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
 function wizwiz_getUserByTelegramId($userId){
@@ -1194,6 +1886,18 @@ function wizwiz_textContains($haystack, $needle){
     return stripos($haystack, $needle) !== false || strpos($haystack, $needle) !== false;
 }
 
+function wizwiz_buttonIsRealApproveAction($button){
+    if(!is_array($button)) return false;
+    $text = trim((string)($button['text'] ?? ''));
+    $callback = strtolower(trim((string)($button['callback_data'] ?? '')));
+    $plainText = preg_replace('/^[✅☑️✔️\s]+/u', '', $text);
+
+    // سبز فقط برای تأیید واقعی بماند، نه خرید، شارژ، افزودن، آپدیت و منوهای معمولی.
+    if(preg_match('/^(accept|approve|confirm)(payment|new|renew|increase|order|pay|cart|receipt)?/i', $callback)) return true;
+    if(preg_match('/^(تأیید|تایید|قبول|ثبت نهایی|بله،?\s*تأیید|بله،?\s*تایید)/u', $plainText)) return true;
+    return false;
+}
+
 function wizwiz_buttonStyleByCallback($button){
     if(!is_array($button)) return $button;
     if(!isset($button['text'])) return $button;
@@ -1201,18 +1905,12 @@ function wizwiz_buttonStyleByCallback($button){
     // Telegram Bot API فقط این سه مقدار را برای style قبول می‌کند.
     // مقدارهای دیگر مثل secondary باعث خطای reply_markup و از کار افتادن دکمه‌ها می‌شوند.
     $allowedStyles = ['danger', 'success', 'primary'];
-    if(isset($button['style'])){
-        $button['style'] = strtolower(trim((string)$button['style']));
-        if(!in_array($button['style'], $allowedStyles, true)) $button['style'] = 'primary';
-        return $button;
-    }
-
     $callback = (string)($button['callback_data'] ?? '');
     $haystack = (string)($button['text'] ?? '') . ' ' . $callback;
 
-    // دکمه‌های عنوانی/غیرعملیاتی مثل wizwizch رنگ ثابت و معتبر بگیرند.
+    // عنوان‌های غیرعملیاتی بهتر است بی‌رنگ بمانند تا کل ربات رنگی/سبز نشود.
     if($callback === 'wizwizch' || $callback === ''){
-        $button['style'] = 'primary';
+        unset($button['style']);
         return $button;
     }
 
@@ -1224,15 +1922,26 @@ function wizwiz_buttonStyleByCallback($button){
         }
     }
 
-    $successWords = ['buy', 'renew', 'increase', 'enable', 'approve', 'confirm', 'pay', 'gift', 'join', 'gettest', 'add', 'generate', 'on', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'تایید', 'فعال', 'پرداخت', 'هدیه', 'عضویت', 'افزودن', 'معاف', 'ساخت', 'روشن', '✅', '➕', '🔄'];
-    foreach($successWords as $w){
-        if(wizwiz_textContains($haystack, $w)){
-            $button['style'] = 'success';
+    if(isset($button['style'])){
+        $button['style'] = strtolower(trim((string)$button['style']));
+        if(!in_array($button['style'], $allowedStyles, true)){
+            unset($button['style']);
             return $button;
         }
+        if($button['style'] === 'success' && !wizwiz_buttonIsRealApproveAction($button)){
+            // success قبلاً همه‌جا استفاده شده بود و باعث سبز شدن کل ربات می‌شد.
+            // فقط تأییدها سبز بمانند؛ بقیه دکمه‌های مثبت/عملیاتی آبی شوند.
+            $button['style'] = 'primary';
+        }
+        return $button;
     }
 
-    $primaryWords = ['back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'settings', 'menu', 'list', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک', 'تنظیم', 'مدیریت', 'لیست'];
+    if(wizwiz_buttonIsRealApproveAction($button)){
+        $button['style'] = 'success';
+        return $button;
+    }
+
+    $primaryWords = ['buy', 'renew', 'increase', 'enable', 'pay', 'gift', 'join', 'gettest', 'add', 'generate', 'on', 'back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'settings', 'menu', 'list', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'فعال', 'پرداخت', 'هدیه', 'عضویت', 'افزودن', 'معاف', 'ساخت', 'روشن', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک', 'تنظیم', 'مدیریت', 'لیست', '➕', '🔄'];
     foreach($primaryWords as $w){
         if(wizwiz_textContains($haystack, $w)){
             $button['style'] = 'primary';
@@ -1240,8 +1949,10 @@ function wizwiz_buttonStyleByCallback($button){
         }
     }
 
+    // دکمه‌هایی که معنی رنگشان مشخص نیست بی‌رنگ بمانند.
     return $button;
 }
+
 
 
 function wizwiz_styleInlineKeyboard($keyboard){
@@ -1299,6 +2010,323 @@ function wizwiz_inlineKeyboardJson($keyboard){
 }
 
 
+function wizwiz_helpTypeConfig($type){
+    $type = (string)$type;
+    if($type === 'tutorial'){
+        return [
+            'type' => 'tutorial',
+            'setting' => 'WIZWIZ_MANAGED_TUTORIALS',
+            'title' => 'آموزش‌های اتصال',
+            'icon' => '📚',
+            'menu_callback' => 'tutorialsMenu',
+            'item_prefix' => 'helpTutItem_',
+            'admin_list' => 'adminHelpList_tutorial',
+        ];
+    }
+    return [
+        'type' => 'faq',
+        'setting' => 'WIZWIZ_MANAGED_FAQ',
+        'title' => 'سوالات متداول',
+        'icon' => '❓',
+        'menu_callback' => 'faqMenu',
+        'item_prefix' => 'helpFaqItem_',
+        'admin_list' => 'adminHelpList_faq',
+    ];
+}
+
+function wizwiz_helpGetSetting($key){
+    global $connection;
+    $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('s', $key);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return $row ? (string)($row['value'] ?? '') : null;
+}
+
+function wizwiz_helpSetSetting($key, $value){
+    global $connection;
+    $value = (string)$value;
+    $stmt = @$connection->prepare("SELECT `id` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $key);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $exists = ($res && $res->num_rows > 0);
+    $stmt->close();
+    if($exists){
+        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $value, $key);
+    }else{
+        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $key, $value);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+
+function wizwiz_helpLimitText($text, $max){
+    $text = trim((string)$text);
+    $max = max(1, intval($max));
+    if(function_exists('mb_strlen')){
+        return mb_strlen($text, 'UTF-8') > $max ? mb_substr($text, 0, $max, 'UTF-8') : $text;
+    }
+    return strlen($text) > $max ? substr($text, 0, $max) : $text;
+}
+
+function wizwiz_helpDefaultItems($type){
+    if($type === 'tutorial'){
+        return [
+            ['id'=>1, 'title'=>'Android - V2rayNG / Hiddify', 'body'=>"1) برنامه V2rayNG یا Hiddify را نصب کنید.\n2) لینک کانفیگ را کپی کنید.\n3) داخل برنامه گزینه Import from Clipboard را بزنید.\n4) کانفیگ را انتخاب و اتصال را روشن کنید.", 'enabled'=>true],
+            ['id'=>2, 'title'=>'iOS - Streisand / Hiddify', 'body'=>"1) برنامه Streisand یا Hiddify را نصب کنید.\n2) لینک کانفیگ را کپی کنید.\n3) داخل برنامه از بخش Import، گزینه Clipboard را انتخاب کنید.\n4) کانفیگ را انتخاب و متصل شوید.", 'enabled'=>true],
+            ['id'=>3, 'title'=>'Windows - Hiddify / Nekoray', 'body'=>"1) برنامه Hiddify یا Nekoray را نصب کنید.\n2) لینک کانفیگ را کپی کنید.\n3) داخل برنامه Import from Clipboard را بزنید.\n4) کانفیگ را فعال و متصل شوید.", 'enabled'=>true],
+            ['id'=>4, 'title'=>'Nekobox / Nekoray', 'body'=>"لینک کانفیگ را کپی کنید، وارد برنامه شوید و از قسمت Import گزینه Clipboard را بزنید. بعد از اضافه شدن کانفیگ، آن را انتخاب و Start کنید.", 'enabled'=>true],
+        ];
+    }
+    return [
+        ['id'=>1, 'title'=>'بعد از خرید چه کاری انجام بدهم؟', 'body'=>'بعد از تأیید پرداخت، لینک کانفیگ برای شما ارسال می‌شود. لینک را کپی کرده و طبق بخش آموزش اتصال، وارد برنامه کنید.', 'enabled'=>true],
+        ['id'=>2, 'title'=>'اگر کانفیگ وصل نشد چه کنم؟', 'body'=>'اول لینک را از بخش کانفیگ‌های من بروزرسانی کنید. اگر مشکل حل نشد، از بخش پشتیبانی پیام بدهید و نام کانفیگ را ارسال کنید.', 'enabled'=>true],
+        ['id'=>3, 'title'=>'آیا امکان تمدید یا افزایش حجم وجود دارد؟', 'body'=>'بله، از بخش کانفیگ‌های من وارد جزئیات سرویس شوید و گزینه تمدید، افزایش حجم یا افزایش زمان را انتخاب کنید.', 'enabled'=>true],
+    ];
+}
+
+function wizwiz_helpSanitizeItems($items, $type = 'faq', $useDefaultWhenEmpty = true){
+    if(!is_array($items)) $items = [];
+    $out = [];
+    $used = [];
+    foreach($items as $row){
+        if(!is_array($row)) continue;
+        $id = intval($row['id'] ?? 0);
+        if($id <= 0){
+            $id = 1;
+            while(isset($used[$id])) $id++;
+        }
+        while(isset($used[$id])) $id++;
+        $title = trim((string)($row['title'] ?? ''));
+        $body = trim((string)($row['body'] ?? ''));
+        if($title === '' || $body === '') continue;
+        $out[] = [
+            'id' => $id,
+            'title' => wizwiz_helpLimitText($title, 120),
+            'body' => wizwiz_helpLimitText($body, 3900),
+            'enabled' => !isset($row['enabled']) || !empty($row['enabled'])
+        ];
+        $used[$id] = true;
+    }
+    if(count($out) === 0 && $useDefaultWhenEmpty) $out = wizwiz_helpDefaultItems($type);
+    return $out;
+}
+
+function wizwiz_helpGetItems($type, $includeDisabled = true){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $raw = wizwiz_helpGetSetting($cfg['setting']);
+    $items = null;
+    $hasSavedList = false;
+    if($raw !== null && trim($raw) !== ''){
+        $decoded = json_decode($raw, true);
+        if(json_last_error() === JSON_ERROR_NONE && is_array($decoded)){
+            $items = $decoded;
+            $hasSavedList = true;
+        }
+    }
+    if(!is_array($items)) $items = wizwiz_helpDefaultItems($cfg['type']);
+    $items = wizwiz_helpSanitizeItems($items, $cfg['type'], !$hasSavedList);
+    if(!$includeDisabled){
+        $items = array_values(array_filter($items, function($row){ return !empty($row['enabled']); }));
+    }
+    return $items;
+}
+
+function wizwiz_helpSaveItems($type, $items){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $items = wizwiz_helpSanitizeItems($items, $cfg['type'], false);
+    return wizwiz_helpSetSetting($cfg['setting'], json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function wizwiz_helpNextItemId($items){
+    $max = 0;
+    foreach((array)$items as $row) $max = max($max, intval($row['id'] ?? 0));
+    return $max + 1;
+}
+
+function wizwiz_helpFindItem($type, $id){
+    foreach(wizwiz_helpGetItems($type, true) as $row){
+        if(intval($row['id']) === intval($id)) return $row;
+    }
+    return null;
+}
+
+function wizwiz_helpUpdateItem($type, $id, $fields){
+    $items = wizwiz_helpGetItems($type, true);
+    foreach($items as &$row){
+        if(intval($row['id']) === intval($id)){
+            foreach((array)$fields as $k => $v){
+                if($k === 'title') $row['title'] = wizwiz_helpLimitText($v, 120);
+                elseif($k === 'body') $row['body'] = wizwiz_helpLimitText($v, 3900);
+                elseif($k === 'enabled') $row['enabled'] = !empty($v);
+            }
+            break;
+        }
+    }
+    unset($row);
+    return wizwiz_helpSaveItems($type, $items);
+}
+
+function wizwiz_helpDeleteItem($type, $id){
+    $items = [];
+    foreach(wizwiz_helpGetItems($type, true) as $row){
+        if(intval($row['id']) !== intval($id)) $items[] = $row;
+    }
+    return wizwiz_helpSaveItems($type, $items);
+}
+
+function wizwiz_helpAddItem($type, $title, $body){
+    $items = wizwiz_helpGetItems($type, true);
+    $items[] = ['id'=>wizwiz_helpNextItemId($items), 'title'=>$title, 'body'=>$body, 'enabled'=>true];
+    return wizwiz_helpSaveItems($type, $items);
+}
+
+function wizwiz_helpUserMenuText($type){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $items = wizwiz_helpGetItems($cfg['type'], false);
+    $msg = $cfg['icon'] . " <b>" . wizwiz_h($cfg['title']) . "</b>\n\n";
+    if(count($items) === 0){
+        $msg .= "فعلاً موردی توسط مدیریت ثبت نشده است.";
+    }else{
+        $msg .= "لطفاً یکی از موارد زیر را انتخاب کنید:";
+    }
+    if($cfg['type'] === 'tutorial'){
+        $msg .= "\n\n📌 لینک‌های دانلود برنامه‌ها هم پایین همین بخش نمایش داده می‌شوند.";
+    }
+    return $msg;
+}
+
+function wizwiz_helpUserMenuKeys($type){
+    global $connection, $buttonValues;
+    $cfg = wizwiz_helpTypeConfig($type);
+    $rows = [];
+    foreach(wizwiz_helpGetItems($cfg['type'], false) as $row){
+        $rows[] = [[
+            'text' => ($cfg['type'] === 'faq' ? '❓ ' : '📚 ') . $row['title'],
+            'callback_data' => $cfg['item_prefix'] . intval($row['id']),
+            'style' => 'primary'
+        ]];
+    }
+    if($cfg['type'] === 'tutorial'){
+        $stmt = @$connection->prepare("SELECT `title`, `link` FROM `needed_sofwares` WHERE `status`=1");
+        if($stmt){
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while($res && ($file = $res->fetch_assoc())){
+                $title = trim((string)($file['title'] ?? ''));
+                $link = trim((string)($file['link'] ?? ''));
+                if($title !== '' && preg_match('/^https?:\/\//i', $link)){
+                    $rows[] = [[ 'text' => '⬇️ ' . $title, 'url' => $link ]];
+                }
+            }
+            $stmt->close();
+        }
+    }
+    $rows[] = [[ 'text' => $buttonValues['back_to_main'] ?? 'بازگشت به منو', 'callback_data' => 'mainMenu', 'style' => 'primary' ]];
+    return wizwiz_inlineKeyboardJson($rows);
+}
+
+function wizwiz_helpUserItemText($type, $id){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $item = wizwiz_helpFindItem($cfg['type'], $id);
+    if(!$item || empty($item['enabled'])) return "این مورد پیدا نشد یا غیرفعال شده است.";
+    return $cfg['icon'] . " <b>" . wizwiz_h($item['title']) . "</b>\n\n" . wizwiz_h($item['body']);
+}
+
+function wizwiz_helpUserItemKeys($type){
+    $cfg = wizwiz_helpTypeConfig($type);
+    return wizwiz_inlineKeyboardJson([
+        [[ 'text' => '🔙 برگشت به ' . $cfg['title'], 'callback_data' => $cfg['menu_callback'], 'style' => 'primary' ]],
+        [[ 'text' => '🏠 منوی اصلی', 'callback_data' => 'mainMenu', 'style' => 'primary' ]]
+    ]);
+}
+
+function wizwiz_helpAdminHomeText(){
+    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nاز این بخش می‌توانید سوالات متداول و آموزش‌های اتصال را بدون تغییر فایل، از داخل ربات مدیریت کنید.\n\n• سوالات متداول در منوی کاربر نمایش داده می‌شود.\n• آموزش‌ها داخل بخش راهنمای اتصال/لینک برنامه‌ها نمایش داده می‌شود.";
+}
+
+function wizwiz_helpAdminHomeKeys(){
+    global $buttonValues;
+    return wizwiz_inlineKeyboardJson([
+        [[ 'text'=>'❓ مدیریت سوالات متداول', 'callback_data'=>'adminHelpList_faq', 'style'=>'primary' ]],
+        [[ 'text'=>'📚 مدیریت آموزش‌های اتصال', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
+        [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'managePanel', 'style'=>'primary' ]]
+    ]);
+}
+
+function wizwiz_helpAdminListText($type){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $items = wizwiz_helpGetItems($cfg['type'], true);
+    $msg = $cfg['icon'] . " <b>مدیریت " . wizwiz_h($cfg['title']) . "</b>\n\n";
+    if(count($items) === 0) return $msg . "موردی ثبت نشده است.";
+    foreach($items as $i => $row){
+        $msg .= ($i + 1) . ". " . (!empty($row['enabled']) ? '✅' : '🚫') . " <b>" . wizwiz_h($row['title']) . "</b>\n";
+    }
+    $msg .= "\nروی هر مورد بزنید تا ویرایش شود.";
+    return $msg;
+}
+
+function wizwiz_helpAdminListKeys($type){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $rows = [];
+    foreach(wizwiz_helpGetItems($cfg['type'], true) as $row){
+        $rows[] = [[
+            'text' => (!empty($row['enabled']) ? '✅ ' : '🚫 ') . $row['title'],
+            'callback_data' => 'adminHelpItem_' . $cfg['type'] . '_' . intval($row['id']),
+            'style' => 'primary'
+        ]];
+    }
+    $rows[] = [[ 'text'=>'➕ افزودن مورد جدید', 'callback_data'=>'adminHelpAdd_' . $cfg['type'], 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'🔙 برگشت', 'callback_data'=>'adminHelpMenu', 'style'=>'primary' ]];
+    return wizwiz_inlineKeyboardJson($rows);
+}
+
+function wizwiz_helpAdminItemText($type, $id){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $item = wizwiz_helpFindItem($cfg['type'], $id);
+    if(!$item) return "مورد پیدا نشد.";
+    $msg = $cfg['icon'] . " <b>ویرایش مورد</b>\n\n";
+    $msg .= "عنوان: <b>" . wizwiz_h($item['title']) . "</b>\n";
+    $msg .= "وضعیت: " . (!empty($item['enabled']) ? '✅ فعال' : '🚫 غیرفعال') . "\n\n";
+    $msg .= "متن فعلی:\n" . wizwiz_h($item['body']);
+    return $msg;
+}
+
+function wizwiz_helpAdminItemKeys($type, $id){
+    $cfg = wizwiz_helpTypeConfig($type);
+    $item = wizwiz_helpFindItem($cfg['type'], $id);
+    $enabled = $item ? !empty($item['enabled']) : false;
+    return wizwiz_inlineKeyboardJson([
+        [
+            [ 'text'=>'✏️ عنوان', 'callback_data'=>'adminHelpEditTitle_' . $cfg['type'] . '_' . intval($id), 'style'=>'primary' ],
+            [ 'text'=>'📝 متن', 'callback_data'=>'adminHelpEditText_' . $cfg['type'] . '_' . intval($id), 'style'=>'primary' ]
+        ],
+        [[ 'text'=>($enabled ? '🚫 غیرفعال کردن' : '✅ فعال کردن'), 'callback_data'=>'adminHelpToggle_' . $cfg['type'] . '_' . intval($id), 'style'=>($enabled ? 'danger' : 'primary') ]],
+        [[ 'text'=>'🗑 حذف', 'callback_data'=>'adminHelpDelete_' . $cfg['type'] . '_' . intval($id), 'style'=>'danger' ]],
+        [[ 'text'=>'🔙 برگشت به لیست', 'callback_data'=>$cfg['admin_list'], 'style'=>'primary' ]]
+    ]);
+}
+
+function wizwiz_helpAdminDeleteKeys($type, $id){
+    $cfg = wizwiz_helpTypeConfig($type);
+    return wizwiz_inlineKeyboardJson([
+        [[ 'text'=>'✅ تأیید حذف', 'callback_data'=>'adminHelpConfirmDelete_' . $cfg['type'] . '_' . intval($id), 'style'=>'success' ]],
+        [[ 'text'=>'🔙 انصراف', 'callback_data'=>'adminHelpItem_' . $cfg['type'] . '_' . intval($id), 'style'=>'primary' ]]
+    ]);
+}
+
+
 function wizwiz_defaultUserButtonVisibilityKeys(){
     return [
         'request_agency' => true,
@@ -1311,6 +2339,7 @@ function wizwiz_defaultUserButtonVisibilityKeys(){
         'shared_existence' => true,
         'individual_existence' => true,
         'application_links' => true,
+        'faq' => true,
         'my_tickets' => true,
         'search_config' => true,
         'refresh_panel' => true,
@@ -1368,6 +2397,7 @@ function wizwiz_defaultUserButtonOrder(){
         'shared_existence',
         'individual_existence',
         'application_links',
+        'faq',
         'my_tickets',
         'search_config',
         'refresh_panel',
@@ -1652,6 +2682,7 @@ function wizwiz_userButtonTitles(){
         'shared_existence' => $buttonValues['shared_existence'] ?? 'موجودی اشتراکی',
         'individual_existence' => $buttonValues['individual_existence'] ?? 'موجودی اختصاصی',
         'application_links' => $buttonValues['application_links'] ?? 'راهنمای اتصال',
+        'faq' => '❓ سوالات متداول',
         'my_tickets' => $buttonValues['my_tickets'] ?? 'تیکت‌های من',
         'search_config' => $buttonValues['search_config'] ?? 'مشخصات کانفیگ',
         'refresh_panel' => '🔄 بروزرسانی پنل',
@@ -2724,8 +3755,13 @@ function bot($method, $datas = []){
 
     $sendRequest = function($payload) use ($url){
         $ch = curl_init();
+        $timeout = isset($payload['_timeout']) ? max(3, intval($payload['_timeout'])) : 20;
+        unset($payload['_timeout']);
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_NOSIGNAL, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($payload));
         $res = curl_exec($ch);
         if (curl_error($ch)) {
@@ -3069,7 +4105,11 @@ function getMainKeys(){
         ],
         'application_links' => [
             'enabled' => true,
-            'buttons' => [['text'=>$buttonValues['application_links'],'callback_data'=>"reciveApplications"]]
+            'buttons' => [['text'=>$buttonValues['application_links'],'callback_data'=>"tutorialsMenu"]]
+        ],
+        'faq' => [
+            'enabled' => true,
+            'buttons' => [['text'=>'❓ سوالات متداول','callback_data'=>"faqMenu"]]
         ],
         'my_tickets' => [
             'enabled' => true,
@@ -3984,6 +5024,10 @@ function getBotSettingKeys(){
             ['text'=>"تغییر لوکیشن",'callback_data'=>"wizwizch"]
         ],
         [
+            ['text'=>"⚙️ تنظیمات",'callback_data'=>"switchLocationSettings", 'style'=>'primary'],
+            ['text'=>"هزینه تغییر سرور",'callback_data'=>"wizwizch"]
+        ],
+        [
             ['text'=>$increaseTime,'callback_data'=>"changeBotincreaseTimeState"],
             ['text'=>"افزایش زمان",'callback_data'=>"wizwizch"]
         ],
@@ -4490,7 +5534,7 @@ function getPlanDetailsKeys($planId){
     }
 }
 function getUserOrderDetailKeys($id, $offset = 0){
-    global $connection, $botState, $mainValues, $buttonValues, $botUrl;
+    global $connection, $botState, $mainValues, $buttonValues, $botUrl, $from_id, $admin, $userInfo;
     $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
@@ -4780,6 +5824,10 @@ function getUserOrderDetailKeys($id, $offset = 0){
         
         $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
+
+        if(($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
+            $keyboard[] = [['text' => $buttonValues['change_config_location'] ?? '🌎 تغییر لوکیشن', 'callback_data' => "switchLocation{$id}", 'style'=>'primary']];
+        }
     
         $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
         return ["keyboard"=>wizwiz_inlineKeyboardJson($keyboard),
@@ -5002,7 +6050,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 && $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}_{$server_id}_{$leftgb}_".$order['expire_date']];
+                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}"];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
                     }else{
@@ -5018,7 +6066,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}_{$server_id}_{$leftgb}_".$order['expire_date'] ];
+                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
                     }
@@ -5035,7 +6083,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}_{$server_id}_{$leftgb}_".$order['expire_date'] ];
+                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
                     }
@@ -5050,7 +6098,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}_{$server_id}_{$leftgb}_".$order['expire_date'] ];
+                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
     
@@ -5075,7 +6123,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on" && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}_{$server_id}_{$leftgb}_".$order['expire_date'] ];
+                            if($botState['switchLocationState']=="on" && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
     
@@ -5091,7 +6139,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                 $temp = array();
                 if($price != 0 || $agentBought == true){
                     if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                    if($botState['switchLocationState']=="on" && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}_{$server_id}_{$leftgb}_".$order['expire_date'] ];
+                    if($botState['switchLocationState']=="on" && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                 }
                 if(count($temp)>0) array_push($keyboard, $temp);
     
@@ -9646,6 +10694,7 @@ function wizwiz_reportEventItems(){
     return [
         'purchase_started' => '🛒 شروع خرید',
         'test_account' => '🧪 دریافت اکانت تست',
+        'server_switched' => '🌎 تغییر لوکیشن/سرور',
         'auto_approved' => '🤖 تأیید خودکار سفارش',
         'approval_failed' => '⚠️ خطای تأیید خودکار',
         'daily_stats' => '📊 آمار روزانه'
@@ -9737,6 +10786,33 @@ function wizwiz_reportTimeLine(){
     if(!wizwiz_reportDetailEnabled('timestamp', 'on')) return '';
     $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time()) : date('Y/m/d H:i');
     return "\n🕒 زمان: <b>" . wizwiz_h($nowTxt) . "</b>";
+}
+
+
+function wizwiz_reportPlanServerLinesByPlanId($planId, $volume = '', $days = ''){
+    global $connection;
+    $planId = intval($planId);
+    if($planId <= 0) return [];
+    $stmt = $connection->prepare("SELECT sp.`title` AS plan_title, sp.`volume` AS plan_volume, sp.`days` AS plan_days, sc.`title` AS category_title, si.`title` AS server_title FROM `server_plans` sp LEFT JOIN `server_categories` sc ON sc.`id` = sp.`catid` LEFT JOIN `server_info` si ON si.`id` = sp.`server_id` WHERE sp.`id` = ? LIMIT 1");
+    if(!$stmt) return [];
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return [];
+
+    $serverTitle = trim((string)($row['server_title'] ?? ''));
+    $planTitle = trim(trim((string)($row['category_title'] ?? '')) . ' ' . trim((string)($row['plan_title'] ?? '')));
+    if($planTitle === '') $planTitle = trim((string)($row['plan_title'] ?? ''));
+    if($volume === '' || floatval($volume) <= 0) $volume = $row['plan_volume'] ?? '';
+    if($days === '' || intval($days) <= 0) $days = $row['plan_days'] ?? '';
+
+    $lines = [];
+    if($serverTitle !== '') $lines[] = "🖥 سرور: <b>" . wizwiz_h($serverTitle) . "</b>";
+    if($planTitle !== '') $lines[] = "📦 پلن: <b>" . wizwiz_h($planTitle) . "</b>";
+    if($volume !== '' && floatval($volume) > 0) $lines[] = "🔋 حجم: <b>" . wizwiz_h($volume) . " گیگ</b>";
+    if($days !== '' && intval($days) > 0) $lines[] = "⏰ مدت: <b>" . wizwiz_h($days) . " روز</b>";
+    return $lines;
 }
 
 function wizwiz_liveStatsSnapshot($forDaily = false){
@@ -9902,7 +10978,7 @@ function wizwiz_notifyPurchaseStarted($hashId, $source = 'انتخاب پلن'){
     global $connection;
     $hashId = trim((string)$hashId);
     if($hashId === '') return;
-    $stmt = $connection->prepare("SELECT p.*, u.`name`, u.`username`, sp.`title` AS plan_title FROM `pays` p LEFT JOIN `users` u ON u.`userid` = p.`user_id` LEFT JOIN `server_plans` sp ON sp.`id` = p.`plan_id` WHERE p.`hash_id` = ? LIMIT 1");
+    $stmt = $connection->prepare("SELECT p.*, u.`name`, u.`username`, sp.`title` AS plan_title, sp.`volume` AS plan_volume, sp.`days` AS plan_days, sc.`title` AS category_title, si.`title` AS server_title FROM `pays` p LEFT JOIN `users` u ON u.`userid` = p.`user_id` LEFT JOIN `server_plans` sp ON sp.`id` = p.`plan_id` LEFT JOIN `server_categories` sc ON sc.`id` = sp.`catid` LEFT JOIN `server_info` si ON si.`id` = sp.`server_id` WHERE p.`hash_id` = ? LIMIT 1");
     if(!$stmt) return;
     $stmt->bind_param('s', $hashId);
     $stmt->execute();
@@ -9910,15 +10986,32 @@ function wizwiz_notifyPurchaseStarted($hashId, $source = 'انتخاب پلن'){
     $stmt->close();
     if(!$pay) return;
     $uid = intval($pay['user_id']);
+    $serverTitle = trim((string)($pay['server_title'] ?? ''));
+    $planTitle = trim(trim((string)($pay['category_title'] ?? '')) . ' ' . trim((string)($pay['plan_title'] ?? '')));
+    if($planTitle === '') $planTitle = trim((string)($pay['plan_title'] ?? $pay['type'] ?? ''));
+    $volume = $pay['volume'] ?? ($pay['plan_volume'] ?? '');
+    $days = $pay['day'] ?? ($pay['plan_days'] ?? '');
+
     $lines = ["🟡 <b>شروع فرایند خرید</b>"];
     if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = wizwiz_formatUserLine($uid, $pay['name'] ?? '', $pay['username'] ?? '');
+
+    // این پیام، گزارش اولیه خرید داخل کانال درآمد است. سرور و پلن باید همیشه نمایش داده شوند
+    // حتی اگر گزینه جزئیات پلن در تنظیمات گزارش خاموش باشد؛ چون ادمین برای پیگیری سفارش به آن نیاز دارد.
+    if($serverTitle !== '') $lines[] = "🖥 سرور: <b>" . wizwiz_h($serverTitle) . "</b>";
+    else $lines[] = "🖥 سرور: <b>نامشخص</b>";
+
+    if($planTitle !== '') $lines[] = "📦 پلن: <b>" . wizwiz_h($planTitle) . "</b>";
+    else $lines[] = "📦 پلن: <b>نامشخص</b>";
+
     if(wizwiz_reportDetailEnabled('plan_info', 'on')){
-        $lines[] = "📦 پلن/نوع: <b>" . wizwiz_h($pay['plan_title'] ?? $pay['type']) . "</b>";
+        if($volume !== '' && intval($volume) > 0) $lines[] = "🔋 حجم: <b>" . wizwiz_h($volume) . " گیگ</b>";
+        if($days !== '' && intval($days) > 0) $lines[] = "⏰ مدت: <b>" . wizwiz_h($days) . " روز</b>";
         $lines[] = "💳 روش/مرحله: <b>" . wizwiz_h($source) . "</b>";
     }
     if(wizwiz_reportDetailEnabled('amount', 'on')) $lines[] = "💰 مبلغ: <b>" . number_format(intval($pay['price'])) . " تومان</b>";
-    if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hashId) . "</code>";
-    $body = implode("\n", $lines) . wizwiz_reportTimeLine();
+    // کد پرداخت در گزارش خرید جدید نمایش داده نمی‌شود؛ دکمه‌های ادمین همان هش داخلی را استفاده می‌کنند.
+    $body = implode("
+", $lines) . wizwiz_reportTimeLine();
     wizwiz_reportEvent('🛒 گزارش خرید جدید', $body, wizwiz_reportPrivateKeyboard($uid), 'purchase_started');
 }
 
@@ -9946,23 +11039,286 @@ function wizwiz_notifyTestAccountTaken($orderId, $userId, $planTitle = '', $rema
     wizwiz_reportEvent('🧪 گزارش اکانت تست', $body, wizwiz_reportPrivateKeyboard($userId), 'test_account');
 }
 
+function wizwiz_notifyServerSwitch($result, $actorId = 0, $isAdminSwitch = false){
+    global $connection;
+    if(!is_array($result) || empty($result['ok'])) return null;
+
+    $ownerId = intval($result['owner_id'] ?? 0);
+    if($ownerId <= 0) return null;
+
+    $user = null;
+    $stmt = @$connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('i', $ownerId);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+
+    $actorId = intval($actorId);
+    $actorLine = '';
+    if($actorId > 0 && ($isAdminSwitch || $actorId != $ownerId)){
+        $actor = null;
+        $stmt = @$connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $actorId);
+            $stmt->execute();
+            $actor = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+        }
+        $actorName = trim((string)($actor['name'] ?? ''));
+        if($actorName === '') $actorName = ($actorId == intval($GLOBALS['admin'] ?? 0)) ? 'ادمین اصلی' : ('ادمین ' . $actorId);
+        $actorLine = "👮 انجام‌دهنده: <b>" . wizwiz_h($actorName) . "</b> <code>" . $actorId . "</code>";
+    }
+
+    $orderId = intval($result['order_id'] ?? 0);
+    $oldServerId = intval($result['old_server_id'] ?? 0);
+    $targetServerId = intval($result['target_server_id'] ?? 0);
+    $fromTitle = function_exists('wizwiz_switchGetServerTitle') ? wizwiz_switchGetServerTitle($oldServerId) : (string)$oldServerId;
+    $toTitle = trim((string)($result['target_title'] ?? ''));
+    if($toTitle === '') $toTitle = function_exists('wizwiz_switchGetServerTitle') ? wizwiz_switchGetServerTitle($targetServerId) : (string)$targetServerId;
+
+    $changeType = (string)($result['change_type'] ?? 'deduct');
+    $changeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
+    $formatGb = function($gb){
+        return function_exists('wizwiz_switchFormatGb') ? wizwiz_switchFormatGb($gb) : rtrim(rtrim(number_format((float)$gb, 2, '.', ''), '0'), '.');
+    };
+    $changeLine = ($changeType === 'add')
+        ? "🔺 حجم اضافه‌شده: <b>" . $formatGb($changeGb) . " GB</b>"
+        : "🔻 حجم کسرشده: <b>" . $formatGb($changeGb) . " GB</b>";
+
+    $lines = ["✅ <b>تغییر لوکیشن/سرور انجام شد</b>"];
+    if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = wizwiz_formatUserLine($ownerId, $user['name'] ?? '', $user['username'] ?? '');
+    if(wizwiz_reportDetailEnabled('order_ids', 'on') && $orderId > 0) $lines[] = "🧾 شماره سفارش: <code>" . $orderId . "</code>";
+
+    $oldRemark = trim((string)($result['old_remark'] ?? ''));
+    $newRemark = trim((string)($result['new_remark'] ?? ''));
+    if($oldRemark !== '') $lines[] = "🔮 کانفیگ قبلی: <code>" . wizwiz_h($oldRemark) . "</code>";
+    if($newRemark !== '' && $newRemark !== $oldRemark) $lines[] = "🆕 کانفیگ جدید: <code>" . wizwiz_h($newRemark) . "</code>";
+
+    $lines[] = "📍 از سرور: <b>" . wizwiz_h($fromTitle) . "</b>";
+    $lines[] = "📍 به سرور: <b>" . wizwiz_h($toTitle) . "</b>";
+    $lines[] = $changeLine;
+    $lines[] = "📦 حجم قبل تغییر: <b>" . $formatGb($result['remaining_gb_before'] ?? 0) . " GB</b>";
+    $lines[] = "📦 حجم بعد تغییر: <b>" . $formatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
+    if($actorLine !== '') $lines[] = $actorLine;
+
+    $body = implode("\n", $lines) . wizwiz_reportTimeLine();
+    return wizwiz_reportEvent('🌎 گزارش تغییر لوکیشن', $body, wizwiz_reportPrivateKeyboard($ownerId), 'server_switched');
+}
+
+function wizwiz_getAutoApproveBlockedUsers(){
+    global $botState;
+    $raw = $botState['autoApproveBlockedUsers'] ?? '';
+    $items = [];
+    if(is_array($raw)){
+        $items = $raw;
+    }else{
+        $raw = trim((string)$raw);
+        if($raw !== ''){
+            $decoded = json_decode($raw, true);
+            if(is_array($decoded)) $items = $decoded;
+            else $items = preg_split('/[\s,،;|]+/u', $raw);
+        }
+    }
+    $ids = [];
+    foreach($items as $item){
+        if(is_array($item)) continue;
+        $id = intval(preg_replace('/\D+/', '', (string)$item));
+        if($id > 0) $ids[] = $id;
+    }
+    $ids = array_values(array_unique($ids));
+    sort($ids, SORT_NUMERIC);
+    return $ids;
+}
+
+function wizwiz_saveAutoApproveBlockedUsers($ids){
+    $clean = [];
+    if(!is_array($ids)) $ids = [];
+    foreach($ids as $id){
+        $id = intval($id);
+        if($id > 0) $clean[] = $id;
+    }
+    $clean = array_values(array_unique($clean));
+    sort($clean, SORT_NUMERIC);
+    setSettings('autoApproveBlockedUsers', json_encode($clean, JSON_UNESCAPED_UNICODE));
+    return $clean;
+}
+
+function wizwiz_isAutoApproveBlockedUser($userId){
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    return in_array($userId, wizwiz_getAutoApproveBlockedUsers(), true);
+}
+
+function wizwiz_addAutoApproveBlockedUser($userId){
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $ids = wizwiz_getAutoApproveBlockedUsers();
+    $ids[] = $userId;
+    wizwiz_saveAutoApproveBlockedUsers($ids);
+    return true;
+}
+
+function wizwiz_removeAutoApproveBlockedUser($userId){
+    $userId = intval($userId);
+    $ids = array_values(array_filter(wizwiz_getAutoApproveBlockedUsers(), function($id) use ($userId){ return intval($id) !== $userId; }));
+    wizwiz_saveAutoApproveBlockedUsers($ids);
+    return true;
+}
+
+function wizwiz_autoApproveTypeItems(){
+    return [
+        'buy' => [
+            'title' => 'خرید جدید',
+            'icon' => '🛒',
+            'sql' => "`type` = 'BUY_SUB'",
+            'match' => function($type){ return $type === 'BUY_SUB'; }
+        ],
+        'renew' => [
+            'title' => 'تمدید سرویس',
+            'icon' => '🔄',
+            'sql' => "`type` = 'RENEW_SCONFIG'",
+            'match' => function($type){ return $type === 'RENEW_SCONFIG'; }
+        ],
+        'increase_wallet' => [
+            'title' => 'شارژ کیف پول',
+            'icon' => '💰',
+            'sql' => "`type` = 'INCREASE_WALLET'",
+            'match' => function($type){ return $type === 'INCREASE_WALLET'; }
+        ],
+        'increase_volume' => [
+            'title' => 'افزایش حجم سرویس',
+            'icon' => '🔋',
+            'sql' => "`type` LIKE 'INCREASE_VOLUME_%'",
+            'match' => function($type){ return preg_match('/^INCREASE_VOLUME_/', $type) === 1; }
+        ],
+        'increase_day' => [
+            'title' => 'افزایش زمان سرویس',
+            'icon' => '⏰',
+            'sql' => "`type` LIKE 'INCREASE_DAY_%'",
+            'match' => function($type){ return preg_match('/^INCREASE_DAY_/', $type) === 1; }
+        ],
+    ];
+}
+
+function wizwiz_getAutoApproveTypes(){
+    global $botState;
+    $items = wizwiz_autoApproveTypeItems();
+    $defaults = [];
+    foreach($items as $key => $item) $defaults[$key] = 'on';
+
+    $raw = $botState['autoApproveTypes'] ?? '';
+    $saved = [];
+    if(is_array($raw)) $saved = $raw;
+    else{
+        $raw = trim((string)$raw);
+        if($raw !== ''){
+            $decoded = json_decode($raw, true);
+            if(is_array($decoded)) $saved = $decoded;
+        }
+    }
+
+    foreach($saved as $key => $value){
+        if(array_key_exists($key, $defaults)) $defaults[$key] = ($value === 'off' || $value === 0 || $value === false) ? 'off' : 'on';
+    }
+    return $defaults;
+}
+
+function wizwiz_saveAutoApproveTypes($types){
+    $items = wizwiz_autoApproveTypeItems();
+    $clean = [];
+    foreach($items as $key => $item){
+        $value = is_array($types) && array_key_exists($key, $types) ? $types[$key] : 'on';
+        $clean[$key] = ($value === 'off' || $value === 0 || $value === false) ? 'off' : 'on';
+    }
+    setSettings('autoApproveTypes', json_encode($clean, JSON_UNESCAPED_UNICODE));
+    return $clean;
+}
+
+function wizwiz_isAutoApproveTypeEnabled($payType){
+    $payType = trim((string)$payType);
+    if($payType === '') return false;
+    $states = wizwiz_getAutoApproveTypes();
+    foreach(wizwiz_autoApproveTypeItems() as $key => $item){
+        $matcher = $item['match'] ?? null;
+        if(is_callable($matcher) && $matcher($payType)) return (($states[$key] ?? 'on') === 'on');
+    }
+    return false;
+}
+
+function wizwiz_getAutoApproveEnabledSqlCondition(){
+    $states = wizwiz_getAutoApproveTypes();
+    $parts = [];
+    foreach(wizwiz_autoApproveTypeItems() as $key => $item){
+        if(($states[$key] ?? 'on') === 'on' && !empty($item['sql'])) $parts[] = '(' . $item['sql'] . ')';
+    }
+    if(count($parts) == 0) return '';
+    return '(' . implode(' OR ', $parts) . ')';
+}
+
+function wizwiz_getAutoApproveTypesText(){
+    $states = wizwiz_getAutoApproveTypes();
+    $msg = "✅ <b>موارد فعال برای تأیید خودکار</b>\n\n" .
+           "هر موردی که روشن باشد، بعد از ارسال رسید و گذشت زمان تعیین‌شده خودکار تأیید می‌شود؛ موارد خاموش فقط برای ادمین ارسال می‌شوند.\n\n";
+    foreach(wizwiz_autoApproveTypeItems() as $key => $item){
+        $on = (($states[$key] ?? 'on') === 'on');
+        $msg .= ($item['icon'] ?? '•') . ' ' . wizwiz_h($item['title'] ?? $key) . ': <b>' . ($on ? 'روشن ✅' : 'خاموش ❌') . "</b>\n";
+    }
+    return $msg;
+}
+
+function wizwiz_getAutoApproveTypesKeys(){
+    $states = wizwiz_getAutoApproveTypes();
+    $rows = [];
+    foreach(wizwiz_autoApproveTypeItems() as $key => $item){
+        $on = (($states[$key] ?? 'on') === 'on');
+        $rows[] = [[
+            'text' => ($item['icon'] ?? '•') . ' ' . ($item['title'] ?? $key) . ': ' . ($on ? 'روشن ✅' : 'خاموش ❌'),
+            'callback_data' => 'toggleAutoApproveType_' . $key,
+            'style' => $on ? 'success' : 'danger'
+        ]];
+    }
+    $rows[] = [
+        ['text'=>'✅ روشن کردن همه', 'callback_data'=>'setAllAutoApproveTypes_on', 'style'=>'success'],
+        ['text'=>'❌ خاموش کردن همه', 'callback_data'=>'setAllAutoApproveTypes_off', 'style'=>'danger']
+    ];
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'autoApproveOrdersMenu', 'style'=>'primary']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
 function wizwiz_getAutoApproveState(){
     global $botState;
     $minutes = intval($botState['autoApproveMinutes'] ?? 5);
     if($minutes < 1) $minutes = 5;
+    $blocked = wizwiz_getAutoApproveBlockedUsers();
     return [
         'enabled' => (($botState['autoApproveState'] ?? 'off') === 'on'),
-        'minutes' => $minutes
+        'minutes' => $minutes,
+        'blocked_count' => count($blocked),
+        'types' => wizwiz_getAutoApproveTypes()
     ];
 }
 
 function wizwiz_getAutoApproveMenuText(){
-    [$enabled, $minutes] = array_values(wizwiz_getAutoApproveState());
+    $stateData = wizwiz_getAutoApproveState();
+    $enabled = !empty($stateData['enabled']);
+    $minutes = intval($stateData['minutes']);
     $state = $enabled ? 'روشن ✅' : 'خاموش ❌';
+    $blockedCount = count(wizwiz_getAutoApproveBlockedUsers());
+    $activeTypes = [];
+    $typeStates = wizwiz_getAutoApproveTypes();
+    foreach(wizwiz_autoApproveTypeItems() as $key => $item){
+        if(($typeStates[$key] ?? 'on') === 'on') $activeTypes[] = ($item['icon'] ?? '•') . ' ' . ($item['title'] ?? $key);
+    }
+    $typesText = count($activeTypes) ? implode('، ', $activeTypes) : 'هیچ موردی فعال نیست';
     return "⏱ <b>تأیید خودکار سفارش‌ها</b>\n\n" .
            "وضعیت فعلی: <b>$state</b>\n" .
-           "زمان تأیید خودکار: <b>$minutes دقیقه بعد از ارسال رسید</b>\n\n" .
-           "وقتی کاربر رسید کارت‌به‌کارت خرید سرویس را ارسال کند، اگر این بخش روشن باشد و سفارش تا زمان تعیین‌شده تأیید/رد نشود، ربات آن را خودکار تأیید می‌کند. گزارش سفارش خودکار داخل کانال گزارش درآمد ارسال می‌شود و از همان‌جا قابل لغو است.";
+           "زمان تأیید خودکار: <b>$minutes دقیقه بعد از ارسال رسید</b>\n" .
+           "موارد فعال: <b>" . wizwiz_h($typesText) . "</b>\n" .
+           "کاربران مستثنی از تأیید خودکار: <b>$blockedCount نفر</b>\n\n" .
+           "رسیدهای کارت‌به‌کارت فقط برای مواردی که در بخش «موارد تأیید خودکار» روشن هستند، بعد از زمان تعیین‌شده خودکار تأیید می‌شوند.\n" .
+           "کاربرانی که داخل لیست بلاک تأیید خودکار باشند، رسیدهایشان فقط برای ادمین می‌رود و خودکار تأیید نمی‌شود.";
 }
 
 function wizwiz_getAutoApproveMenuKeys(){
@@ -9974,12 +11330,74 @@ function wizwiz_getAutoApproveMenuKeys(){
             ['text'=>'⏱ تنظیم دقیقه', 'callback_data'=>'setAutoApproveMinutes', 'style'=>'primary']
         ],
         [
+            ['text'=>'✅ موارد تأیید خودکار', 'callback_data'=>'autoApproveTypesMenu', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🚫 بلاک تأیید خودکار (' . intval($s['blocked_count']) . ')', 'callback_data'=>'autoApproveBlockedUsersMenu', 'style'=>'danger']
+        ],
+        [
             ['text'=>'🚀 بررسی و اجرای الان', 'callback_data'=>'runAutoApproveOrdersNow', 'style'=>'success']
         ],
         [
             ['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
+}
+
+function wizwiz_getAutoApproveBlockedUsersText(){
+    global $connection;
+    $ids = wizwiz_getAutoApproveBlockedUsers();
+    $msg = "🚫 <b>کاربران مستثنی از تأیید خودکار</b>\n\n" .
+           "رسیدهای این کاربران خودکار تأیید نمی‌شود و مثل حالت عادی باید ادمین تأیید/رد کند.\n\n";
+    if(count($ids) == 0) return $msg . "لیست فعلاً خالی است.";
+
+    $msg .= "لیست فعلی:\n";
+    foreach($ids as $uid){
+        $display = '';
+        if(isset($connection) && $connection){
+            $stmt = @$connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $uid);
+                $stmt->execute();
+                $u = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if($u){
+                    $name = trim((string)($u['name'] ?? ''));
+                    $username = trim((string)($u['username'] ?? ''));
+                    if($username !== '') $username = '@' . ltrim($username, '@');
+                    $display = trim($name . ' ' . $username);
+                }
+            }
+        }
+        $msg .= "• <code>$uid</code>" . ($display !== '' ? ' - ' . wizwiz_h($display) : '') . "\n";
+    }
+    return $msg;
+}
+
+function wizwiz_getAutoApproveBlockedUsersKeys(){
+    $rows = [
+        [
+            ['text'=>'➕ افزودن کاربر', 'callback_data'=>'addAutoApproveBlockedUser', 'style'=>'success'],
+            ['text'=>'➖ حذف با آیدی', 'callback_data'=>'removeAutoApproveBlockedUserManual', 'style'=>'warning']
+        ]
+    ];
+    $ids = wizwiz_getAutoApproveBlockedUsers();
+    foreach(array_slice($ids, 0, 20) as $uid){
+        $rows[] = [[
+            'text'=>'حذف ' . $uid,
+            'callback_data'=>'removeAutoApproveBlockedUser' . $uid,
+            'style'=>'danger'
+        ]];
+    }
+    if(count($ids) > 0){
+        $rows[] = [[
+            'text'=>'🧹 پاک کردن کل لیست',
+            'callback_data'=>'clearAutoApproveBlockedUsers',
+            'style'=>'danger'
+        ]];
+    }
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'autoApproveOrdersMenu', 'style'=>'primary']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
 function wizwiz_markPayReceiptSent($hashId, $receiptFileId = null){
@@ -10260,7 +11678,6 @@ function wizwiz_adminReceiptKeyboardByPay($pay, $stepPrefix = ''){
 function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     global $connection;
     if(!is_array($pay)) return '🧾 رسید پرداخت';
-    $hash = (string)($pay['hash_id'] ?? '');
     $uid = intval($pay['user_id'] ?? 0);
     $type = (string)($pay['type'] ?? '');
     $price = number_format(intval($pay['price'] ?? 0));
@@ -10281,11 +11698,12 @@ function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     $lines[] = "📌 نوع: <b>" . wizwiz_h($typeTitle) . "</b>";
     if($user) $lines[] = wizwiz_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '');
     else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
-    if($hash !== '') $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+    // کد پرداخت در پیام قابل مشاهده ادمین نمایش داده نمی‌شود؛ callback دکمه‌ها همان هش داخلی را نگه می‌دارد.
     $lines[] = "💰 مبلغ: <b>{$price} تومان</b>";
 
     $remark = '';
     $planTitle = '';
+    $serverTitle = '';
     $volume = '';
     $days = '';
 
@@ -10297,7 +11715,7 @@ function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     }elseif($type === 'RENEW_ACCOUNT'){
         $oid = intval($pay['plan_id'] ?? 0);
         if($oid > 0){
-            $stmt = $connection->prepare("SELECT `remark`, `fileid` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            $stmt = $connection->prepare("SELECT `remark`, `fileid`, `server_id` FROM `orders_list` WHERE `id` = ? LIMIT 1");
             if($stmt){
                 $stmt->bind_param('i', $oid);
                 $stmt->execute();
@@ -10307,17 +11725,30 @@ function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
                     $remark = trim((string)($order['remark'] ?? ''));
                     $planId = intval($order['fileid'] ?? 0);
                     if($planId > 0){
-                        $stmt = $connection->prepare("SELECT `title`, `volume`, `days` FROM `server_plans` WHERE `id` = ? LIMIT 1");
+                        $stmt = $connection->prepare("SELECT sp.`title`, sp.`volume`, sp.`days`, sc.`title` cat_title, si.`title` server_title FROM `server_plans` sp LEFT JOIN `server_categories` sc ON sp.`catid` = sc.`id` LEFT JOIN `server_info` si ON sp.`server_id` = si.`id` WHERE sp.`id` = ? LIMIT 1");
                         if($stmt){
                             $stmt->bind_param('i', $planId);
                             $stmt->execute();
                             $plan = $stmt->get_result()->fetch_assoc();
                             $stmt->close();
                             if($plan){
-                                $planTitle = trim((string)($plan['title'] ?? ''));
+                                $planTitle = trim(($plan['cat_title'] ?? '') . ' ' . ($plan['title'] ?? ''));
+                                if($planTitle === '') $planTitle = trim((string)($plan['title'] ?? ''));
+                                $serverTitle = trim((string)($plan['server_title'] ?? ''));
                                 $volume = $plan['volume'] ?? '';
                                 $days = $plan['days'] ?? '';
                             }
+                        }
+                    }
+                    if($serverTitle === '' && intval($order['server_id'] ?? 0) > 0){
+                        $sid = intval($order['server_id']);
+                        $stmt = $connection->prepare("SELECT `title` FROM `server_info` WHERE `id` = ? LIMIT 1");
+                        if($stmt){
+                            $stmt->bind_param('i', $sid);
+                            $stmt->execute();
+                            $srv = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            if($srv) $serverTitle = trim((string)($srv['title'] ?? ''));
                         }
                     }
                 }
@@ -10327,13 +11758,37 @@ function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
         $orderId = intval($m[2]);
         $planId = intval($m[3]);
         if($orderId > 0){
-            $stmt = $connection->prepare("SELECT `remark` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            $stmt = $connection->prepare("SELECT `remark`, `server_id`, `fileid` FROM `orders_list` WHERE `id` = ? LIMIT 1");
             if($stmt){
                 $stmt->bind_param('i', $orderId);
                 $stmt->execute();
                 $order = $stmt->get_result()->fetch_assoc();
                 $stmt->close();
-                if($order) $remark = trim((string)($order['remark'] ?? ''));
+                if($order){
+                    $remark = trim((string)($order['remark'] ?? ''));
+                    if(intval($order['server_id'] ?? 0) > 0){
+                        $sid = intval($order['server_id']);
+                        $stmt = $connection->prepare("SELECT `title` FROM `server_info` WHERE `id` = ? LIMIT 1");
+                        if($stmt){
+                            $stmt->bind_param('i', $sid);
+                            $stmt->execute();
+                            $srv = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            if($srv) $serverTitle = trim((string)($srv['title'] ?? ''));
+                        }
+                    }
+                    $basePlanId = intval($order['fileid'] ?? 0);
+                    if($basePlanId > 0){
+                        $stmt = $connection->prepare("SELECT sp.`title`, sc.`title` cat_title FROM `server_plans` sp LEFT JOIN `server_categories` sc ON sp.`catid` = sc.`id` WHERE sp.`id` = ? LIMIT 1");
+                        if($stmt){
+                            $stmt->bind_param('i', $basePlanId);
+                            $stmt->execute();
+                            $basePlan = $stmt->get_result()->fetch_assoc();
+                            $stmt->close();
+                            if($basePlan) $planTitle = trim(($basePlan['cat_title'] ?? '') . ' ' . ($basePlan['title'] ?? ''));
+                        }
+                    }
+                }
             }
         }
         if($planId > 0){
@@ -10361,7 +11816,8 @@ function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
                 $stmt->close();
                 if($plan){
                     $planTitle = trim(($plan['cat_title'] ?? '') . ' ' . ($plan['title'] ?? ''));
-                    if($planTitle === '') $planTitle = trim((string)($plan['server_title'] ?? ''));
+                    if($planTitle === '') $planTitle = trim((string)($plan['title'] ?? ''));
+                    $serverTitle = trim((string)($plan['server_title'] ?? ''));
                     if($volume === '' || intval($volume) <= 0) $volume = $plan['volume'] ?? $volume;
                     if($days === '' || intval($days) <= 0) $days = $plan['days'] ?? $days;
                 }
@@ -10369,6 +11825,7 @@ function wizwiz_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
         }
     }
 
+    if($serverTitle !== '') $lines[] = "🖥 سرور: <b>" . wizwiz_h($serverTitle) . "</b>";
     if($planTitle !== '') $lines[] = "📦 پلن/سرویس: <b>" . wizwiz_h($planTitle) . "</b>";
     if($remark !== '') $lines[] = "🔮 نام کانفیگ: <code>" . wizwiz_h($remark) . "</code>";
     if($type === 'INCREASE_WALLET'){
@@ -10458,7 +11915,6 @@ function wizwiz_adminSendFallbackText($hashId, $photo, $caption){
     $photo = trim((string)$photo);
     $text = (string)$caption;
     $extra = "\n\n⚠️ <b>توجه:</b> ارسال عکس رسید برای این پیام ناموفق بود، اما سفارش از دست نرفته است و از همین دکمه‌ها قابل بررسی است.";
-    if($hashId !== '') $extra .= "\n🔖 کد پرداخت: <code>" . wizwiz_h($hashId) . "</code>";
     if($photo !== '') $extra .= "\n🖼 File ID رسید: <code>" . wizwiz_h($photo) . "</code>";
     return $text . $extra;
 }
@@ -10470,7 +11926,7 @@ function wizwiz_sendAdminPaymentPhotoToChat($chatId, $hashId, $photo, $caption, 
     $plainCaption = trim($plainCaption) !== '' ? trim($plainCaption) : '🧾 رسید پرداخت کارت‌به‌کارت';
     if(function_exists('mb_substr')) $safePlainCaption = mb_substr($plainCaption, 0, 900, 'UTF-8');
     else $safePlainCaption = substr($plainCaption, 0, 900);
-    $minimalCaption = '🧾 رسید پرداخت کارت‌به‌کارت' . ($hashId !== '' ? "\n🔖 کد پرداخت: " . $hashId : '');
+    $minimalCaption = '🧾 رسید پرداخت کارت‌به‌کارت';
 
     $ok = false;
     $res = null;
@@ -10567,7 +12023,6 @@ function wizwiz_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard = nul
         $faErr = function_exists('wizwiz_translateTechnicalError') ? wizwiz_translateTechnicalError($errText) : $errText;
         if(function_exists('wizwiz_reportEvent')){
             $body = "⚠️ <b>ارسال پیام سفارش به ادمین ناموفق بود</b>\n" .
-                    ($hashId !== '' ? "🔖 کد پرداخت: <code>" . wizwiz_h($hashId) . "</code>\n" : '') .
                     ($userId ? "🆔 کاربر: <code>" . intval($userId) . "</code>\n" : '') .
                     "📝 خطا به فارسی:\n<code>" . wizwiz_h($faErr) . "</code>" . wizwiz_reportTimeLine();
             $keyboardReport = $userId ? wizwiz_reportPrivateKeyboard($userId) : null;
@@ -10589,6 +12044,7 @@ function wizwiz_buildPendingAdminOrderMessage($pay){
     $planId = intval($pay['plan_id'] ?? 0);
     $remark = '';
     $planTitle = 'نامشخص';
+    $serverTitle = '';
     $volume = $pay['volume'] ?? '';
     $days = $pay['day'] ?? '';
 
@@ -10608,7 +12064,8 @@ function wizwiz_buildPendingAdminOrderMessage($pay){
                 $stmt->close();
                 if($plan){
                     $planTitle = trim(($plan['cat_title'] ?? '') . ' ' . ($plan['title'] ?? ''));
-                    if($planTitle === '') $planTitle = (string)($plan['server_title'] ?? 'پلن خرید');
+                    $serverTitle = trim((string)($plan['server_title'] ?? ''));
+                    if($planTitle === '') $planTitle = 'پلن خرید';
                     if($volume === '' || intval($volume) == 0) $volume = $plan['volume'] ?? $volume;
                     if($days === '' || intval($days) == 0) $days = $plan['days'] ?? $days;
                 }
@@ -10628,8 +12085,8 @@ function wizwiz_buildPendingAdminOrderMessage($pay){
     $lines = ["🧾 <b>سفارش کارت‌به‌کارت در انتظار تأیید</b>"];
     if($user) $lines[] = wizwiz_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '');
     else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
-    $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
     $lines[] = "💰 مبلغ: <b>{$price} تومان</b>";
+    if($serverTitle !== '') $lines[] = "🖥 سرور: <b>" . wizwiz_h($serverTitle) . "</b>";
     $lines[] = "📦 پلن: <b>" . wizwiz_h($planTitle) . "</b>";
     if($remark !== '') $lines[] = "🔮 ریمارک: <code>" . wizwiz_h($remark) . "</code>";
     if($volume !== '' && intval($volume) > 0) $lines[] = "🔋 حجم: <b>" . wizwiz_h($volume) . " گیگ</b>";
@@ -11002,6 +12459,287 @@ function wizwiz_approveSentOrderByHash($hashId, $auto = false){
     return ['ok'=>true, 'message'=>'سفارش با موفقیت تأیید شد.', 'order_ids'=>$orderIds, 'remarks'=>$remarks, 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid];
 }
 
+function wizwiz_approveIncreaseVolumePayByHash($hashId, $auto = false){
+    global $connection, $mainValues;
+    $hashId = trim((string)$hashId);
+    $approvalLocked = false;
+    $fail = function($message) use (&$approvalLocked, $hashId){
+        if($approvalLocked) wizwiz_restorePayApprovalState($hashId);
+        wizwiz_setPayApprovalError($hashId, $message);
+        return ['ok'=>false, 'message'=>$message];
+    };
+    if($hashId === '') return $fail('کد پرداخت نامعتبر است.');
+
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return $fail('دسترسی به جدول پرداخت ممکن نیست.');
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $payInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$payInfo) return $fail('پرداخت پیدا نشد.');
+
+    $type = (string)($payInfo['type'] ?? '');
+    if(!preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)$/', $type, $increaseInfo)){
+        return $fail('این پرداخت از نوع افزایش حجم نیست.');
+    }
+
+    if(($payInfo['state'] ?? '') == 'approved'){
+        $orderId = intval($increaseInfo[1]);
+        return ['ok'=>true, 'message'=>'این افزایش حجم قبلاً تأیید شده است.', 'order_ids'=>[$orderId], 'user_id'=>intval($payInfo['user_id'] ?? 0), 'price'=>intval($payInfo['price'] ?? 0), 'already'=>true];
+    }
+    if(in_array(($payInfo['state'] ?? ''), ['declined','auto_cancelled'], true)) return $fail('این سفارش قبلاً رد یا لغو شده است.');
+
+    $lock = wizwiz_lockPayForApproval($hashId, $auto);
+    if(empty($lock['ok'])) return $lock;
+    $approvalLocked = true;
+
+    $uid = intval($payInfo['user_id'] ?? 0);
+    $orderId = intval($increaseInfo[1]);
+    $planId = intval($increaseInfo[2]);
+    $now = time();
+    $price = intval($payInfo['price'] ?? 0);
+
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return $fail('سفارش اصلی پیدا نشد.');
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $orderInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$orderInfo) return $fail('سفارش اصلی پیدا نشد.');
+
+    $server_id = intval($orderInfo['server_id'] ?? 0);
+    $inbound_id = intval($orderInfo['inbound_id'] ?? 0);
+    $remark = (string)($orderInfo['remark'] ?? '');
+    $uuid = (string)($orderInfo['uuid'] ?? '0');
+    $basePlanId = intval($orderInfo['fileid'] ?? 0);
+
+    $stmt = $connection->prepare("SELECT * FROM `increase_plan` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return $fail('پلن افزایش حجم پیدا نشد.');
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $incPlan = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$incPlan) return $fail('پلن افزایش حجم پیدا نشد.');
+
+    $volume = floatval($incPlan['volume'] ?? 0);
+    if($volume <= 0) return $fail('حجم پلن افزایش حجم نامعتبر است.');
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return $fail('تنظیمات سرور پیدا نشد.');
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $serverInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$serverInfo) return $fail('تنظیمات سرور پیدا نشد.');
+    $serverType = $serverInfo['type'] ?? '';
+
+    if($serverType == 'marzban'){
+        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_volume'=>$volume]);
+    }else{
+        $response = ($inbound_id > 0) ? editClientTraffic($server_id, $inbound_id, $uuid, $volume, 0) : editInboundTraffic($server_id, $uuid, $volume, 0);
+    }
+
+    if(is_null($response)) return $fail('اتصال به سرور برقرار نشد.');
+    if(!is_object($response) || empty($response->success)){
+        $err = is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response;
+        if(function_exists('wizwiz_translateTechnicalError')) $err = wizwiz_translateTechnicalError($err);
+        return $fail('خطای افزایش حجم روی سرور: ' . $err);
+    }
+
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `notif` = 0 WHERE `uuid` = ?");
+    if($stmt){ $stmt->bind_param('s', $uuid); $stmt->execute(); $stmt->close(); }
+
+    $ordersJson = json_encode([$orderId], JSON_UNESCAPED_UNICODE);
+    $autoFlag = $auto ? 1 : 0;
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved', `auto_approved` = ?, `auto_approved_date` = ?, `auto_approved_orders` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ?");
+    if($stmt){ $stmt->bind_param('iiss', $autoFlag, $now, $ordersJson, $hashId); $stmt->execute(); $stmt->close(); }
+    $approvalLocked = false;
+
+    $volumeText = rtrim(rtrim(number_format($volume, 2, '.', ''), '0'), '.');
+    sendMessage("✅{$volumeText} گیگ به حجم سرویس شما اضافه شد", null, 'HTML', $uid);
+
+    return [
+        'ok'=>true,
+        'message'=>'افزایش حجم با موفقیت تأیید شد.',
+        'order_ids'=>[$orderId],
+        'remarks'=>[$remark],
+        'renew_remark'=>$remark,
+        'user_id'=>$uid,
+        'price'=>$price,
+        'plan_id'=>$basePlanId,
+        'increase_volume'=>$volumeText,
+        'type'=>'INCREASE_VOLUME'
+    ];
+}
+
+
+function wizwiz_approveIncreaseWalletPayByHash($hashId, $auto = false){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    $approvalLocked = false;
+    $fail = function($message) use (&$approvalLocked, $hashId){
+        if($approvalLocked) wizwiz_restorePayApprovalState($hashId);
+        wizwiz_setPayApprovalError($hashId, $message);
+        return ['ok'=>false, 'message'=>$message];
+    };
+    if($hashId === '') return $fail('کد پرداخت نامعتبر است.');
+
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return $fail('دسترسی به جدول پرداخت ممکن نیست.');
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $payInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$payInfo) return $fail('پرداخت پیدا نشد.');
+    if(($payInfo['type'] ?? '') !== 'INCREASE_WALLET') return $fail('نوع پرداخت شارژ کیف پول نیست.');
+    if(($payInfo['state'] ?? '') == 'approved') return ['ok'=>true, 'message'=>'این شارژ قبلاً تأیید شده است.', 'order_ids'=>[], 'user_id'=>intval($payInfo['user_id'] ?? 0), 'price'=>intval($payInfo['price'] ?? 0), 'wallet_amount'=>intval($payInfo['price'] ?? 0), 'already'=>true, 'type'=>'INCREASE_WALLET'];
+    if(in_array(($payInfo['state'] ?? ''), ['declined','auto_cancelled'], true)) return $fail('این پرداخت قبلاً رد یا لغو شده است.');
+
+    $lock = wizwiz_lockPayForApproval($hashId, $auto);
+    if(empty($lock['ok'])) return $lock;
+    $approvalLocked = true;
+
+    $uid = intval($payInfo['user_id'] ?? 0);
+    $price = intval($payInfo['price'] ?? 0);
+    if($uid <= 0) return $fail('کاربر پرداخت معتبر نیست.');
+    if($price <= 0) return $fail('مبلغ شارژ کیف پول معتبر نیست.');
+
+    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
+    if(!$stmt) return $fail('افزایش کیف پول در دیتابیس ناموفق بود.');
+    $stmt->bind_param('ii', $price, $uid);
+    $stmt->execute();
+    $changed = $stmt->affected_rows;
+    $stmt->close();
+    if($changed <= 0) return $fail('کاربر برای افزایش کیف پول پیدا نشد.');
+
+    $now = time();
+    $autoFlag = $auto ? 1 : 0;
+    $emptyOrders = json_encode([], JSON_UNESCAPED_UNICODE);
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved', `auto_approved` = ?, `auto_approved_date` = ?, `auto_approved_orders` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ?");
+    if($stmt){ $stmt->bind_param('iiss', $autoFlag, $now, $emptyOrders, $hashId); $stmt->execute(); $stmt->close(); }
+    $approvalLocked = false;
+
+    sendMessage("افزایش حساب شما با موفقیت تأیید شد\n✅ مبلغ " . number_format($price) . " تومان به حساب شما اضافه شد", null, null, $uid);
+
+    return [
+        'ok'=>true,
+        'message'=>'شارژ کیف پول با موفقیت تأیید شد.',
+        'order_ids'=>[],
+        'user_id'=>$uid,
+        'price'=>$price,
+        'wallet_amount'=>$price,
+        'type'=>'INCREASE_WALLET'
+    ];
+}
+
+function wizwiz_approveIncreaseDayPayByHash($hashId, $auto = false){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    $approvalLocked = false;
+    $fail = function($message) use (&$approvalLocked, $hashId){
+        if($approvalLocked) wizwiz_restorePayApprovalState($hashId);
+        wizwiz_setPayApprovalError($hashId, $message);
+        return ['ok'=>false, 'message'=>$message];
+    };
+    if($hashId === '') return $fail('کد پرداخت نامعتبر است.');
+
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return $fail('دسترسی به جدول پرداخت ممکن نیست.');
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $payInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$payInfo) return $fail('پرداخت پیدا نشد.');
+    $type = (string)($payInfo['type'] ?? '');
+    if(!preg_match('/^INCREASE_DAY_(\d+)_(\d+)$/', $type, $increaseInfo)) return $fail('نوع پرداخت افزایش زمان نیست.');
+    if(($payInfo['state'] ?? '') == 'approved') return ['ok'=>true, 'message'=>'این افزایش زمان قبلاً تأیید شده است.', 'order_ids'=>[intval($increaseInfo[1])], 'user_id'=>intval($payInfo['user_id'] ?? 0), 'price'=>intval($payInfo['price'] ?? 0), 'already'=>true, 'type'=>'INCREASE_DAY'];
+    if(in_array(($payInfo['state'] ?? ''), ['declined','auto_cancelled'], true)) return $fail('این سفارش قبلاً رد یا لغو شده است.');
+
+    $lock = wizwiz_lockPayForApproval($hashId, $auto);
+    if(empty($lock['ok'])) return $lock;
+    $approvalLocked = true;
+
+    $orderId = intval($increaseInfo[1]);
+    $planId = intval($increaseInfo[2]);
+    $uid = intval($payInfo['user_id'] ?? 0);
+    $price = intval($payInfo['price'] ?? 0);
+
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return $fail('سفارش اصلی پیدا نشد.');
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $orderInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$orderInfo) return $fail('سفارش اصلی پیدا نشد.');
+
+    $server_id = intval($orderInfo['server_id']);
+    $inbound_id = intval($orderInfo['inbound_id']);
+    $remark = (string)($orderInfo['remark'] ?? '');
+    $uuid = $orderInfo['uuid'] ?? '0';
+
+    $stmt = $connection->prepare("SELECT * FROM `increase_day` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return $fail('پلن افزایش زمان پیدا نشد.');
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $incPlan = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$incPlan) return $fail('پلن افزایش زمان پیدا نشد.');
+
+    $days = intval($incPlan['volume'] ?? 0);
+    if($days <= 0) return $fail('مدت پلن افزایش زمان نامعتبر است.');
+
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return $fail('تنظیمات سرور پیدا نشد.');
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $serverInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$serverInfo) return $fail('تنظیمات سرور پیدا نشد.');
+    $serverType = $serverInfo['type'] ?? '';
+
+    if($serverType == 'marzban'){
+        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$days]);
+    }else{
+        $response = ($inbound_id > 0) ? editClientTraffic($server_id, $inbound_id, $uuid, 0, $days) : editInboundTraffic($server_id, $uuid, 0, $days);
+    }
+
+    if(is_null($response)) return $fail('اتصال به سرور برقرار نشد.');
+    if(!is_object($response) || empty($response->success)){
+        $err = is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response;
+        if(function_exists('wizwiz_translateTechnicalError')) $err = wizwiz_translateTechnicalError($err);
+        return $fail('خطای افزایش زمان روی سرور: ' . $err);
+    }
+
+    $addSeconds = $days * 86400;
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = `expire_date` + ?, `notif` = 0 WHERE `uuid` = ?");
+    if($stmt){ $stmt->bind_param('is', $addSeconds, $uuid); $stmt->execute(); $stmt->close(); }
+
+    $now = time();
+    $stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
+    if($stmt){ $stmt->bind_param('iiisii', $uid, $server_id, $inbound_id, $remark, $price, $now); $stmt->execute(); $stmt->close(); }
+
+    $ordersJson = json_encode([$orderId], JSON_UNESCAPED_UNICODE);
+    $autoFlag = $auto ? 1 : 0;
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved', `auto_approved` = ?, `auto_approved_date` = ?, `auto_approved_orders` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ?");
+    if($stmt){ $stmt->bind_param('iiss', $autoFlag, $now, $ordersJson, $hashId); $stmt->execute(); $stmt->close(); }
+    $approvalLocked = false;
+
+    sendMessage("✅{$days} روز به مدت زمان سرویس شما اضافه شد", null, null, $uid);
+
+    return [
+        'ok'=>true,
+        'message'=>'افزایش زمان با موفقیت تأیید شد.',
+        'order_ids'=>[$orderId],
+        'remarks'=>[$remark],
+        'renew_remark'=>$remark,
+        'user_id'=>$uid,
+        'price'=>$price,
+        'plan_id'=>intval($orderInfo['fileid'] ?? 0),
+        'increase_day'=>$days,
+        'type'=>'INCREASE_DAY'
+    ];
+}
+
 function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
     global $connection, $botState;
     $state = wizwiz_getAutoApproveState();
@@ -11010,7 +12748,15 @@ function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
     if($minutes < 1) $minutes = 1;
     $cutoff = $force ? time() : (time() - ($minutes * 60));
     $limit = max(1, min(10, intval($limit)));
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND `type` IN ('BUY_SUB','RENEW_SCONFIG') AND COALESCE(`sent_date`,0) > 0 AND `sent_date` <= ? ORDER BY `sent_date` ASC LIMIT $limit");
+    $blockedUsers = function_exists('wizwiz_getAutoApproveBlockedUsers') ? wizwiz_getAutoApproveBlockedUsers() : [];
+    $blockedSql = '';
+    if(count($blockedUsers) > 0){
+        $blockedUsers = array_map('intval', $blockedUsers);
+        $blockedSql = " AND `user_id` NOT IN (" . implode(',', $blockedUsers) . ")";
+    }
+    $typeSql = function_exists('wizwiz_getAutoApproveEnabledSqlCondition') ? wizwiz_getAutoApproveEnabledSqlCondition() : "(`type` IN ('BUY_SUB','RENEW_SCONFIG') OR `type` LIKE 'INCREASE_VOLUME_%')";
+    if(trim((string)$typeSql) === '') return ['processed'=>0, 'messages'=>['هیچ موردی برای تأیید خودکار روشن نیست.']];
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND {$typeSql}{$blockedSql} AND COALESCE(`sent_date`,0) > 0 AND `sent_date` <= ? ORDER BY `sent_date` ASC LIMIT $limit");
     if(!$stmt) return ['processed'=>0, 'messages'=>['خطا در دریافت سفارش‌های در انتظار.']];
     $stmt->bind_param('i', $cutoff);
     $stmt->execute();
@@ -11029,7 +12775,21 @@ function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
         $stmt->close();
         if($changed <= 0) continue;
 
-        $result = wizwiz_approveSentOrderByHash($hash, true);
+        $payType = (string)($pay['type'] ?? '');
+        if(function_exists('wizwiz_isAutoApproveTypeEnabled') && !wizwiz_isAutoApproveTypeEnabled($payType)){
+            $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ? AND `state` = 'auto_processing'");
+            if($stmt){ $stmt->bind_param('s', $hash); $stmt->execute(); $stmt->close(); }
+            continue;
+        }
+        if($payType === 'INCREASE_WALLET' && function_exists('wizwiz_approveIncreaseWalletPayByHash')){
+            $result = wizwiz_approveIncreaseWalletPayByHash($hash, true);
+        }elseif(preg_match('/^INCREASE_DAY_/', $payType) && function_exists('wizwiz_approveIncreaseDayPayByHash')){
+            $result = wizwiz_approveIncreaseDayPayByHash($hash, true);
+        }elseif(preg_match('/^INCREASE_VOLUME_/', $payType) && function_exists('wizwiz_approveIncreaseVolumePayByHash')){
+            $result = wizwiz_approveIncreaseVolumePayByHash($hash, true);
+        }else{
+            $result = wizwiz_approveSentOrderByHash($hash, true);
+        }
         if($result['ok']){
             $processed++;
             $uid = intval($result['user_id'] ?? $pay['user_id']);
@@ -11041,14 +12801,24 @@ function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
 
             $lines = ["✅ <b>سفارش به‌صورت خودکار تأیید شد</b>"];
             if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = "🆔 کاربر: <code>{$uid}</code>";
+            if(wizwiz_reportDetailEnabled('plan_info', 'on') && function_exists('wizwiz_reportPlanServerLinesByPlanId')){
+                foreach(wizwiz_reportPlanServerLinesByPlanId($result['plan_id'] ?? ($pay['plan_id'] ?? 0), $pay['volume'] ?? '', $pay['day'] ?? '') as $reportLine){
+                    $lines[] = $reportLine;
+                }
+            }
+            if(!empty($result['wallet_amount'])) $lines[] = "💰 شارژ کیف پول: <b>" . number_format(intval($result['wallet_amount'])) . " تومان</b>";
+            if(!empty($result['increase_volume'])) $lines[] = "🔋 افزایش حجم: <b>" . wizwiz_h($result['increase_volume']) . " گیگ</b>";
+            if(!empty($result['increase_day'])) $lines[] = "⏰ افزایش زمان: <b>" . wizwiz_h($result['increase_day']) . " روز</b>";
             if(wizwiz_reportDetailEnabled('amount', 'on')) $lines[] = "💰 مبلغ: <b>" . number_format(intval($result['price'] ?? $pay['price'])) . " تومان</b>";
-            if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+            // کد پرداخت در گزارش کانال نمایش داده نمی‌شود؛ عملیات داخلی همچنان با hash انجام می‌شود.
             $configNamesLine = wizwiz_approvalConfigNamesLineFromResult($result);
             if($configNamesLine !== '') $lines[] = $configNamesLine;
-            if(wizwiz_reportDetailEnabled('order_ids', 'on')) $lines[] = "🧾 سفارش‌های ساخته‌شده: <code>" . wizwiz_h($ordersText) . "</code>";
-            if(wizwiz_reportDetailEnabled('cancel_button', 'on')) $lines[] = "در صورت نیاز می‌توانید از همین پیام سفارش را کامل لغو کنید و دلیل لغو برای کاربر ارسال می‌شود.";
+            if(wizwiz_reportDetailEnabled('order_ids', 'on')) $lines[] = "🧾 سفارش‌های مرتبط: <code>" . wizwiz_h($ordersText) . "</code>";
+            $noCancelAuto = in_array(($result['type'] ?? ''), ['INCREASE_VOLUME','INCREASE_DAY','INCREASE_WALLET'], true) || preg_match('/^INCREASE_(VOLUME|DAY)_/', (string)($pay['type'] ?? ''));
+            if(!$noCancelAuto && wizwiz_reportDetailEnabled('cancel_button', 'on')) $lines[] = "در صورت نیاز می‌توانید از همین پیام سفارش را کامل لغو کنید و دلیل لغو برای کاربر ارسال می‌شود.";
             $body = implode("\n", $lines) . wizwiz_reportTimeLine();
-            wizwiz_reportEvent('🤖 تأیید خودکار سفارش', $body, wizwiz_autoOrderActionKeyboard($hash, $uid), 'auto_approved');
+            $reportKeys = $noCancelAuto ? wizwiz_reportPrivateKeyboard($uid) : wizwiz_autoOrderActionKeyboard($hash, $uid);
+            wizwiz_reportEvent('🤖 تأیید خودکار سفارش', $body, $reportKeys, 'auto_approved');
             $messages[] = "✅ $hash تأیید شد.";
         }else{
             $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ? AND `state` = 'auto_processing'");
@@ -11056,7 +12826,36 @@ function wizwiz_processAutoApproveOrders($force = false, $limit = 3){
             $uid = intval($pay['user_id'] ?? 0);
             $lines = ["⚠️ <b>تأیید خودکار انجام نشد</b>"];
             if(wizwiz_reportDetailEnabled('user_info', 'on')) $lines[] = "🆔 کاربر: <code>{$uid}</code>";
-            if(wizwiz_reportDetailEnabled('payment_hash', 'on')) $lines[] = "🔖 کد پرداخت: <code>" . wizwiz_h($hash) . "</code>";
+            if(wizwiz_reportDetailEnabled('plan_info', 'on') && function_exists('wizwiz_reportPlanServerLinesByPlanId')){
+                foreach(wizwiz_reportPlanServerLinesByPlanId($pay['plan_id'] ?? 0, $pay['volume'] ?? '', $pay['day'] ?? '') as $reportLine){
+                    $lines[] = $reportLine;
+                }
+            }
+            $failPayType = (string)($pay['type'] ?? '');
+            if($failPayType === 'INCREASE_WALLET'){
+                $lines[] = "💰 شارژ کیف پول: <b>" . number_format(intval($pay['price'] ?? 0)) . " تومان</b>";
+            }elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/', $failPayType, $ivm)){
+                $stmt = $connection->prepare("SELECT `volume` FROM `increase_plan` WHERE `id` = ? LIMIT 1");
+                if($stmt){
+                    $incPlanId = intval($ivm[2]);
+                    $stmt->bind_param('i', $incPlanId);
+                    $stmt->execute();
+                    $inc = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    if($inc && floatval($inc['volume'] ?? 0) > 0) $lines[] = "🔋 افزایش حجم: <b>" . wizwiz_h($inc['volume']) . " گیگ</b>";
+                }
+            }elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/', $failPayType, $idm)){
+                $stmt = $connection->prepare("SELECT `volume` FROM `increase_day` WHERE `id` = ? LIMIT 1");
+                if($stmt){
+                    $incPlanId = intval($idm[2]);
+                    $stmt->bind_param('i', $incPlanId);
+                    $stmt->execute();
+                    $inc = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    if($inc && intval($inc['volume'] ?? 0) > 0) $lines[] = "⏰ افزایش زمان: <b>" . wizwiz_h($inc['volume']) . " روز</b>";
+                }
+            }
+            // کد پرداخت در گزارش خطای کانال نمایش داده نمی‌شود.
             $lines[] = "📝 خطا: <b>" . wizwiz_h($result['message']) . "</b>";
             $lines[] = "بعد از اصلاح مشکل، همان دکمه تأیید سفارش دوباره قابل استفاده است.";
             wizwiz_reportEvent('⚠️ خطای تأیید خودکار', implode("\n", $lines) . wizwiz_reportTimeLine(), wizwiz_reportPrivateKeyboard($uid), 'approval_failed');
