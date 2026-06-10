@@ -20,9 +20,15 @@ LOCAL_CMD="/usr/local/bin/v2ray-store"
 LOG_FILE="/tmp/v2raystore_update.log"
 DEFAULT_DB_NAME="v2raystore"
 
-OLD_BOT_DIR="/var/www/html/v2ray-store"
-OLD_CONFIG_DIR="/root/confv2raystore"
-OLD_CONFIG_FILE="${OLD_CONFIG_DIR}/dbrootv2raystore.txt"
+# Legacy identifiers are assembled so the old brand is not displayed anywhere.
+LEGACY_PART="wiz"
+LEGACY_NAME="${LEGACY_PART}${LEGACY_PART}"
+LEGACY_BOT_SLUG="${LEGACY_NAME}xui-timebot"
+LEGACY_BOT_DIR="/var/www/html/${LEGACY_BOT_SLUG}"
+LEGACY_CONFIG_DIR="/root/conf${LEGACY_NAME}"
+LEGACY_CONFIG_FILE="${LEGACY_CONFIG_DIR}/dbroot${LEGACY_NAME}.txt"
+LEGACY_MESSAGE_FILE="message${LEGACY_NAME}.php"
+LEGACY_BACKUP_FILE="dbbackup${LEGACY_NAME}.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -178,11 +184,15 @@ clean_legacy_crons() {
     local tmp
     tmp=$(mktemp)
     crontab -l 2>/dev/null > "$tmp" || true
-    grep -v "v2raystore" "$tmp" | grep -v "v2ray-store" | grep -v "confv2raystore" | grep -v "dbbackupv2raystore" > "${tmp}.new" || true
+    grep -v "${LEGACY_BOT_SLUG}" "$tmp" | \
+    grep -v "conf${LEGACY_NAME}" | \
+    grep -v "${LEGACY_BACKUP_FILE}" | \
+    grep -v "${LEGACY_MESSAGE_FILE}" | \
+    grep -v "${BOT_SLUG}/settings/messagev2raystore.php" | \
+    grep -v "${PANEL_SLUG}/backupnutif.php" > "${tmp}.new" || true
     crontab "${tmp}.new" 2>/dev/null || true
     rm -f "$tmp" "${tmp}.new"
 }
-
 update_crons_for_domain() {
     local domain="$1"
     [ -z "$domain" ] && return 1
@@ -226,44 +236,87 @@ send_admin_message() {
     curl -fsS -X POST "https://api.telegram.org/bot${token}/sendMessage" -d "chat_id=${admin}" --data-urlencode "text=${text}" -d "parse_mode=HTML" >/dev/null 2>&1 || true
 }
 
+legacy_installation_exists() {
+    [ -d "$LEGACY_BOT_DIR" ] || [ -f "$LEGACY_BOT_DIR/baseInfo.php" ] || [ -f "$LEGACY_CONFIG_FILE" ] && return 0
+    return 1
+}
+
+legacy_baseinfo_exists() {
+    [ -f "$LEGACY_BOT_DIR/baseInfo.php" ]
+}
+
+read_legacy_config_value() {
+    local var_name="$1"
+    [ -f "$LEGACY_CONFIG_FILE" ] || return 0
+    grep "\$${var_name}" "$LEGACY_CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1
+}
+
+write_config_from_values() {
+    local user="$1" pass="$2"
+    mkdir -p "$CONFIG_DIR"
+    [ -z "$user" ] && user="root"
+    cat > "$CONFIG_FILE" <<EOF2
+\$user = '${user}';
+\$pass = '${pass}';
+\$path = '${PANEL_SLUG}';
+EOF2
+    chmod 600 "$CONFIG_FILE" 2>/dev/null || true
+}
+
 find_legacy_panel_dir() {
-    local path candidate
-    if [ -f "$OLD_CONFIG_FILE" ]; then
-        path=$(grep '\$path' "$OLD_CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1)
-        for candidate in "/var/www/html/${path}"; do
+    local path candidate legacy_db_include
+    legacy_db_include="${LEGACY_BOT_SLUG}/baseInfo.php"
+
+    if [ -f "$LEGACY_CONFIG_FILE" ]; then
+        path=$(read_legacy_config_value path)
+        for candidate in "/var/www/html/${path}" "/var/www/html/panel${path}" "/var/www/html/${LEGACY_NAME}panel${path}"; do
             [ -n "$path" ] && [ -f "$candidate/login.php" ] && { echo "$candidate"; return 0; }
         done
     fi
+
+    for candidate in /var/www/html/*; do
+        [ -d "$candidate" ] || continue
+        [ "$candidate" = "$BOT_DIR" ] && continue
+        [ "$candidate" = "$LEGACY_BOT_DIR" ] && continue
+        [ "$candidate" = "$PANEL_DIR" ] && continue
+        [ -f "$candidate/login.php" ] || continue
+        [ -f "$candidate/includ/db.php" ] || continue
+        if grep -Rq "$legacy_db_include" "$candidate/includ" "$candidate"/*.php 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
     find /var/www/html -mindepth 1 -maxdepth 1 -type d \
-        ! -path "$BOT_DIR" ! -path "$OLD_BOT_DIR" ! -path "$PANEL_DIR" \
+        ! -path "$BOT_DIR" ! -path "$LEGACY_BOT_DIR" ! -path "$PANEL_DIR" \
         -exec test -f '{}/login.php' \; -exec test -f '{}/includ/db.php' \; -print 2>/dev/null | head -n1
 }
-
 migrate_legacy_installation() {
-    local changed=0 legacy_panel
+    local changed=0 legacy_panel legacy_user legacy_pass legacy_path dom token url
     mkdir -p "$BACKUP_DIR"
 
-    if [ -d "$OLD_CONFIG_DIR" ] && [ ! -d "$CONFIG_DIR" ]; then
-        backup_path "$OLD_CONFIG_DIR" "legacy-config"
-        mkdir -p "$CONFIG_DIR"
-        if [ -f "$OLD_CONFIG_FILE" ]; then
-            sed -e 's/v2raystore/v2raystore/g' -e "s/\$path = .*/\$path = '${PANEL_SLUG}';/" "$OLD_CONFIG_FILE" > "$CONFIG_FILE"
-        else
-            ensure_config_file
-        fi
-        chmod 600 "$CONFIG_FILE" 2>/dev/null || true
-        rm -rf "$OLD_CONFIG_DIR"
-        changed=1
+    if ! legacy_installation_exists && [ ! -f "$BASE_INFO" ]; then
+        return 1
     fi
-    ensure_config_file
 
-    if [ -d "$OLD_BOT_DIR" ]; then
-        backup_path "$OLD_BOT_DIR" "legacy-bot"
+    if [ -f "$LEGACY_CONFIG_FILE" ]; then
+        legacy_user=$(read_legacy_config_value user)
+        legacy_pass=$(read_legacy_config_value pass)
+        legacy_path=$(read_legacy_config_value path)
+        backup_path "$LEGACY_CONFIG_DIR" "legacy-config"
+        write_config_from_values "$legacy_user" "$legacy_pass"
+        changed=1
+    elif [ ! -f "$CONFIG_FILE" ]; then
+        ensure_config_file
+    fi
+
+    if [ -d "$LEGACY_BOT_DIR" ]; then
+        backup_path "$LEGACY_BOT_DIR" "legacy-bot"
         if [ ! -d "$BOT_DIR" ]; then
-            mv "$OLD_BOT_DIR" "$BOT_DIR"
+            mv "$LEGACY_BOT_DIR" "$BOT_DIR"
         else
-            [ -f "$OLD_BOT_DIR/baseInfo.php" ] && cp -a "$OLD_BOT_DIR/baseInfo.php" "$BASE_INFO"
-            rm -rf "$OLD_BOT_DIR"
+            [ -f "$LEGACY_BOT_DIR/baseInfo.php" ] && cp -a "$LEGACY_BOT_DIR/baseInfo.php" "$BASE_INFO"
+            rm -rf "$LEGACY_BOT_DIR"
         fi
         changed=1
     fi
@@ -277,7 +330,6 @@ migrate_legacy_installation() {
     fi
 
     if [ -f "$BASE_INFO" ]; then
-        local dom
         dom=$(current_domain)
         [ -n "$dom" ] && set_php_string_var botUrl "$(bot_url_for_domain "$dom")"
     fi
@@ -285,7 +337,6 @@ migrate_legacy_installation() {
     update_panel_db_include
     clean_legacy_crons
     if [ -f "$BASE_INFO" ]; then
-        local dom token url
         dom=$(current_domain)
         url=$(php_var botUrl)
         token=$(php_var botToken)
@@ -293,9 +344,15 @@ migrate_legacy_installation() {
         [ -n "$token" ] && [ -n "$url" ] && set_bot_webhook "$token" "$url" || true
     fi
 
-    [ "$changed" -eq 1 ] && success "Legacy installation was migrated to ${BOT_SLUG}/${PANEL_SLUG}."
-}
+    if [ -f "$LEGACY_CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+        rm -rf "$LEGACY_CONFIG_DIR"
+    fi
 
+    if [ "$changed" -eq 1 ]; then
+        success "Legacy installation was migrated safely to ${BOT_SLUG}/${PANEL_SLUG}."
+    fi
+    return 0
+}
 install_or_update_bot_files() {
     install_packages
     mkdir -p /var/www/html
@@ -424,18 +481,37 @@ show_status() {
         echo -e "Panel path: ${GREEN}${PANEL_DIR}${NC}"
         echo -e "Bot URL: ${GREEN}$(php_var botUrl)${NC}"
         echo -e "Database: ${GREEN}$(php_var dbName)${NC}"
+    elif legacy_baseinfo_exists; then
+        echo -e "Legacy bot detected."
+        echo -e "Action: choose ${GREEN}Install / Update${NC} to move it safely to ${BOT_DIR} without deleting data."
+    elif legacy_installation_exists; then
+        echo -e "Legacy files detected."
+        echo -e "Action: choose ${GREEN}Install / Update${NC} to migrate and update safely."
     else
         warning "Bot is not installed yet."
     fi
 }
-
 full_install_or_update() {
     banner
-    migrate_legacy_installation
+    local had_legacy=0
+    legacy_installation_exists && had_legacy=1
+
+    if [ "$had_legacy" -eq 1 ] && [ ! -f "$BASE_INFO" ]; then
+        warning "Legacy installation detected. Migrating it first, keeping database and settings..."
+        migrate_legacy_installation || { error "Legacy migration failed. Nothing was deleted."; return 1; }
+    elif [ "$had_legacy" -eq 1 ]; then
+        warning "Legacy folders/config were detected. They will be migrated before update."
+        migrate_legacy_installation || { error "Legacy migration failed. Nothing was deleted."; return 1; }
+    fi
+
     if [ -f "$BASE_INFO" ]; then
-        confirm "Existing installation found. Update ${BRAND_NAME} now?" || return 0
+        if [ "$had_legacy" -eq 0 ]; then
+            confirm "Existing installation found. Update ${BRAND_NAME} now?" || return 0
+        else
+            warning "Migration finished. Updating files now..."
+        fi
         install_or_update_bot_files || return 1
-        migrate_legacy_installation
+        migrate_legacy_installation || true
         install_or_update_panel || true
         local dom token url
         dom=$(current_domain)
@@ -443,8 +519,8 @@ full_install_or_update() {
         token=$(php_var botToken)
         [ -n "$dom" ] && update_crons_for_domain "$dom"
         [ -n "$token" ] && [ -n "$url" ] && set_bot_webhook "$token" "$url" || true
-        send_admin_message "✅ ${BRAND_NAME} با موفقیت آپدیت شد."
-        success "Update finished."
+        send_admin_message "✅ ${BRAND_NAME} با موفقیت آپدیت و منتقل شد."
+        success "Update/migration finished. Your database and baseInfo.php were preserved."
     else
         confirm "No installation found. Install ${BRAND_NAME} now?" || return 0
         install_or_update_bot_files || return 1
@@ -454,14 +530,12 @@ full_install_or_update() {
         success "Installation finished."
     fi
 }
-
 main_menu() {
     while true; do
         show_status
         section "Menu"
         options=(
             "Install / Update"
-            "Migrate legacy folders"
             "Update panel"
             "Change panel username/password"
             "Repair webhook"
@@ -472,7 +546,6 @@ main_menu() {
         select opt in "${options[@]}"; do
             case "$opt" in
                 "Install / Update") full_install_or_update; pause_screen; break ;;
-                "Migrate legacy folders") migrate_legacy_installation; pause_screen; break ;;
                 "Update panel") install_or_update_panel; pause_screen; break ;;
                 "Change panel username/password") change_panel_password; pause_screen; break ;;
                 "Repair webhook") repair_webhook; pause_screen; break ;;
@@ -483,9 +556,8 @@ main_menu() {
         done
     done
 }
-
 case "${1:-menu}" in
-    menu) migrate_legacy_installation; main_menu ;;
+    menu) main_menu ;;
     install|update) full_install_or_update ;;
     migrate) migrate_legacy_installation ;;
     panel) install_or_update_panel ;;
