@@ -82,9 +82,9 @@ if(mysqli_num_rows($payInfo)==0){
     elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $type = "افزایش حجم اکانت";
 
     $GLOBALS['payParam'] = $payParam;
-    $salesBlockReason = function_exists('wizwiz_salesBlockReasonForPayType') ? wizwiz_salesBlockReasonForPayType($payType) : '';
+    $salesBlockReason = function_exists('v2raystore_salesBlockReasonForPayType') ? v2raystore_salesBlockReasonForPayType($payType) : '';
     if($salesBlockReason !== ''){
-        showForm(strip_tags(function_exists('wizwiz_purchaseBlockedMessage') ? wizwiz_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'));
+        showForm(strip_tags(function_exists('v2raystore_purchaseBlockedMessage') ? v2raystore_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'));
         exit();
     }
     

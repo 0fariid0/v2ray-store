@@ -199,13 +199,13 @@ elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $payDescription = 
 if($gateType == "zarinpal" || $gateType == "nextpay") $payDescription = "خرید اشتراک";
 
 $GLOBALS['payParam'] = $payParam;
-$salesBlockReason = function_exists('wizwiz_salesBlockReasonForPayType') ? wizwiz_salesBlockReasonForPayType($payType) : '';
+$salesBlockReason = function_exists('v2raystore_salesBlockReasonForPayType') ? v2raystore_salesBlockReasonForPayType($payType) : '';
 if($salesBlockReason !== ''){
     $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `id` = ?");
     $stmt->bind_param("i", $payRowId);
     $stmt->execute();
     $stmt->close();
-    showForm(strip_tags(function_exists('wizwiz_purchaseBlockedMessage') ? wizwiz_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'), $payDescription);
+    showForm(strip_tags(function_exists('v2raystore_purchaseBlockedMessage') ? v2raystore_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'), $payDescription);
     exit();
 }
 
@@ -507,7 +507,7 @@ if($payType == "BUY_SUB"){
     
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'wizwizch'],
+            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'v2raystore'],
             ],
         ]]);
 sendMessage("
@@ -597,7 +597,7 @@ elseif($payType == "RENEW_ACCOUNT"){
     
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'wizwizch'],
+            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'v2raystore'],
             ],
         ]]);
     $user_info = Bot('getChat',['chat_id'=>$user_id])->result;
@@ -673,7 +673,7 @@ elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType,$match)){
         showForm("پرداخت شما با موفقیت انجام شد. $volume روز به مدت زمان سرویس شما اضافه شد",$payDescription, true);
         $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'wizwizch'],
+            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'v2raystore'],
             ],
             ]]);
                     $user_info = Bot('getChat',['chat_id'=>$user_id])->result;
@@ -749,7 +749,7 @@ elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType, $match)){
         showForm("پرداخت شما با موفقیت انجام شد. $volume گیگ به حجم سرویس شما اضافه شد",$payDescription, true);
         $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'wizwizch'],
+            ['text'=>"خرید از درگاه $gateType 💞",'callback_data'=>'v2raystore'],
             ],
             ]]);
                     $user_info = Bot('getChat',['chat_id'=>$user_id])->result;
