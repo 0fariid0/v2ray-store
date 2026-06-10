@@ -50,6 +50,15 @@ section() { echo; printf "${YELLOW}▌${NC} ${WHITE}%s${NC}\n" "$1"; line; }
 success() { echo -e "${GREEN}$1${NC}"; }
 warning() { echo -e "${YELLOW}$1${NC}"; }
 error() { echo -e "${RED}$1${NC}"; }
+dot() {
+    case "$1" in
+        ok) printf "${GREEN}●${NC}" ;;
+        warn) printf "${YELLOW}●${NC}" ;;
+        bad) printf "${RED}●${NC}" ;;
+        *) printf "${DIM}●${NC}" ;;
+    esac
+}
+kv() { printf " ${DIM}%-18s${NC}: %b${NC}\n" "$1" "$2"; }
 confirm() { local q="$1" a; read -rp "$q [y/n]: " a; [[ "$a" =~ ^[Yy]$ ]]; }
 pause_screen() { echo; read -rp "Press Enter to continue..." _; }
 
@@ -96,6 +105,18 @@ install_packages() {
     systemctl restart apache2 >/dev/null 2>&1 || true
     ufw allow 80 >/dev/null 2>&1 || true
     ufw allow 443 >/dev/null 2>&1 || true
+}
+
+install_basic_packages() {
+    apt_recover
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y curl wget git unzip ca-certificates python3 openssl lsb-release >/dev/null 2>&1
+}
+
+install_ssl_packages() {
+    apt_recover
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y certbot python3-certbot-apache openssl curl >/dev/null 2>&1
 }
 
 backup_path() {
@@ -146,6 +167,40 @@ current_domain() {
     url=$(php_var botUrl)
     echo "$url" | sed -E 's#https?://([^/]+)/?.*#\1#'
 }
+
+validate_domain() { [[ "$1" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; }
+
+json_value() {
+    local json="$1" key="$2"
+    php -r '$j=json_decode(stream_get_contents(STDIN),true); $k=$argv[1]; $v=$j; foreach(explode(".",$k) as $p){ if(!is_array($v) || !array_key_exists($p,$v)){ exit; } $v=$v[$p]; } if(is_bool($v)) echo $v?"true":"false"; elseif(is_array($v)) echo json_encode($v, JSON_UNESCAPED_UNICODE); else echo $v;' "$key" <<< "$json" 2>/dev/null || true
+}
+
+get_server_ip() {
+    local ip
+    ip=$(curl -fsSL --max-time 4 https://api.ipify.org 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$(curl -fsSL --max-time 4 https://ifconfig.me 2>/dev/null || true)
+    [ -z "$ip" ] && ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    echo "${ip:-n/a}"
+}
+
+domain_points_here() {
+    local dom="$1" server_ip resolved
+    server_ip=$(get_server_ip)
+    resolved=$(getent ahostsv4 "$dom" 2>/dev/null | awk '{print $1; exit}')
+    [ -z "$resolved" ] && return 2
+    [ "$resolved" = "$server_ip" ] && return 0
+    return 1
+}
+
+ssl_days_left() {
+    local dom="$1" cert="/etc/letsencrypt/live/${dom}/cert.pem" expiry
+    [ -f "$cert" ] || return 1
+    expiry=$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)
+    [ -z "$expiry" ] && return 1
+    echo $(( ( $(date -d "$expiry" +%s 2>/dev/null || echo 0) - $(date +%s) ) / 86400 ))
+}
+
+cron_count() { crontab -l 2>/dev/null | grep -c "${BOT_SLUG}\|${PANEL_SLUG}\|v2raystore" 2>/dev/null || echo 0; }
 
 bot_url_for_domain() { echo "https://${1}/${BOT_SLUG}/"; }
 
@@ -266,6 +321,249 @@ send_admin_message() {
     admin=$(php_var admin)
     [ -z "$token" ] || [ -z "$admin" ] && return 0
     curl -fsS -X POST "https://api.telegram.org/bot${token}/sendMessage" -d "chat_id=${admin}" --data-urlencode "text=${text}" -d "parse_mode=HTML" >/dev/null 2>&1 || true
+}
+
+telegram_send_message() {
+    local token="$1" chat_id="$2" text="$3"
+    [ -z "$token" ] || [ -z "$chat_id" ] && return 1
+    curl -fsS -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+        -d "chat_id=${chat_id}" \
+        --data-urlencode "text=${text}" \
+        -d "parse_mode=HTML" >/dev/null 2>&1
+}
+
+need_installation() {
+    if [ ! -f "$BASE_INFO" ]; then
+        error "${BRAND_NAME} is not installed yet. Run Install / Update first."
+        return 1
+    fi
+    return 0
+}
+
+backup_base_info() { backup_path "$BASE_INFO" "baseInfo.php"; }
+
+backup_full_bot() { backup_path "$BOT_DIR" "bot-full"; }
+
+clean_bot_after_update() {
+    rm -rf "$BOT_DIR/webpanel" 2>/dev/null || true
+    rm -f "$BOT_DIR/tempCookie.txt" "$BOT_DIR/settings/message${LEGACY_NAME}.json" "$BOT_DIR/${LEGACY_NAME}.sh" "$BOT_DIR/${LEGACY_BACKUP_FILE}" 2>/dev/null || true
+}
+
+validate_token() {
+    local token="$1"
+    [[ "$token" =~ ^[0-9]{8,12}:[A-Za-z0-9_-]{30,}$ ]] || return 1
+    curl -fsS --connect-timeout 15 "https://api.telegram.org/bot${token}/getMe" 2>/dev/null | grep -q '"ok":true'
+}
+
+show_webhook_raw() {
+    need_installation || return 1
+    local token
+    token=$(php_var botToken)
+    [ -z "$token" ] && { error "Bot token is empty."; return 1; }
+    line
+    curl -s "https://api.telegram.org/bot${token}/getWebhookInfo"
+    echo
+    line
+}
+
+run_diagnostics() {
+    banner
+    section "Diagnostics"
+    local ok=1 dom token bot_url free_mb apache_s mysql_s
+    [ -f "$BASE_INFO" ] && kv "baseInfo.php" "$(dot ok) ${GREEN}found${NC}" || { kv "baseInfo.php" "$(dot bad) ${RED}missing${NC}"; ok=0; }
+    command -v php >/dev/null 2>&1 && kv "PHP binary" "$(dot ok) ${GREEN}found${NC}" || { kv "PHP binary" "$(dot bad) ${RED}missing${NC}"; ok=0; }
+    command -v mysql >/dev/null 2>&1 && kv "MySQL client" "$(dot ok) ${GREEN}found${NC}" || kv "MySQL client" "$(dot warn) ${YELLOW}missing${NC}"
+    apache_s=$(systemctl is-active apache2 2>/dev/null || echo inactive)
+    mysql_s=$(systemctl is-active mysql 2>/dev/null || systemctl is-active mariadb 2>/dev/null || echo inactive)
+    [ "$apache_s" = active ] && kv "Apache" "$(dot ok) ${GREEN}active${NC}" || kv "Apache" "$(dot bad) ${RED}${apache_s}${NC}"
+    [ "$mysql_s" = active ] && kv "MySQL/MariaDB" "$(dot ok) ${GREEN}active${NC}" || kv "MySQL/MariaDB" "$(dot bad) ${RED}${mysql_s}${NC}"
+    curl -fsSL --max-time 8 https://api.telegram.org >/dev/null 2>&1 && kv "Telegram API" "$(dot ok) ${GREEN}reachable${NC}" || { kv "Telegram API" "$(dot bad) ${RED}unreachable${NC}"; ok=0; }
+    curl -fsSL --max-time 8 https://github.com >/dev/null 2>&1 && kv "GitHub" "$(dot ok) ${GREEN}reachable${NC}" || kv "GitHub" "$(dot warn) ${YELLOW}unreachable${NC}"
+    free_mb=$(df -Pm / 2>/dev/null | awk 'NR==2{print $4}')
+    [ "${free_mb:-0}" -ge 1024 ] 2>/dev/null && kv "Disk free" "$(dot ok) ${GREEN}${free_mb} MB${NC}" || kv "Disk free" "$(dot warn) ${YELLOW}${free_mb:-0} MB${NC}"
+    if [ -f "$BASE_INFO" ]; then
+        token=$(php_var botToken)
+        bot_url=$(php_var botUrl)
+        dom=$(current_domain)
+        [ -n "$token" ] && validate_token "$token" && kv "Bot token" "$(dot ok) ${GREEN}valid${NC}" || kv "Bot token" "$(dot bad) ${RED}invalid/unreachable${NC}"
+        [ -n "$dom" ] && validate_domain "$dom" && kv "Domain" "$(dot ok) ${GREEN}${dom}${NC}" || kv "Domain" "$(dot warn) ${YELLOW}${dom:-not detected}${NC}"
+        if [ -n "$dom" ]; then
+            domain_points_here "$dom"
+            case $? in
+                0) kv "Domain DNS" "$(dot ok) ${GREEN}points to this server${NC}" ;;
+                1) kv "Domain DNS" "$(dot warn) ${YELLOW}does not point to this server ($(get_server_ip))${NC}" ;;
+                2) kv "Domain DNS" "$(dot bad) ${RED}cannot resolve${NC}" ;;
+            esac
+        fi
+        [ -n "$bot_url" ] && kv "Webhook target" "${DIM}${bot_url%/}/bot.php${NC}"
+    fi
+    echo
+    [ "$ok" -eq 1 ] && success "Diagnostics finished." || warning "Diagnostics found issues. Use Quick repair from the menu."
+}
+
+obtain_ssl_for_domain() {
+    local domain="$1"
+    [ -z "$domain" ] && return 1
+    install_ssl_packages
+    ufw allow 80 >/dev/null 2>&1 || true
+    ufw allow 443 >/dev/null 2>&1 || true
+    systemctl enable certbot.timer >/dev/null 2>&1 || true
+    run_step "Issuing/repairing SSL certificate" "certbot --apache --non-interactive --agree-tos --register-unsafely-without-email -d '$domain'" || return 1
+    systemctl reload apache2 >/dev/null 2>&1 || true
+}
+
+change_bot_domain() {
+    need_installation || return 1
+    local old_domain current_url new_domain token admin bot_url
+    current_url=$(php_var botUrl)
+    old_domain=$(current_domain)
+    echo -e "Current bot URL: ${YELLOW}${current_url}${NC}"
+    read -rp "Enter new domain (example.com): " new_domain
+    new_domain=$(normalize_domain "$new_domain")
+    validate_domain "$new_domain" || { error "Invalid domain format."; return 1; }
+    domain_points_here "$new_domain"
+    case $? in
+        1) warning "This domain does not point to this server IP ($(get_server_ip))." ;;
+        2) warning "This domain could not be resolved yet." ;;
+    esac
+    confirm "Continue, repair SSL, update crons and reset webhook?" || return 0
+    obtain_ssl_for_domain "$new_domain" || warning "SSL setup failed or was skipped. Continuing with URL update."
+    backup_base_info
+    bot_url=$(bot_url_for_domain "$new_domain")
+    set_php_string_var botUrl "$bot_url"
+    update_crons_for_domain "$new_domain"
+    token=$(php_var botToken)
+    admin=$(php_var admin)
+    set_bot_webhook "$token" "$bot_url" || true
+    telegram_send_message "$token" "$admin" "✅ دامنه ${BRAND_NAME} تغییر کرد.\n\nقبلی: ${old_domain}\nجدید: ${new_domain}" || true
+    success "Domain changed successfully: ${bot_url}"
+}
+
+change_bot_token() {
+    need_installation || return 1
+    local old_token new_token bot_url admin username
+    old_token=$(php_var botToken)
+    bot_url=$(php_var botUrl)
+    admin=$(php_var admin)
+    read -rp "Enter new bot token: " new_token
+    validate_token "$new_token" || { error "The token is invalid or Telegram API is unreachable."; return 1; }
+    username=$(curl -fsS "https://api.telegram.org/bot${new_token}/getMe" 2>/dev/null | sed -n 's/.*"username":"\([^"]*\)".*/\1/p')
+    [ -n "$username" ] && echo -e "New bot username: ${YELLOW}@${username}${NC}"
+    confirm "Change token, delete old webhook and set new webhook?" || return 0
+    backup_base_info
+    [ -n "$old_token" ] && curl -fsS "https://api.telegram.org/bot${old_token}/deleteWebhook" >/dev/null 2>&1 || true
+    set_php_string_var botToken "$new_token"
+    set_bot_webhook "$new_token" "$bot_url" || return 1
+    telegram_send_message "$new_token" "$admin" "✅ توکن ربات با موفقیت تغییر کرد." || true
+    success "Bot token changed successfully."
+}
+
+enable_auto_ssl_renew() {
+    install_ssl_packages
+    systemctl enable certbot.timer >/dev/null 2>&1 || true
+    systemctl start certbot.timer >/dev/null 2>&1 || true
+    (crontab -l 2>/dev/null | grep -v "certbot renew"; echo "0 4 * * * certbot renew --quiet --deploy-hook 'systemctl reload apache2' >/dev/null 2>&1") | crontab -
+    success "Automatic SSL renewal enabled."
+}
+
+renew_ssl_now() { install_ssl_packages; certbot renew --deploy-hook "systemctl reload apache2"; }
+dry_run_ssl_renew() { install_ssl_packages; certbot renew --dry-run; }
+
+ssl_menu() {
+    while true; do
+        banner
+        section "SSL Tools"
+        select ssl_opt in "Enable automatic SSL renewal" "Renew SSL now" "Test renewal dry-run" "Issue/repair cert for current domain" "Back"; do
+            case "$ssl_opt" in
+                "Enable automatic SSL renewal") enable_auto_ssl_renew; pause_screen; break ;;
+                "Renew SSL now") renew_ssl_now; pause_screen; break ;;
+                "Test renewal dry-run") dry_run_ssl_renew; pause_screen; break ;;
+                "Issue/repair cert for current domain") local d; d=$(current_domain); [ -n "$d" ] && obtain_ssl_for_domain "$d" || error "Domain not found"; pause_screen; break ;;
+                "Back") return ;;
+                *) error "Invalid option." ;;
+            esac
+        done
+    done
+}
+
+repair_permissions() {
+    [ -d "$BOT_DIR" ] && chown -R www-data:www-data "$BOT_DIR" && chmod -R 755 "$BOT_DIR" 2>/dev/null || true
+    [ -d "$PANEL_DIR" ] && chown -R www-data:www-data "$PANEL_DIR" && chmod -R 755 "$PANEL_DIR" 2>/dev/null || true
+    success "Permissions repaired."
+}
+
+repair_services() {
+    apt_recover
+    systemctl restart apache2 >/dev/null 2>&1 || true
+    systemctl restart mysql >/dev/null 2>&1 || systemctl restart mariadb >/dev/null 2>&1 || true
+    success "Apache/MySQL restart attempted."
+}
+
+repair_crons() {
+    need_installation || return 1
+    local dom
+    dom=$(current_domain)
+    [ -z "$dom" ] && { error "Domain not detected."; return 1; }
+    update_crons_for_domain "$dom"
+    success "Cron jobs repaired."
+}
+
+repair_dns() {
+    cp -a /etc/resolv.conf /etc/resolv.conf.v2raystore.bak 2>/dev/null || true
+    cat > /etc/resolv.conf <<EOF
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+nameserver 9.9.9.9
+EOF
+    success "DNS resolvers reset."
+}
+
+quick_repair_menu() {
+    while true; do
+        banner
+        section "Quick Repair"
+        select opt in "Repair webhook" "Repair permissions" "Repair cron jobs" "Restart Apache/MySQL" "Repair apt/dpkg locks" "Reset DNS resolvers" "Enable SSL auto-renew" "Back"; do
+            case "$opt" in
+                "Repair webhook") repair_webhook; pause_screen; break ;;
+                "Repair permissions") repair_permissions; pause_screen; break ;;
+                "Repair cron jobs") repair_crons; pause_screen; break ;;
+                "Restart Apache/MySQL") repair_services; pause_screen; break ;;
+                "Repair apt/dpkg locks") apt_recover; success "apt/dpkg recovery finished."; pause_screen; break ;;
+                "Reset DNS resolvers") repair_dns; pause_screen; break ;;
+                "Enable SSL auto-renew") enable_auto_ssl_renew; pause_screen; break ;;
+                "Back") return ;;
+                *) error "Invalid option." ;;
+            esac
+        done
+    done
+}
+
+run_backup_setup() {
+    install_basic_packages
+    mkdir -p /root
+    (crontab -l 2>/dev/null | grep -v "dbbackupv2raystore.sh"; echo "0 * * * * /root/dbbackupv2raystore.sh >/dev/null 2>&1") | sort -u | crontab -
+    if [ -f "$BOT_DIR/dbbackupv2raystore.sh" ]; then
+        cp -a "$BOT_DIR/dbbackupv2raystore.sh" /root/dbbackupv2raystore.sh
+    else
+        wget -q -O /root/dbbackupv2raystore.sh "https://raw.githubusercontent.com/0fariid0/v2ray-store/main/dbbackupv2raystore.sh" || true
+    fi
+    chmod +x /root/dbbackupv2raystore.sh 2>/dev/null || true
+    /root/dbbackupv2raystore.sh || true
+    success "Database backup cron installed."
+}
+
+run_delete() {
+    confirm "Delete ${BRAND_NAME} files, panel, crons and database users?" || { warning "Delete canceled."; return 0; }
+    local root_user root_pass dbuser dbname
+    root_user=$(root_db_user); root_pass=$(root_db_pass); dbuser=$(php_var dbUserName); dbname=$(php_var dbName)
+    backup_path "$BOT_DIR" "delete-bot"
+    backup_path "$PANEL_DIR" "delete-panel"
+    if [ -n "$root_user" ] && [ -n "$root_pass" ] && [ -n "$dbname" ]; then
+        mysql -u "$root_user" -p"$root_pass" -e "DROP DATABASE IF EXISTS \`${dbname}\`; DROP USER IF EXISTS '${dbuser}'@'localhost'; DROP USER IF EXISTS '${dbuser}'@'%'; FLUSH PRIVILEGES;" 2>/dev/null || true
+    fi
+    rm -rf "$BOT_DIR" "$PANEL_DIR" "$CONFIG_DIR" 2>/dev/null || true
+    (crontab -l 2>/dev/null | grep -v "$BOT_SLUG" | grep -v "$PANEL_SLUG" | grep -v "v2raystore") | crontab - 2>/dev/null || true
+    success "Removed successfully. Backups are in ${BACKUP_DIR}."
 }
 
 legacy_installation_exists() {
@@ -402,6 +700,7 @@ install_or_update_bot_files() {
     cp -a "$tmp_dir/." "$BOT_DIR/"
     [ -f /root/baseInfo.v2raystore.tmp ] && mv /root/baseInfo.v2raystore.tmp "$BASE_INFO"
     rm -rf "$tmp_dir"
+    clean_bot_after_update
     chown -R www-data:www-data "$BOT_DIR/" 2>/dev/null || true
     chmod -R 755 "$BOT_DIR/" 2>/dev/null || true
 }
@@ -642,22 +941,72 @@ install_local_command() {
 
 show_status() {
     banner
-    section "Status"
-    if [ -f "$BASE_INFO" ]; then
-        echo -e "Bot path: ${GREEN}${BOT_DIR}${NC}"
-        echo -e "Panel path: ${GREEN}${PANEL_DIR}${NC}"
-        echo -e "Bot URL: ${GREEN}$(php_var botUrl)${NC}"
-        echo -e "Database: ${GREEN}$(php_var dbName)${NC}"
-    elif legacy_baseinfo_exists; then
-        echo -e "Legacy bot detected."
-        echo -e "Action: choose ${GREEN}Install / Update${NC} to move it safely to ${BOT_DIR} without deleting data."
-    elif legacy_installation_exists; then
-        echo -e "Legacy files detected."
-        echo -e "Action: choose ${GREEN}Install / Update${NC} to migrate and update safely."
+    local installed token bot_url dom phpv apache_s mysql_s crons days version
+    installed="no"
+    [ -f "$BASE_INFO" ] && installed="yes"
+
+    section "Bot Status"
+    if [ "$installed" = "yes" ]; then
+        token=$(php_var botToken)
+        bot_url=$(php_var botUrl)
+        dom=$(current_domain)
+        version=""
+        [ -f "$BOT_DIR/version" ] && version=$(tr -d ' \t\r\n' < "$BOT_DIR/version")
+        kv "State" "$(dot ok) ${GREEN}installed${NC}"
+        kv "Bot path" "${DIM}${BOT_DIR}${NC}"
+        kv "Panel path" "${DIM}${PANEL_DIR}${NC}"
+        kv "Bot URL" "${DIM}${bot_url:-not set}${NC}"
+        kv "Database" "${DIM}$(php_var dbName)${NC}"
+        [ -n "$version" ] && kv "Bot version" "${DIM}${version}${NC}"
+    elif legacy_baseinfo_exists || legacy_installation_exists; then
+        kv "State" "$(dot warn) ${YELLOW}legacy install detected${NC}"
+        kv "Action" "Choose ${GREEN}Install / Update${NC} to migrate without deleting data."
     else
-        warning "Bot is not installed yet."
+        kv "State" "$(dot bad) ${RED}not installed${NC}"
+        kv "Bot path" "${DIM}${BOT_DIR}${NC}"
+    fi
+
+    section "Services"
+    phpv=$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo n/a)
+    apache_s=$(systemctl is-active apache2 2>/dev/null || echo inactive)
+    mysql_s=$(systemctl is-active mysql 2>/dev/null || systemctl is-active mariadb 2>/dev/null || echo inactive)
+    kv "PHP" "${DIM}${phpv}${NC}"
+    [ "$apache_s" = active ] && kv "Apache" "$(dot ok) ${GREEN}active${NC}" || kv "Apache" "$(dot bad) ${RED}${apache_s}${NC}"
+    [ "$mysql_s" = active ] && kv "MySQL/MariaDB" "$(dot ok) ${GREEN}active${NC}" || kv "MySQL/MariaDB" "$(dot bad) ${RED}${mysql_s}${NC}"
+
+    section "SSL / Cron / Webhook"
+    if [ "$installed" = "yes" ] && [ -n "$dom" ]; then
+        days=$(ssl_days_left "$dom" 2>/dev/null || true)
+        if [ -n "$days" ]; then
+            if [ "$days" -gt 14 ]; then kv "SSL" "$(dot ok) ${GREEN}${days} days left${NC}"
+            elif [ "$days" -gt 0 ]; then kv "SSL" "$(dot warn) ${YELLOW}${days} days left${NC}"
+            else kv "SSL" "$(dot bad) ${RED}expired${NC}"; fi
+        else
+            kv "SSL" "$(dot warn) ${YELLOW}certificate not found${NC}"
+        fi
+        crons=$(cron_count)
+        [ "${crons:-0}" -gt 0 ] 2>/dev/null && kv "Cron jobs" "$(dot ok) ${GREEN}${crons} found${NC}" || kv "Cron jobs" "$(dot warn) ${YELLOW}not found${NC}"
+        if [ -n "$token" ]; then
+            local info ok url pending err
+            info=$(curl -fsSL --max-time 8 "https://api.telegram.org/bot${token}/getWebhookInfo" 2>/dev/null || true)
+            ok=$(json_value "$info" "ok")
+            url=$(json_value "$info" "result.url")
+            pending=$(json_value "$info" "result.pending_update_count")
+            err=$(json_value "$info" "result.last_error_message")
+            if [ "$ok" = "true" ] && [ -n "$url" ]; then
+                kv "Webhook" "$(dot ok) ${GREEN}set${NC} ${DIM}(${pending:-0} pending)${NC}"
+                [ -n "$err" ] && kv "Webhook error" "$(dot bad) ${RED}${err}${NC}"
+            else
+                kv "Webhook" "$(dot bad) ${RED}not set / unreachable${NC}"
+            fi
+        fi
+    else
+        kv "SSL" "$(dot warn) ${DIM}n/a${NC}"
+        kv "Cron jobs" "$(dot warn) ${DIM}n/a${NC}"
+        kv "Webhook" "$(dot warn) ${DIM}n/a${NC}"
     fi
 }
+
 full_install_or_update() {
     banner
     local had_legacy=0
@@ -678,6 +1027,7 @@ full_install_or_update() {
             warning "Migration finished. Updating files now..."
         fi
         install_or_update_bot_files || return 1
+        curl -fsS "$(php_var botUrl)install/update.php" >/dev/null 2>&1 || php "${BOT_DIR}/install/update.php" >/dev/null 2>&1 || true
         migrate_legacy_installation || true
         local panel_failed=0
         install_or_update_panel || panel_failed=1
@@ -698,6 +1048,7 @@ full_install_or_update() {
         confirm "No installation found. Install ${BRAND_NAME} now?" || return 0
         install_or_update_bot_files || return 1
         create_database_and_baseinfo || return 1
+        curl -fsS "$(php_var botUrl)install/update.php" >/dev/null 2>&1 || php "${BOT_DIR}/install/update.php" >/dev/null 2>&1 || true
         install_or_update_panel || return 1
         send_admin_message "✅ ${BRAND_NAME} با موفقیت نصب شد."
         success "Installation finished."
@@ -710,9 +1061,16 @@ main_menu() {
         options=(
             "Install / Update"
             "Update panel"
+            "Backup"
+            "Status / Diagnostics"
+            "Quick repair"
+            "Change bot token"
+            "Change bot domain"
             "Change panel username/password"
             "Repair webhook"
+            "SSL tools"
             "Install local command"
+            "Delete"
             "Exit"
         )
         PS3="Please select action: "
@@ -720,26 +1078,42 @@ main_menu() {
             case "$opt" in
                 "Install / Update") full_install_or_update; pause_screen; break ;;
                 "Update panel") install_or_update_panel; pause_screen; break ;;
+                "Backup") run_backup_setup; pause_screen; break ;;
+                "Status / Diagnostics") run_diagnostics; pause_screen; break ;;
+                "Quick repair") quick_repair_menu; break ;;
+                "Change bot token") change_bot_token; pause_screen; break ;;
+                "Change bot domain") change_bot_domain; pause_screen; break ;;
                 "Change panel username/password") change_panel_password; pause_screen; break ;;
                 "Repair webhook") repair_webhook; pause_screen; break ;;
+                "SSL tools") ssl_menu; break ;;
                 "Install local command") install_local_command; pause_screen; break ;;
+                "Delete") run_delete; pause_screen; break ;;
                 "Exit") exit 0 ;;
                 *) error "Invalid option." ;;
             esac
         done
     done
 }
+
 case "${1:-menu}" in
     menu) main_menu ;;
     install|update) full_install_or_update ;;
     migrate) migrate_legacy_installation ;;
     panel) install_or_update_panel ;;
+    backup) run_backup_setup ;;
+    diagnostics|diag) run_diagnostics ;;
+    repair) quick_repair_menu ;;
+    token) change_bot_token ;;
+    domain) change_bot_domain ;;
     password|panel-password) change_panel_password ;;
     webhook) repair_webhook ;;
+    ssl) ssl_menu ;;
+    delete|remove) run_delete ;;
     status) show_status ;;
     help|-h|--help)
         echo "${BRAND_NAME}"
         echo "Install/update command: bash <(curl -s ${RAW_INSTALL_URL})"
+        echo "Commands: status, diagnostics, repair, panel, backup, token, domain, webhook, ssl, password, delete"
         ;;
     *) main_menu ;;
 esac
