@@ -12,7 +12,8 @@ PANEL_DIR="/var/www/html/${PANEL_SLUG}"
 BASE_INFO="${BOT_DIR}/baseInfo.php"
 REPO_URL="https://github.com/0fariid0/v2ray-store.git"
 RAW_INSTALL_URL="https://raw.githubusercontent.com/0fariid0/v2ray-store/main/v2raystore.sh"
-PANEL_ZIP_URL="https://github.com/0fariid0/v2ray-store/releases/latest/download/v2raystore-panel.zip"
+PANEL_ZIP_URL="https://raw.githubusercontent.com/0fariid0/v2ray-store/main/v2raystore-panel.zip"
+PANEL_RELEASE_ZIP_URL="https://github.com/0fariid0/v2ray-store/releases/latest/download/v2raystore-panel.zip"
 BACKUP_DIR="/root/v2raystore_update_backups"
 CONFIG_DIR="/root/confv2raystore"
 CONFIG_FILE="${CONFIG_DIR}/dbrootv2raystore.txt"
@@ -88,7 +89,7 @@ apt_recover() {
 install_packages() {
     apt_recover
     apt-get update -y >/dev/null 2>&1 || true
-    apt-get install -y apache2 mysql-server php libapache2-mod-php php-mbstring php-zip php-gd php-json php-curl php-soap php-ssh2 git wget curl unzip openssl ca-certificates certbot python3-certbot-apache >/dev/null 2>&1
+    apt-get install -y apache2 mysql-server php libapache2-mod-php php-mysql php-mbstring php-zip php-gd php-json php-curl php-soap php-ssh2 git wget curl unzip openssl ca-certificates certbot python3-certbot-apache >/dev/null 2>&1
     systemctl enable mysql.service >/dev/null 2>&1 || systemctl enable mariadb >/dev/null 2>&1 || true
     systemctl start mysql.service >/dev/null 2>&1 || systemctl start mariadb >/dev/null 2>&1 || true
     systemctl enable apache2 >/dev/null 2>&1 || true
@@ -166,16 +167,47 @@ EOF2
 root_db_user() { grep '\$user' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
 root_db_pass() { grep '\$pass' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
 
+
+fix_panel_entrypoint() {
+    [ -d "$PANEL_DIR" ] || return 0
+    rm -f "$PANEL_DIR/index.html" 2>/dev/null || true
+    if [ -f "$PANEL_DIR/.htaccess" ]; then
+        grep -q '^DirectoryIndex index.php' "$PANEL_DIR/.htaccess" 2>/dev/null || sed -i '1iDirectoryIndex index.php' "$PANEL_DIR/.htaccess"
+    else
+        echo 'DirectoryIndex index.php' > "$PANEL_DIR/.htaccess"
+    fi
+}
+
 update_panel_db_include() {
     [ -f "$PANEL_DIR/includ/db.php" ] || return 0
     cat > "$PANEL_DIR/includ/db.php" <<'PHP'
 <?php
-include '../v2ray-store/baseInfo.php';
+$baseInfoCandidates = array(
+    dirname(__DIR__, 2) . '/v2ray-store/baseInfo.php',
+    '/var/www/html/v2ray-store/baseInfo.php',
+    (isset($_SERVER['DOCUMENT_ROOT']) ? rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/v2ray-store/baseInfo.php' : ''),
+);
+
+$baseInfoLoaded = false;
+foreach ($baseInfoCandidates as $baseInfoFile) {
+    if ($baseInfoFile !== '' && is_file($baseInfoFile)) {
+        include $baseInfoFile;
+        $baseInfoLoaded = true;
+        break;
+    }
+}
+
+if (!$baseInfoLoaded) {
+    http_response_code(500);
+    die('V2Ray Store panel error: baseInfo.php was not found. Please run Install / Update again.');
+}
+
 $servername = "localhost";
 $conn = new mysqli($servername, $dbUserName, $dbPassword, $dbName);
 $conn->set_charset("utf8mb4");
 if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+    http_response_code(500);
+    die("V2Ray Store panel database connection failed: " . $conn->connect_error);
 }
 PHP
 }
@@ -335,6 +367,7 @@ migrate_legacy_installation() {
     fi
 
     update_panel_db_include
+    fix_panel_entrypoint
     clean_legacy_crons
     if [ -f "$BASE_INFO" ]; then
         dom=$(current_domain)
@@ -416,15 +449,71 @@ EOF2
     success "Database and baseInfo.php were created."
 }
 
+find_panel_package_dir() {
+    local root="$1" candidate
+    for candidate in \
+        "$root" \
+        "$root/${PANEL_SLUG}" \
+        "$root/panel" \
+        "$root/v2raystore-panel" \
+        "$root/v2raystore_panel" \
+        "$root"/*; do
+        [ -d "$candidate" ] || continue
+        if [ -f "$candidate/login.php" ] && [ -f "$candidate/includ/db.php" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+download_panel_package() {
+    local output="$1" url
+    for url in "$PANEL_ZIP_URL" "$PANEL_RELEASE_ZIP_URL"; do
+        [ -n "$url" ] || continue
+        rm -f "$output"
+        : > "$LOG_FILE"
+        echo -ne " ${YELLOW}⏳${NC} Downloading panel package ..."
+        if wget -q -O "$output" "$url" >> "$LOG_FILE" 2>&1 && unzip -tq "$output" >/dev/null 2>> "$LOG_FILE"; then
+            echo -e "\r ${GREEN}✔${NC} Downloading panel package"
+            return 0
+        fi
+        echo -e "\r ${RED}✘${NC} Downloading panel package from current source"
+        tail -n 10 "$LOG_FILE" 2>/dev/null
+    done
+    rm -f "$output"
+    return 1
+}
+
 install_or_update_panel() {
     install_packages
+    local tmp_zip tmp_extract panel_source
+    tmp_zip="/tmp/v2raystore-panel.$$.zip"
+    tmp_extract="/tmp/v2raystore-panel.$$"
+    rm -rf "$tmp_zip" "$tmp_extract"
+
+    download_panel_package "$tmp_zip" || {
+        error "Panel package was not found. Current panel was kept unchanged."
+        warning "Put v2raystore-panel.zip in the repository root or upload it as a release asset with the same name."
+        return 1
+    }
+
+    mkdir -p "$tmp_extract"
+    run_step "Extracting panel" "unzip -oq '$tmp_zip' -d '$tmp_extract'" || { rm -rf "$tmp_zip" "$tmp_extract"; return 1; }
+    panel_source=$(find_panel_package_dir "$tmp_extract") || {
+        rm -rf "$tmp_zip" "$tmp_extract"
+        error "Downloaded panel package is not valid. Current panel was kept unchanged."
+        return 1
+    }
+
     backup_path "$PANEL_DIR" "panel"
     rm -rf "$PANEL_DIR"
     mkdir -p "$PANEL_DIR"
-    run_step "Downloading panel" "wget -O /tmp/v2raystore-panel.zip '$PANEL_ZIP_URL'" || return 1
-    unzip -oq /tmp/v2raystore-panel.zip -d "$PANEL_DIR"
-    rm -f /tmp/v2raystore-panel.zip
+    cp -a "$panel_source/." "$PANEL_DIR/" || { rm -rf "$tmp_zip" "$tmp_extract"; return 1; }
+    rm -rf "$tmp_zip" "$tmp_extract"
+
     update_panel_db_include
+    fix_panel_entrypoint
     chown -R www-data:www-data "$PANEL_DIR/" 2>/dev/null || true
     chmod -R 755 "$PANEL_DIR/" 2>/dev/null || true
     if [ -f "$CONFIG_FILE" ]; then
@@ -446,18 +535,96 @@ PY
 
 change_panel_password() {
     [ -f "$BASE_INFO" ] || { error "baseInfo.php not found."; return 1; }
-    local dbuser dbpass dbname new_user new_pass
+    local dbuser dbpass dbname new_user new_pass root_user root_pass legacy_root_user legacy_root_pass
+    local user_b64 pass_b64 sql_file err_file ok
+
     dbuser=$(php_var dbUserName)
     dbpass=$(php_var dbPassword)
     dbname=$(php_var dbName)
+    [ -z "$dbname" ] && { error "Database name was not found in baseInfo.php."; return 1; }
+
     read -rp "New panel username [admin]: " new_user
     new_user="${new_user:-admin}"
     read -rsp "New panel password: " new_pass
     echo
     [ -z "$new_pass" ] && { error "Password cannot be empty."; return 1; }
-    mysql -u "$dbuser" -p"$dbpass" "$dbname" -e "UPDATE admins SET username='${new_user}', password='${new_pass}' WHERE id='1'; INSERT INTO admins (id, username, password, chat_id, backupchannel, lang) SELECT 1, '${new_user}', '${new_pass}', '', '', 'fa' WHERE NOT EXISTS (SELECT 1 FROM admins WHERE id=1);" >/dev/null 2>&1 \
-        && success "Panel username/password changed." \
-        || error "Could not change panel password. Check database credentials."
+
+    user_b64=$(printf '%s' "$new_user" | base64 -w0 2>/dev/null || printf '%s' "$new_user" | base64 | tr -d '\n')
+    pass_b64=$(printf '%s' "$new_pass" | base64 -w0 2>/dev/null || printf '%s' "$new_pass" | base64 | tr -d '\n')
+    sql_file=$(mktemp)
+    err_file=$(mktemp)
+
+    cat > "$sql_file" <<SQL
+SET @new_user = CONVERT(FROM_BASE64('${user_b64}') USING utf8mb4);
+SET @new_pass = CONVERT(FROM_BASE64('${pass_b64}') USING utf8mb4);
+
+CREATE TABLE IF NOT EXISTS `admins` (
+  `id` int(10) NOT NULL AUTO_INCREMENT,
+  `username` varchar(200) NOT NULL DEFAULT '',
+  `password` varchar(200) NOT NULL DEFAULT '',
+  `backupchannel` varchar(200) CHARACTER SET utf8 NOT NULL DEFAULT '',
+  `lang` varchar(10) CHARACTER SET utf8 NOT NULL DEFAULT 'fa',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
+
+SET @missing_id = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'id');
+SET @sql = IF(@missing_id, 'ALTER TABLE `admins` ADD COLUMN `id` int(10) NOT NULL DEFAULT 1 FIRST', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @missing_username = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'username');
+SET @sql = IF(@missing_username, CONCAT('ALTER TABLE `admins` ADD COLUMN `username` varchar(200) NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @missing_password = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'password');
+SET @sql = IF(@missing_password, CONCAT('ALTER TABLE `admins` ADD COLUMN `password` varchar(200) NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @missing_backupchannel = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'backupchannel');
+SET @sql = IF(@missing_backupchannel, CONCAT('ALTER TABLE `admins` ADD COLUMN `backupchannel` varchar(200) CHARACTER SET utf8 NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @missing_lang = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'lang');
+SET @sql = IF(@missing_lang, CONCAT('ALTER TABLE `admins` ADD COLUMN `lang` varchar(10) CHARACTER SET utf8 NOT NULL DEFAULT ', CHAR(39), 'fa', CHAR(39)), 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+UPDATE `admins` SET `username` = @new_user, `password` = @new_pass WHERE `id` = 1;
+INSERT INTO `admins` (`id`, `username`, `password`, `backupchannel`, `lang`)
+SELECT 1, @new_user, @new_pass, '', 'fa'
+WHERE NOT EXISTS (SELECT 1 FROM `admins` WHERE `id` = 1);
+SQL
+
+    root_user=$(root_db_user)
+    root_pass=$(root_db_pass)
+    legacy_root_user=$(read_legacy_config_value user)
+    legacy_root_pass=$(read_legacy_config_value pass)
+    ok=0
+
+    run_mysql_update() {
+        local label="$1" user="$2" pass="$3"
+        [ -z "$user" ] && return 1
+        if [ -n "$pass" ]; then
+            mysql --default-character-set=utf8mb4 -u "$user" -p"$pass" "$dbname" < "$sql_file" > /dev/null 2> "$err_file"
+        else
+            mysql --default-character-set=utf8mb4 -u "$user" "$dbname" < "$sql_file" > /dev/null 2> "$err_file"
+        fi
+    }
+
+    if run_mysql_update "baseInfo" "$dbuser" "$dbpass"; then ok=1; fi
+    if [ "$ok" -ne 1 ] && run_mysql_update "root-config" "$root_user" "$root_pass"; then ok=1; fi
+    if [ "$ok" -ne 1 ] && run_mysql_update "legacy-root-config" "$legacy_root_user" "$legacy_root_pass"; then ok=1; fi
+    if [ "$ok" -ne 1 ] && mysql --default-character-set=utf8mb4 -u root "$dbname" < "$sql_file" > /dev/null 2> "$err_file"; then ok=1; fi
+
+    if [ "$ok" -eq 1 ]; then
+        rm -f "$sql_file" "$err_file"
+        success "Panel username/password changed."
+        return 0
+    fi
+
+    error "Could not change panel username/password. Last database error:"
+    sed -n '1,8p' "$err_file" 2>/dev/null
+    warning "No data was deleted. Check MySQL access in ${BASE_INFO} and ${CONFIG_FILE}."
+    rm -f "$sql_file" "$err_file"
+    return 1
 }
 
 repair_webhook() {
@@ -512,20 +679,26 @@ full_install_or_update() {
         fi
         install_or_update_bot_files || return 1
         migrate_legacy_installation || true
-        install_or_update_panel || true
+        local panel_failed=0
+        install_or_update_panel || panel_failed=1
         local dom token url
         dom=$(current_domain)
         url=$(php_var botUrl)
         token=$(php_var botToken)
         [ -n "$dom" ] && update_crons_for_domain "$dom"
         [ -n "$token" ] && [ -n "$url" ] && set_bot_webhook "$token" "$url" || true
+        if [ "$panel_failed" -eq 1 ]; then
+            warning "Bot update/migration finished, but panel update failed and the current panel was kept unchanged."
+            warning "Add v2raystore-panel.zip to your repository root, then run Install / Update again."
+            return 1
+        fi
         send_admin_message "✅ ${BRAND_NAME} با موفقیت آپدیت و منتقل شد."
-        success "Update/migration finished. Your database and baseInfo.php were preserved."
+        success "Update/migration finished. Your database, baseInfo.php and panel settings were preserved."
     else
         confirm "No installation found. Install ${BRAND_NAME} now?" || return 0
         install_or_update_bot_files || return 1
         create_database_and_baseinfo || return 1
-        install_or_update_panel || true
+        install_or_update_panel || return 1
         send_admin_message "✅ ${BRAND_NAME} با موفقیت نصب شد."
         success "Installation finished."
     fi
