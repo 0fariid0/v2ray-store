@@ -120,7 +120,7 @@ $arrays = [
     "ALTER TABLE `orders_list` CHANGE `uuid` `uuid` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci NULL DEFAULT NULL;"
     ];
 function updateBot(){
-    global $arrays, $connection, $walletwizwiz, $nowPaymentKey, $zarinpalId;
+    global $arrays, $connection, $walletv2raystore, $nowPaymentKey, $zarinpalId;
     
     foreach($arrays as $query){
         try{
@@ -147,7 +147,7 @@ function updateBot(){
     }
     if(isset($nowPaymentKey) && isset($zarinpalId)){
         $paymentKeys = array();
-        $paymentKeys['bankAccount'] = $walletwizwiz;
+        $paymentKeys['bankAccount'] = $walletv2raystore;
         $paymentKeys['holderName'] = "";
         $paymentKeys['nowpayment'] = $nowPaymentKey;
         $paymentKeys['zarinpal'] = $zarinpalId;
@@ -220,6 +220,6 @@ function updateBot(){
     
     
     if(file_exists(getcwd() . '/tempCookie.txt')) unlink('../tempCookie.txt');
-    if(file_exists(getcwd() . '/settings/messagewizwiz.json')) unlink('../settings/messagewizwiz.json');
+    if(file_exists(getcwd() . '/settings/messagev2raystore.json')) unlink('../settings/messagev2raystore.json');
 }
 ?>
