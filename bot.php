@@ -21,9 +21,9 @@ if(preg_match("/^haveJoined(.*)/",$data,$match)){
         $text = $match[1];
     }
 }
-$wizwizJoinExempt = (!empty($userInfo) && !empty($userInfo['join_exempt']));
-$wizwizIsAdminUser = (!empty($userInfo) && !empty($userInfo['isAdmin']));
-if (($joniedState== "kicked" || $joniedState== "left") && $from_id != $admin && !$wizwizIsAdminUser && !$wizwizJoinExempt){
+$v2raystoreJoinExempt = (!empty($userInfo) && !empty($userInfo['join_exempt']));
+$v2raystoreIsAdminUser = (!empty($userInfo) && !empty($userInfo['isAdmin']));
+if (($joniedState== "kicked" || $joniedState== "left") && $from_id != $admin && !$v2raystoreIsAdminUser && !$v2raystoreJoinExempt){
     sendMessage(str_replace("CHANNEL-ID", $channelLock, $mainValues['join_channel_message']), json_encode(['inline_keyboard'=>[
         [['text'=>$buttonValues['join_channel'],'url'=>"https://t.me/" . str_replace("@", "", $botState['lockChannel'])]],
         [['text'=>$buttonValues['have_joined'],'callback_data'=>'haveJoined' . $text]],
@@ -34,17 +34,17 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
-if(wizwiz_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
+if(v2raystore_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
 
-if(!function_exists('wizwiz_appendServerPlanToChannelReport')){
-    function wizwiz_appendServerPlanToChannelReport($msg, $serverTitle = '', $planTitle = ''){
+if(!function_exists('v2raystore_appendServerPlanToChannelReport')){
+    function v2raystore_appendServerPlanToChannelReport($msg, $serverTitle = '', $planTitle = ''){
         $msg = (string)$msg;
         $serverTitle = trim((string)$serverTitle);
         $planTitle = trim((string)$planTitle);
         $lines = [];
-        $esc = function($value){ return function_exists('wizwiz_h') ? wizwiz_h($value) : htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); };
+        $esc = function($value){ return function_exists('v2raystore_h') ? v2raystore_h($value) : htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'); };
 
         // بعضی قالب‌های قدیمیِ پیام خرید داخل دیتابیس فقط «نام سرویس/ریمارک» دارند و پلن واقعی را نشان نمی‌دهند.
         // اینجا بدون دست زدن به تنظیمات ذخیره‌شده، سرور و پلن را به گزارش کانال/ادمین اضافه می‌کنیم.
@@ -63,17 +63,17 @@ if(!function_exists('wizwiz_appendServerPlanToChannelReport')){
 }
 
 // لغو امن خرید/پرداخت کارت‌به‌کارت در مرحله ارسال رسید
-if(function_exists('wizwiz_isCartToCartReceiptStep') && wizwiz_isCartToCartReceiptStep($userInfo['step'] ?? '', $wizReceiptStepMatch) && (($text ?? '') == ($buttonValues['cancel'] ?? ''))){
-    $hashId = $wizReceiptStepMatch[2] ?? '';
-    $cancelResult = wizwiz_cancelPendingPayByUser($hashId, $from_id);
+if(function_exists('v2raystore_isCartToCartReceiptStep') && v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $storeReceiptStepMatch) && (($text ?? '') == ($buttonValues['cancel'] ?? ''))){
+    $hashId = $storeReceiptStepMatch[2] ?? '';
+    $cancelResult = v2raystore_cancelPendingPayByUser($hashId, $from_id);
     setUser();
     setUser('', 'temp');
     sendMessage(($cancelResult['ok'] ? '❌ ' : '⚠️ ') . $cancelResult['message'], $removeKeyboard, 'HTML');
     sendMessage($mainValues['reached_main_menu'], getMainKeys());
     exit();
 }
-if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $wizCancelPayMatch)){
-    $cancelResult = function_exists('wizwiz_cancelPendingPayByUser') ? wizwiz_cancelPendingPayByUser($wizCancelPayMatch[1], $from_id) : ['ok'=>false, 'message'=>'امکان لغو پرداخت در دسترس نیست.'];
+if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $storeCancelPayMatch)){
+    $cancelResult = function_exists('v2raystore_cancelPendingPayByUser') ? v2raystore_cancelPendingPayByUser($storeCancelPayMatch[1], $from_id) : ['ok'=>false, 'message'=>'امکان لغو پرداخت در دسترس نیست.'];
     setUser();
     setUser('', 'temp');
     if(isset($message_id)) delMessage();
@@ -85,48 +85,48 @@ if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $wizCancelPayMatch)){
 // هندلر مرکزی و مقاوم دریافت رسید کارت‌به‌کارت
 // این بخش قبل از هندلرهای قدیمی اجرا می‌شود تا عکس رسید با کپشن/بدون کپشن گم نشود
 // و پیام ادمین همیشه همراه دکمه‌های تأیید/رد ارسال شود.
-if(function_exists('wizwiz_isCartToCartReceiptStep') && isset($update->message) && wizwiz_isCartToCartReceiptStep($userInfo['step'] ?? '', $wizReceiptStepMatch)){
-    $wizReceiptHashId = $wizReceiptStepMatch[2] ?? '';
-    $wizReceiptStepPrefix = $wizReceiptStepMatch[1] ?? '';
-    $wizReceiptFileId = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, '') : ($fileid ?? '');
+if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->message) && v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $storeReceiptStepMatch)){
+    $storeReceiptHashId = $storeReceiptStepMatch[2] ?? '';
+    $storeReceiptStepPrefix = $storeReceiptStepMatch[1] ?? '';
+    $storeReceiptFileId = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, '') : ($fileid ?? '');
 
-    if($wizReceiptFileId === ''){
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($wizReceiptHashId);
+    if($storeReceiptFileId === ''){
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($storeReceiptHashId);
         else sendMessage($mainValues['please_send_only_image'] ?? 'لطفاً فقط عکس رسید پرداخت را ارسال کنید.');
         exit();
     }
 
-    if(function_exists('wizwiz_processCartToCartReceiptUpload')){
-        $wizReceiptResult = wizwiz_processCartToCartReceiptUpload($wizReceiptHashId, $wizReceiptStepPrefix, $wizReceiptFileId);
-        if(!empty($wizReceiptResult['ok'])){
+    if(function_exists('v2raystore_processCartToCartReceiptUpload')){
+        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId);
+        if(!empty($storeReceiptResult['ok'])){
             setUser();
             setUser('', 'temp');
-            sendMessage($wizReceiptResult['user_message'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.', $removeKeyboard, 'HTML');
+            sendMessage($storeReceiptResult['user_message'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.', $removeKeyboard, 'HTML');
             sendMessage($mainValues['reached_main_menu'], getMainKeys());
-            if(empty($wizReceiptResult['admin_ok'])){
-                $adminErr = trim((string)($wizReceiptResult['admin_message'] ?? ''));
+            if(empty($storeReceiptResult['admin_ok'])){
+                $adminErr = trim((string)($storeReceiptResult['admin_message'] ?? ''));
                 $warn = "⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.";
-                if($adminErr !== '') $warn .= "\nعلت: <code>" . wizwiz_h($adminErr) . "</code>";
+                if($adminErr !== '') $warn .= "\nعلت: <code>" . v2raystore_h($adminErr) . "</code>";
                 sendMessage($warn, null, 'HTML');
             }
         }else{
-            $err = trim((string)($wizReceiptResult['message'] ?? 'ثبت رسید انجام نشد.'));
-            sendMessage("⚠️ " . $err, function_exists('wizwiz_cartToCartReceiptKeyboard') ? wizwiz_cartToCartReceiptKeyboard($wizReceiptHashId) : null, 'HTML');
+            $err = trim((string)($storeReceiptResult['message'] ?? 'ثبت رسید انجام نشد.'));
+            sendMessage("⚠️ " . $err, function_exists('v2raystore_cartToCartReceiptKeyboard') ? v2raystore_cartToCartReceiptKeyboard($storeReceiptHashId) : null, 'HTML');
         }
         exit();
     }
 }
-if(function_exists('wizwiz_processAutoApproveOrders')){
-    wizwiz_processAutoApproveOrders(false, 2);
+if(function_exists('v2raystore_processAutoApproveOrders')){
+    v2raystore_processAutoApproveOrders(false, 2);
 }
 if($data == 'autoApproveOrdersMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getAutoApproveMenuText(), v2raystore_getAutoApproveMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'toggleAutoApproveOrders' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $state = wizwiz_getAutoApproveState();
+    $state = v2raystore_getAutoApproveState();
     setSettings('autoApproveState', $state['enabled'] ? 'off' : 'on');
-    editText($message_id, wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getAutoApproveMenuText(), v2raystore_getAutoApproveMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'setAutoApproveMinutes' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -135,25 +135,25 @@ if($data == 'setAutoApproveMinutes' && ($from_id == $admin || $userInfo['isAdmin
     exit();
 }
 if($data == 'autoApproveTypesMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getAutoApproveTypesText(), wizwiz_getAutoApproveTypesKeys(), 'HTML');
+    editText($message_id, v2raystore_getAutoApproveTypesText(), v2raystore_getAutoApproveTypesKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^toggleAutoApproveType_(.+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $items = function_exists('wizwiz_autoApproveTypeItems') ? wizwiz_autoApproveTypeItems() : [];
+    $items = function_exists('v2raystore_autoApproveTypeItems') ? v2raystore_autoApproveTypeItems() : [];
     $key = $match[1];
     if(array_key_exists($key, $items)){
-        $types = wizwiz_getAutoApproveTypes();
+        $types = v2raystore_getAutoApproveTypes();
         $types[$key] = (($types[$key] ?? 'on') === 'on') ? 'off' : 'on';
-        wizwiz_saveAutoApproveTypes($types);
-        editText($message_id, wizwiz_getAutoApproveTypesText(), wizwiz_getAutoApproveTypesKeys(), 'HTML');
+        v2raystore_saveAutoApproveTypes($types);
+        editText($message_id, v2raystore_getAutoApproveTypesText(), v2raystore_getAutoApproveTypesKeys(), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }
 if(preg_match('/^setAllAutoApproveTypes_(on|off)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $types = [];
-    foreach(wizwiz_autoApproveTypeItems() as $key => $item) $types[$key] = $match[1];
-    wizwiz_saveAutoApproveTypes($types);
-    editText($message_id, wizwiz_getAutoApproveTypesText(), wizwiz_getAutoApproveTypesKeys(), 'HTML');
+    foreach(v2raystore_autoApproveTypeItems() as $key => $item) $types[$key] = $match[1];
+    v2raystore_saveAutoApproveTypes($types);
+    editText($message_id, v2raystore_getAutoApproveTypesText(), v2raystore_getAutoApproveTypesKeys(), 'HTML');
     exit();
 }
 if(($userInfo['step'] ?? '') == 'setAutoApproveMinutes' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -161,14 +161,14 @@ if(($userInfo['step'] ?? '') == 'setAutoApproveMinutes' && $text != $buttonValue
         setSettings('autoApproveMinutes', intval($text));
         setUser();
         sendMessage("✅ زمان تأیید خودکار روی " . intval($text) . " دقیقه تنظیم شد.", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+        sendMessage(v2raystore_getAutoApproveMenuText(), v2raystore_getAutoApproveMenuKeys(), 'HTML');
     }else{
         sendMessage('لطفاً فقط عدد بین 1 تا 1440 ارسال کنید.');
     }
     exit();
 }
 if($data == 'autoApproveBlockedUsersMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    editText($message_id, v2raystore_getAutoApproveBlockedUsersText(), v2raystore_getAutoApproveBlockedUsersKeys(), 'HTML');
     exit();
 }
 if($data == 'addAutoApproveBlockedUser' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -182,10 +182,10 @@ if(($userInfo['step'] ?? '') == 'addAutoApproveBlockedUser' && $text != $buttonV
     elseif(preg_match('/(\d{5,15})/', (string)$text, $m)) $targetId = intval($m[1]);
 
     if($targetId > 0){
-        wizwiz_addAutoApproveBlockedUser($targetId);
+        v2raystore_addAutoApproveBlockedUser($targetId);
         setUser();
         sendMessage("✅ کاربر <code>$targetId</code> از تأیید خودکار مستثنی شد.", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+        sendMessage(v2raystore_getAutoApproveBlockedUsersText(), v2raystore_getAutoApproveBlockedUsersKeys(), 'HTML');
     }else{
         sendMessage('❌ آیدی معتبر پیدا نشد. فقط آیدی عددی کاربر را ارسال کنید.', $cancelKey, 'HTML');
     }
@@ -202,31 +202,31 @@ if(($userInfo['step'] ?? '') == 'removeAutoApproveBlockedUserManual' && $text !=
     elseif(preg_match('/(\d{5,15})/', (string)$text, $m)) $targetId = intval($m[1]);
 
     if($targetId > 0){
-        wizwiz_removeAutoApproveBlockedUser($targetId);
+        v2raystore_removeAutoApproveBlockedUser($targetId);
         setUser();
         sendMessage("✅ کاربر <code>$targetId</code> از لیست بلاک تأیید خودکار حذف شد.", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+        sendMessage(v2raystore_getAutoApproveBlockedUsersText(), v2raystore_getAutoApproveBlockedUsersKeys(), 'HTML');
     }else{
         sendMessage('❌ آیدی معتبر پیدا نشد. فقط آیدی عددی کاربر را ارسال کنید.', $cancelKey, 'HTML');
     }
     exit();
 }
 if(preg_match('/^removeAutoApproveBlockedUser(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_removeAutoApproveBlockedUser(intval($match[1]));
-    editText($message_id, wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    v2raystore_removeAutoApproveBlockedUser(intval($match[1]));
+    editText($message_id, v2raystore_getAutoApproveBlockedUsersText(), v2raystore_getAutoApproveBlockedUsersKeys(), 'HTML');
     exit();
 }
 if($data == 'clearAutoApproveBlockedUsers' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_saveAutoApproveBlockedUsers([]);
-    editText($message_id, wizwiz_getAutoApproveBlockedUsersText(), wizwiz_getAutoApproveBlockedUsersKeys(), 'HTML');
+    v2raystore_saveAutoApproveBlockedUsers([]);
+    editText($message_id, v2raystore_getAutoApproveBlockedUsersText(), v2raystore_getAutoApproveBlockedUsersKeys(), 'HTML');
     exit();
 }
 
 if($data == 'runAutoApproveOrdersNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $result = wizwiz_processAutoApproveOrders(true, 10);
+    $result = v2raystore_processAutoApproveOrders(true, 10);
     $msg = "🚀 بررسی دستی تأیید خودکار انجام شد.\n\nتعداد تأیید شده: " . intval($result['processed']);
     if(!empty($result['messages'])) $msg .= "\n\n" . implode("\n", $result['messages']);
-    editText($message_id, $msg . "\n\n" . wizwiz_getAutoApproveMenuText(), wizwiz_getAutoApproveMenuKeys(), 'HTML');
+    editText($message_id, $msg . "\n\n" . v2raystore_getAutoApproveMenuText(), v2raystore_getAutoApproveMenuKeys(), 'HTML');
     exit();
 }
 
@@ -243,52 +243,52 @@ if(($userInfo['step'] ?? '') == 'setReportGroupChat' && $text != $buttonValues['
     if(is_object($result) && !empty($result->ok) && isset($result->result->status) && in_array($result->result->status, ['administrator','creator'], true)){
         setSettings('rewardChannel', $chat);
         // مقصد عوض شده؛ تاپیک‌های قبلی دیگر معتبر نیستند.
-        if(function_exists('wizwiz_saveReportTopicStore')) wizwiz_saveReportTopicStore([]);
+        if(function_exists('v2raystore_saveReportTopicStore')) v2raystore_saveReportTopicStore([]);
         setUser();
-        sendMessage("✅ مقصد گزارش‌ها تنظیم شد: <code>" . wizwiz_h($chat) . "</code>", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+        sendMessage("✅ مقصد گزارش‌ها تنظیم شد: <code>" . v2raystore_h($chat) . "</code>", $removeKeyboard, 'HTML');
+        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ ربات داخل این گروه/کانال ادمین نیست یا آیدی اشتباه است.\nلطفاً ربات را ادمین کن و آیدی را دوباره بفرست.", $cancelKey, 'HTML');
     }
     exit();
 }
 if($data == 'toggleReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    if(wizwiz_reportForumEnabled()){
-        wizwiz_reportDeleteAllTopics();
-        setSettings('wizReportForumState', 'off');
+    if(v2raystore_reportForumEnabled()){
+        v2raystore_reportDeleteAllTopics();
+        setSettings('storeReportForumState', 'off');
         alert('تاپیک‌های گزارش خاموش و حذف شدند.');
     }else{
-        setSettings('wizReportForumState', 'on');
+        setSettings('storeReportForumState', 'on');
         alert('حالت تاپیک فعال شد. با اولین گزارش، تاپیک مربوطه ساخته می‌شود.');
     }
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'deleteAllReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_reportDeleteAllTopics();
+    v2raystore_reportDeleteAllTopics();
     alert('تاپیک‌های ذخیره‌شده حذف شدند.');
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'rebuildReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    if(!wizwiz_reportForumEnabled()) setSettings('wizReportForumState', 'on');
+    if(!v2raystore_reportForumEnabled()) setSettings('storeReportForumState', 'on');
     $made = 0;
-    foreach(wizwiz_reportTopicItems() as $topicKey => $info){
-        if(!wizwiz_reportTopicHasEnabledEvents($topicKey)) continue;
+    foreach(v2raystore_reportTopicItems() as $topicKey => $info){
+        if(!v2raystore_reportTopicHasEnabledEvents($topicKey)) continue;
         $events = $info['events'] ?? [];
         $eventKey = count($events) ? $events[0] : 'daily_stats';
-        $thread = wizwiz_reportEnsureTopic($eventKey);
+        $thread = v2raystore_reportEnsureTopic($eventKey);
         if($thread > 0) $made++;
     }
     alert($made > 0 ? 'تاپیک‌ها ساخته/ترمیم شدند.' : 'ساخت تاپیک ناموفق بود؛ گروه باید Forum باشد و ربات دسترسی مدیریت تاپیک داشته باشد.', $made <= 0);
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'toggleReportBackupBotDb' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $new = wizwiz_backupBotDbEnabled() ? 'off' : 'on';
-    setSettings('wizBackupBotDbState', $new);
-    if($new === 'off' && !wizwiz_anyPanelDbBackupEnabled()) wizwiz_reportDeleteTopic('database');
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    $new = v2raystore_backupBotDbEnabled() ? 'off' : 'on';
+    setSettings('storeBackupBotDbState', $new);
+    if($new === 'off' && !v2raystore_anyPanelDbBackupEnabled()) v2raystore_reportDeleteTopic('database');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if(($data == 'setReportBackupInterval' || $data == 'setReportBackupTime') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -305,16 +305,16 @@ if(($data == 'setReportBackupInterval' || $data == 'setReportBackupTime') && ($f
     exit();
 }
 if(($userInfo['step'] ?? '') == 'setReportBackupInterval' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $minutes = function_exists('wizwiz_parseBackupIntervalMinutes') ? wizwiz_parseBackupIntervalMinutes($text) : intval($text);
+    $minutes = function_exists('v2raystore_parseBackupIntervalMinutes') ? v2raystore_parseBackupIntervalMinutes($text) : intval($text);
     if($minutes >= 10){
-        setSettings('wizReportBackupIntervalMinutes', $minutes);
-        setSettings('wizReportBackupLastTs', time());
+        setSettings('storeReportBackupIntervalMinutes', $minutes);
+        setSettings('storeReportBackupLastTs', time());
         setUser();
-        $pretty = function_exists('wizwiz_formatMinutesFa') ? wizwiz_formatMinutesFa($minutes) : ($minutes . ' دقیقه');
-        sendMessage("✅ فاصله بکاپ دیتابیس روی <b>" . wizwiz_h($pretty) . "</b> تنظیم شد.
+        $pretty = function_exists('v2raystore_formatMinutesFa') ? v2raystore_formatMinutesFa($minutes) : ($minutes . ' دقیقه');
+        sendMessage("✅ فاصله بکاپ دیتابیس روی <b>" . v2raystore_h($pretty) . "</b> تنظیم شد.
 
 از این لحظه، بکاپ بعدی بعد از همین فاصله اجرا می‌شود. برای ارسال فوری می‌توانید از گزینه <b>اجرای بکاپ الان</b> استفاده کنید.", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ مقدار وارد شده درست نیست. مثال: <code>30 دقیقه</code> یا <code>1 ساعت</code>
 حداقل مجاز ۱۰ دقیقه است.", null, 'HTML');
@@ -334,52 +334,52 @@ if(($userInfo['step'] ?? '') == 'setReportBackupItemDelay' && $text != $buttonVa
     $map = ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9'];
     $sec = intval(strtr(trim((string)$text), $map));
     if($sec >= 0 && $sec <= 300){
-        setSettings('wizReportBackupItemDelaySeconds', $sec);
+        setSettings('storeReportBackupItemDelaySeconds', $sec);
         setUser();
         sendMessage("✅ فاصله بین ارسال هر بکاپ روی <b>{$sec} ثانیه</b> تنظیم شد.", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ عدد باید بین ۰ تا ۳۰۰ ثانیه باشد.", null, 'HTML');
     }
     exit();
 }
 if($data == 'resetReportBackupSchedule' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    setSettings('wizReportBackupLastTs', 0);
+    setSettings('storeReportBackupLastTs', 0);
     alert('زمان‌بندی بکاپ ریست شد. در اولین اجرای کران، اگر بکاپ فعال باشد اجرا می‌شود.');
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'runReportDbBackupsNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     alert('بکاپ در حال اجراست؛ اگر دیتابیس بزرگ باشد کمی زمان می‌برد.');
-    $res = wizwiz_runReportDatabaseBackups(true);
-    editText($message_id, ($res['ok'] ? "✅ " : "❌ ") . wizwiz_h($res['message'] ?? 'انجام شد') . "\n\n" . wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    $res = v2raystore_runReportDatabaseBackups(true);
+    editText($message_id, ($res['ok'] ? "✅ " : "❌ ") . v2raystore_h($res['message'] ?? 'انجام شد') . "\n\n" . v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'reportPanelDbBackupMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getReportPanelBackupMenuText(), wizwiz_getReportPanelBackupMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportPanelBackupMenuText(), v2raystore_getReportPanelBackupMenuKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^togglePanelDbBackup(\d+)$/', $data ?? '', $mm) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $sid = intval($mm[1]);
-    $key = 'wizPanelDbBackup_' . $sid;
-    $new = wizwiz_panelDbBackupEnabled($sid) ? 'off' : 'on';
+    $key = 'storePanelDbBackup_' . $sid;
+    $new = v2raystore_panelDbBackupEnabled($sid) ? 'off' : 'on';
     setSettings($key, $new);
-    if($new === 'off' && !wizwiz_backupBotDbEnabled() && !wizwiz_anyPanelDbBackupEnabled()) wizwiz_reportDeleteTopic('database');
-    editText($message_id, wizwiz_getReportPanelBackupMenuText(), wizwiz_getReportPanelBackupMenuKeys(), 'HTML');
+    if($new === 'off' && !v2raystore_backupBotDbEnabled() && !v2raystore_anyPanelDbBackupEnabled()) v2raystore_reportDeleteTopic('database');
+    editText($message_id, v2raystore_getReportPanelBackupMenuText(), v2raystore_getReportPanelBackupMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'reportChannelSettingsMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'toggleDailyChannelStats' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_reportToggleSetting('wizReportDailyState', 'off');
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    v2raystore_reportToggleSetting('storeReportDailyState', 'off');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'toggleReportLiveStats' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_reportToggleSetting('wizReportLiveStatsState', 'on');
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    v2raystore_reportToggleSetting('storeReportLiveStatsState', 'on');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'setDailyChannelStatsTime' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -393,43 +393,43 @@ if($data == 'setDailyChannelStatsTime' && ($from_id == $admin || $userInfo['isAd
 if(($userInfo['step'] ?? '') == 'setDailyChannelStatsTime' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $timeText = trim((string)$text);
     if(preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeText)){
-        setSettings('wizReportDailyTime', $timeText);
+        setSettings('storeReportDailyTime', $timeText);
         setUser();
         sendMessage("✅ ساعت ارسال آمار روزانه روی <b>$timeText</b> تنظیم شد.", $removeKeyboard, 'HTML');
-        sendMessage(wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ فرمت ساعت درست نیست. مثال درست: <code>21:30</code>", null, 'HTML');
     }
     exit();
 }
 if($data == 'sendDailyChannelStatsNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $sent = wizwiz_sendDailyChannelStats(true);
+    $sent = v2raystore_sendDailyChannelStats(true);
     alert($sent ? 'آمار به کانال/گروه گزارش ارسال شد.' : 'ارسال آمار ناموفق بود.', !$sent);
-    editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^toggleReportEvent_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $match[1];
-    if(array_key_exists($key, wizwiz_reportEventItems())){
-        $newState = wizwiz_reportToggleSetting(wizwiz_reportEventKey($key), 'on');
-        if($newState === 'off') wizwiz_reportDeleteTopicForEvent($key);
-        editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    if(array_key_exists($key, v2raystore_reportEventItems())){
+        $newState = v2raystore_reportToggleSetting(v2raystore_reportEventKey($key), 'on');
+        if($newState === 'off') v2raystore_reportDeleteTopicForEvent($key);
+        editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }
 if(preg_match('/^toggleReportDetail_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $match[1];
-    if(array_key_exists($key, wizwiz_reportDetailItems())){
-        wizwiz_reportToggleSetting(wizwiz_reportDetailKey($key), 'on');
-        editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    if(array_key_exists($key, v2raystore_reportDetailItems())){
+        v2raystore_reportToggleSetting(v2raystore_reportDetailKey($key), 'on');
+        editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }
 if(preg_match('/^toggleReportStat_(.+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $match[1];
-    if(array_key_exists($key, wizwiz_reportStatItems())){
-        wizwiz_reportToggleSetting(wizwiz_reportStatKey($key), 'on');
-        editText($message_id, wizwiz_getReportSettingsMenuText(), wizwiz_getReportSettingsMenuKeys(), 'HTML');
+    if(array_key_exists($key, v2raystore_reportStatItems())){
+        v2raystore_reportToggleSetting(v2raystore_reportStatKey($key), 'on');
+        editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }
@@ -444,7 +444,7 @@ if(preg_match('/^autoCancelOrder\|(.+)\|(-?\d+)\|(\d+)$/', $userInfo['step'] ?? 
     $hashId = $match[1];
     $reportChatId = $match[2];
     $reportMsgId = intval($match[3]);
-    $result = wizwiz_cancelAutoApprovedPay($hashId, $text);
+    $result = v2raystore_cancelAutoApprovedPay($hashId, $text);
     setUser();
     sendMessage(($result['ok'] ? '✅ ' : '❌ ') . $result['message'], $removeKeyboard, 'HTML');
     if($result['ok']){
@@ -455,7 +455,7 @@ if(preg_match('/^autoCancelOrder\|(.+)\|(-?\d+)\|(\d+)$/', $userInfo['step'] ?? 
 
 if(preg_match('/^approveNewMember(\d+)/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $targetId = (int)$match[1];
-    $targetUser = wizwiz_getUserByTelegramId($targetId);
+    $targetUser = v2raystore_getUserByTelegramId($targetId);
     if(!$targetUser){
         alert("کاربر پیدا نشد", true);
         exit();
@@ -495,18 +495,18 @@ if(preg_match('/^rejectNewMember(\d+)/', $data, $match) && ($from_id == $admin |
 }
 if(preg_match('/^revokeCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $targetId = (int)$match[1];
-    $targetUser = wizwiz_getUserByTelegramId($targetId);
+    $targetUser = v2raystore_getUserByTelegramId($targetId);
     if(!$targetUser){
         alert("کاربر مورد نظر یافت نشد.", true);
         exit();
     }
-    $ok = wizwiz_setUserAccessExempt($targetId, false);
+    $ok = v2raystore_setUserAccessExempt($targetId, false);
     if($ok){
         sendMessage("🔒 دسترسی شما که از طریق کد ورود فعال شده بود، توسط مدیریت غیرفعال شد.\n\nدر صورت دریافت کد ورود جدید از مدیریت، می‌توانید دوباره آن را در ربات ارسال کنید.", null, 'HTML', $targetId);
         $msg = "🧹 <b>دسترسی کد ورود حذف شد</b>\n\n" .
                "دسترسی ایجادشده با کد ورود برای کاربر <code>$targetId</code> حذف شد.\n" .
                "در صورت ارسال کد معتبر جدید، دسترسی کاربر مجدداً فعال خواهد شد.";
-        $keys = wizwiz_inlineKeyboardJson([
+        $keys = v2raystore_inlineKeyboardJson([
             [['text'=>'🚫 بلاک کاربر', 'callback_data'=>'blockCodeAccess' . $targetId, 'style'=>'danger']]
         ]);
         editText($message_id, $msg, $keys, 'HTML');
@@ -518,7 +518,7 @@ if(preg_match('/^revokeCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin
 }
 if(preg_match('/^blockCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $targetId = (int)$match[1];
-    $targetUser = wizwiz_getUserByTelegramId($targetId);
+    $targetUser = v2raystore_getUserByTelegramId($targetId);
     if(!$targetUser){
         alert("کاربر مورد نظر یافت نشد.", true);
         exit();
@@ -539,7 +539,7 @@ if(preg_match('/^blockCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin 
 if($data == "testAccountManagement" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $msg = "🧪 <b>مدیریت اکانت تست</b>\n\n" .
            "از این بخش می‌توانید سقف دریافت اکانت تست را برای کاربران مدیریت کنید، سابقه استفاده یک کاربر را ریست کنید یا استفاده همه کاربران از تست را پاک کنید.";
-    editText($message_id, $msg, wizwiz_getTestAccountManageKeys(), "HTML");
+    editText($message_id, $msg, v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
 if($data == "resetAllTestAccountsAsk" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -553,7 +553,7 @@ if($data == "resetAllTestAccountsAsk" && ($from_id == $admin || $userInfo['isAdm
 }
 if($data == "resetAllTestAccountsConfirm" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $connection->query("UPDATE `users` SET `freetrial` = NULL, `test_account_count` = 0");
-    editText($message_id, "✅ سابقه استفاده از اکانت تست برای همه کاربران با موفقیت ریست شد.", wizwiz_getTestAccountManageKeys(), "HTML");
+    editText($message_id, "✅ سابقه استفاده از اکانت تست برای همه کاربران با موفقیت ریست شد.", v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
 if($data == "resetOneTestAccount" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -575,7 +575,7 @@ if($data == "removeTestAccountLimit" && ($from_id == $admin || $userInfo['isAdmi
     exit();
 }
 if($data == "testAccountLimitList" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getTestAccountLimitsListText(), json_encode(['inline_keyboard'=>[
+    editText($message_id, v2raystore_getTestAccountLimitsListText(), json_encode(['inline_keyboard'=>[
         [['text'=>'⬅️ بازگشت', 'callback_data'=>'testAccountManagement', 'style'=>'primary']]
     ]], JSON_UNESCAPED_UNICODE), "HTML");
     exit();
@@ -591,10 +591,10 @@ if(($userInfo['step'] ?? '') == 'setTestAccountLimitValue' && $text != $buttonVa
     if($targetId <= 0){
         setUser('', 'temp');
         setUser();
-        sendMessage("❌ آیدی کاربر در حافظه مرحله پیدا نشد. لطفاً دوباره از منوی مدیریت اکانت تست اقدام کنید.", wizwiz_getTestAccountManageKeys(), "HTML");
+        sendMessage("❌ آیدی کاربر در حافظه مرحله پیدا نشد. لطفاً دوباره از منوی مدیریت اکانت تست اقدام کنید.", v2raystore_getTestAccountManageKeys(), "HTML");
         exit();
     }
-    wizwiz_ensureBasicUserRecord($targetId);
+    v2raystore_ensureBasicUserRecord($targetId);
     if($limit === 0){
         $stmt = $connection->prepare("UPDATE `users` SET `test_account_exempt` = 1, `test_account_limit` = NULL WHERE `userid` = ?");
         $stmt->bind_param("i", $targetId);
@@ -611,7 +611,7 @@ if(($userInfo['step'] ?? '') == 'setTestAccountLimitValue' && $text != $buttonVa
     setUser('', 'temp');
     setUser();
     sendMessage($resultMsg, $removeKeyboard, "HTML");
-    sendMessage("🧪 مدیریت اکانت تست", wizwiz_getTestAccountManageKeys(), "HTML");
+    sendMessage("🧪 مدیریت اکانت تست", v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
 if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimitUser','removeTestAccountLimit'], true) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -621,7 +621,7 @@ if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimit
         exit();
     }
     $targetId = intval($targetId);
-    wizwiz_ensureBasicUserRecord($targetId);
+    v2raystore_ensureBasicUserRecord($targetId);
     if($userInfo['step'] == 'resetOneTestAccount'){
         $stmt = $connection->prepare("UPDATE `users` SET `freetrial` = NULL, `test_account_count` = 0 WHERE `userid` = ?");
         $stmt->bind_param("i", $targetId);
@@ -629,7 +629,7 @@ if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimit
         $stmt->close();
         setUser();
         sendMessage("✅ سابقه اکانت تست کاربر <code>{$targetId}</code> با موفقیت ریست شد.", $removeKeyboard, "HTML");
-        sendMessage("🧪 مدیریت اکانت تست", wizwiz_getTestAccountManageKeys(), "HTML");
+        sendMessage("🧪 مدیریت اکانت تست", v2raystore_getTestAccountManageKeys(), "HTML");
     }elseif($userInfo['step'] == 'setTestAccountLimitUser'){
         setUser((string)$targetId, 'temp');
         setUser('setTestAccountLimitValue');
@@ -641,18 +641,18 @@ if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimit
         $stmt->close();
         setUser();
         sendMessage("✅ سقف اختصاصی اکانت تست کاربر <code>{$targetId}</code> حذف شد و محدودیت او به حالت پیش‌فرض بازگشت.", $removeKeyboard, "HTML");
-        sendMessage("🧪 مدیریت اکانت تست", wizwiz_getTestAccountManageKeys(), "HTML");
+        sendMessage("🧪 مدیریت اکانت تست", v2raystore_getTestAccountManageKeys(), "HTML");
     }
     exit();
 }
 
 if(preg_match('/^requestCartToCartCard(.+)/', $data, $match)){
-    $paymentKeys = wizwiz_getPaymentKeys();
-    $account = function_exists('wizwiz_getCartToCartAccountForUser') ? wizwiz_getCartToCartAccountForUser($from_id, $paymentKeys) : ['is_second'=>false];
-    wizwiz_markUserCardVersion($from_id, $paymentKeys);
-    $url = wizwiz_cardContactUrl($paymentKeys);
-    $contact = wizwiz_cardContactDisplay($paymentKeys);
-    $accountTitle = function_exists('wizwiz_cartToCartAccountTitle') ? wizwiz_cartToCartAccountTitle($account) : 'خرید';
+    $paymentKeys = v2raystore_getPaymentKeys();
+    $account = function_exists('v2raystore_getCartToCartAccountForUser') ? v2raystore_getCartToCartAccountForUser($from_id, $paymentKeys) : ['is_second'=>false];
+    v2raystore_markUserCardVersion($from_id, $paymentKeys);
+    $url = v2raystore_cardContactUrl($paymentKeys);
+    $contact = v2raystore_cardContactDisplay($paymentKeys);
+    $accountTitle = function_exists('v2raystore_cartToCartAccountTitle') ? v2raystore_cartToCartAccountTitle($account) : 'خرید';
     $requestText = !empty($account['is_second']) ? 'شماره کارت خرید دوم جهت واریز' : 'شماره کارت جهت واریز';
     $msg = "💳 <b>دریافت شماره کارت</b>
 
@@ -663,7 +663,7 @@ if(preg_match('/^requestCartToCartCard(.+)/', $data, $match)){
 <code>$requestText</code>
 
 بعد از دریافت شماره کارت و واریز، به همین ربات برگردید و تصویر رسید را ارسال کنید.";
-    $keys = wizwiz_inlineKeyboardJson([
+    $keys = v2raystore_inlineKeyboardJson([
         [['text'=>'📩 پیام به ادمین برای شماره کارت', 'url'=>$url, 'style'=>'success']],
         [['text'=>'🔙 برگشت به منوی اصلی', 'callback_data'=>'mainMenu', 'style'=>'primary']]
     ]);
@@ -671,13 +671,13 @@ if(preg_match('/^requestCartToCartCard(.+)/', $data, $match)){
     exit();
 }
 if($data == 'markCartToCartCardChanged' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_markCardInfoChanged();
+    v2raystore_markCardInfoChanged();
     editText($message_id, "✅ وضعیت شماره کارت تغییر کرد.
 
 از این به بعد کاربران برای پرداخت کارت‌به‌کارت باید دوباره شماره کارت جدید را از ادمین دریافت کنند.", getGateWaysKeys(), 'HTML');
     exit();
 }
-wizwiz_handleNewMemberLock();
+v2raystore_handleNewMemberLock();
 if(strstr($text, "/start ")){
     $inviter = str_replace("/start ", "", $text);
     if($inviter < 0) exit();
@@ -841,39 +841,39 @@ if($userInfo['step'] == "addNewAdmin" && $from_id === $admin && $text != $button
     }
 }
 if($data == "newMemberAccessMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $state = wizwiz_getBotStatesArray();
-    $mode = wizwiz_getNewMemberAccessMode($state);
+    $state = v2raystore_getBotStatesArray();
+    $mode = v2raystore_getNewMemberAccessMode($state);
     $since = intval($state['newMemberAccessStartedAt'] ?? 0);
     $sinceText = $since > 0 ? jdate("Y/m/d H:i", $since) : 'ثبت نشده';
     $msg = "🔐 <b>مدیریت دسترسی اعضای جدید</b>\n\n" .
-           "وضعیت فعلی: <b>" . wizwiz_newMemberAccessModeTitle($mode) . "</b>\n" .
+           "وضعیت فعلی: <b>" . v2raystore_newMemberAccessModeTitle($mode) . "</b>\n" .
            "زمان اعمال وضعیت: <code>$sinceText</code>\n\n" .
            "• آزاد برای همه: همه می‌توانند وارد ربات شوند.\n" .
            "• فقط کاربران قبلی: فقط کسانی که قبل از فعال‌سازی این حالت داخل دیتابیس ربات بوده‌اند.\n" .
            "• فقط خریداران قبلی: فقط کسانی که حداقل یک سفارش/پرداخت قبلی دارند.\n" .
            "• تایید دستی با معرف: کاربر جدید باید آیدی عددی معرف را بفرستد و ادمین تایید کند.";
-    editText($message_id, $msg, wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    editText($message_id, $msg, v2raystore_getNewMemberAccessMenuKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^setNewMemberAccessMode_(open|existing|buyers|approval)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_setNewMemberAccessMode($match[1]);
-    $msg = "✅ وضعیت دسترسی اعضای جدید تغییر کرد.\n\nوضعیت جدید: <b>" . wizwiz_newMemberAccessModeTitle($match[1]) . "</b>";
-    editText($message_id, $msg, wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    v2raystore_setNewMemberAccessMode($match[1]);
+    $msg = "✅ وضعیت دسترسی اعضای جدید تغییر کرد.\n\nوضعیت جدید: <b>" . v2raystore_newMemberAccessModeTitle($match[1]) . "</b>";
+    editText($message_id, $msg, v2raystore_getNewMemberAccessMenuKeys(), 'HTML');
     exit();
 }
 if($data == "generateBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $code = wizwiz_generateBuyersAccessCode();
+    $code = v2raystore_generateBuyersAccessCode();
     $msg = "✅ کد ورود جدید با موفقیت ساخته شد.
 
 🎟 کد: <code>$code</code>
 
 این کد را به کاربرانی بدهید که می‌خواهید در حالت «فقط خریداران قبلی» بتوانند دسترسی بگیرند.";
-    editText($message_id, $msg, wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    editText($message_id, $msg, v2raystore_getNewMemberAccessMenuKeys(), 'HTML');
     exit();
 }
 if($data == "clearBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_setBuyersAccessCode('');
-    editText($message_id, "✅ کد ورود خریداران با موفقیت حذف شد.", wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    v2raystore_setBuyersAccessCode('');
+    editText($message_id, "✅ کد ورود خریداران با موفقیت حذف شد.", v2raystore_getNewMemberAccessMenuKeys(), 'HTML');
     exit();
 }
 if($data == "setBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -886,21 +886,21 @@ if($data == "setBuyersAccessCode" && ($from_id == $admin || $userInfo['isAdmin']
     exit();
 }
 if(($userInfo['step'] ?? '') == "setBuyersAccessCode" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $code = wizwiz_setBuyersAccessCode($text);
+    $code = v2raystore_setBuyersAccessCode($text);
     setUser();
     if($code === ''){
         sendMessage("❌ کد ارسال‌شده معتبر نیست. فقط حروف انگلیسی، عدد، خط تیره و زیرخط قابل ذخیره است.", $removeKeyboard, 'HTML');
     }else{
         sendMessage("✅ کد ورود با موفقیت ذخیره شد: <code>$code</code>", $removeKeyboard, 'HTML');
     }
-    sendMessage("🔐 مدیریت دسترسی اعضای جدید", wizwiz_getNewMemberAccessMenuKeys(), 'HTML');
+    sendMessage("🔐 مدیریت دسترسی اعضای جدید", v2raystore_getNewMemberAccessMenuKeys(), 'HTML');
     exit();
 }
 if($data == "joinExemptMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $msg = "🚪 <b>معافیت جوین اجباری کانال</b>\n\n" .
            "از این بخش می‌توانید یک کاربر را از بررسی عضویت اجباری کانال معاف کنید.\n" .
            "کاربر معاف حتی اگر عضو کانال قفل نباشد، می‌تواند از ربات استفاده کند.";
-    editText($message_id, $msg, wizwiz_getJoinExemptMenuKeys(), 'HTML');
+    editText($message_id, $msg, v2raystore_getJoinExemptMenuKeys(), 'HTML');
     exit();
 }
 if($data == "addJoinExemptUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -916,7 +916,7 @@ if($data == "removeJoinExemptUser" && ($from_id == $admin || $userInfo['isAdmin'
     exit();
 }
 if($data == "joinExemptList" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getJoinExemptListText(), wizwiz_getJoinExemptMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getJoinExemptListText(), v2raystore_getJoinExemptMenuKeys(), 'HTML');
     exit();
 }
 if(in_array($userInfo['step'] ?? '', ['addJoinExemptUser','removeJoinExemptUser'], true) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -926,17 +926,17 @@ if(in_array($userInfo['step'] ?? '', ['addJoinExemptUser','removeJoinExemptUser'
         exit();
     }
     $enableExempt = ($userInfo['step'] == 'addJoinExemptUser');
-    $ok = wizwiz_setUserJoinExempt((int)$targetId, $enableExempt);
+    $ok = v2raystore_setUserJoinExempt((int)$targetId, $enableExempt);
     setUser();
     if($ok){
         $msg = $enableExempt ?
             "✅ کاربر <code>$targetId</code> از جوین اجباری کانال معاف شد." :
             "✅ معافیت جوین اجباری کاربر <code>$targetId</code> حذف شد.";
         sendMessage($msg, $removeKeyboard, 'HTML');
-        sendMessage("🚪 معافیت جوین اجباری کانال", wizwiz_getJoinExemptMenuKeys(), 'HTML');
+        sendMessage("🚪 معافیت جوین اجباری کانال", v2raystore_getJoinExemptMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ ذخیره تغییرات انجام نشد. دوباره تلاش کنید.", $removeKeyboard, 'HTML');
-        sendMessage("🚪 معافیت جوین اجباری کانال", wizwiz_getJoinExemptMenuKeys(), 'HTML');
+        sendMessage("🚪 معافیت جوین اجباری کانال", v2raystore_getJoinExemptMenuKeys(), 'HTML');
     }
     exit();
 }
@@ -947,44 +947,44 @@ if($data == "userButtonSettings" && ($from_id == $admin || $userInfo['isAdmin'] 
 از این بخش می‌توانید دکمه‌های صفحه اصلی کاربر را مخفی/فعال کنید یا جای آن‌ها را تغییر دهید.
 در منوی کاربر، دکمه‌های فعال با ترتیب و ردیف‌بندی انتخابی شما نمایش داده می‌شوند؛ هر ردیف حداکثر ۲ دکمه دارد، ولی می‌توانید یک ردیف را تک‌دکمه‌ای کنید.
 دکمه مدیریت ربات برای ادمین‌ها همیشه نمایش داده می‌شود.";
-    editText($message_id, $msg, wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    editText($message_id, $msg, v2raystore_getUserButtonSettingsKeys(), 'HTML');
     exit();
 }
 if($data == "userButtonLayoutSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    editText($message_id, v2raystore_getUserButtonOrderText(), v2raystore_getUserButtonOrderSettingsKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^moveUserButtonOrder_([A-Za-z0-9_]+)_(up|down)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $ok = wizwiz_moveUserButtonOrder($match[1], $match[2]);
+    $ok = v2raystore_moveUserButtonOrder($match[1], $match[2]);
     if(!$ok) alert('امکان جابه‌جایی بیشتر وجود ندارد.');
-    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    editText($message_id, v2raystore_getUserButtonOrderText(), v2raystore_getUserButtonOrderSettingsKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^toggleUserButtonRowBreak_([A-Za-z0-9_]+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_toggleUserButtonRowBreak($match[1]);
-    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    v2raystore_toggleUserButtonRowBreak($match[1]);
+    editText($message_id, v2raystore_getUserButtonOrderText(), v2raystore_getUserButtonOrderSettingsKeys(), 'HTML');
     exit();
 }
 if($data == "resetUserButtonRows" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_resetUserButtonRowBreaks();
-    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    v2raystore_resetUserButtonRowBreaks();
+    editText($message_id, v2raystore_getUserButtonOrderText(), v2raystore_getUserButtonOrderSettingsKeys(), 'HTML');
     exit();
 }
 if($data == "resetUserButtonOrder" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_resetUserButtonOrder();
-    editText($message_id, wizwiz_getUserButtonOrderText(), wizwiz_getUserButtonOrderSettingsKeys(), 'HTML');
+    v2raystore_resetUserButtonOrder();
+    editText($message_id, v2raystore_getUserButtonOrderText(), v2raystore_getUserButtonOrderSettingsKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^toggleUserButtonVisibility_([A-Za-z0-9_]+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $match[1];
-    $current = wizwiz_userButtonVisible($key);
-    wizwiz_setUserButtonVisible($key, !$current);
-    editText($message_id, "🎛 تنظیمات دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    $current = v2raystore_userButtonVisible($key);
+    v2raystore_setUserButtonVisible($key, !$current);
+    editText($message_id, "🎛 تنظیمات دکمه‌های کاربر", v2raystore_getUserButtonSettingsKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^setAllUserButtons_(on|off)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_setAllUserButtonsVisible($match[1] == 'on');
-    editText($message_id, "🎛 تنظیمات دکمه‌های کاربر", wizwiz_getUserButtonSettingsKeys(), 'HTML');
+    v2raystore_setAllUserButtonsVisible($match[1] == 'on');
+    editText($message_id, "🎛 تنظیمات دکمه‌های کاربر", v2raystore_getUserButtonSettingsKeys(), 'HTML');
     exit();
 }
 
@@ -998,17 +998,17 @@ if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($f
 
 
 if($data == "switchLocationSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    editText($message_id, v2raystore_getSwitchSettingsMenuText(), v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
 }
 if($data == "toggleSwitchCostMode" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $settings = wizwiz_getServerSwitchSettings();
+    $settings = v2raystore_getServerSwitchSettings();
     $modes = ['auto', 'percent', 'manual'];
     $currentIndex = array_search($settings['mode'], $modes, true);
     if($currentIndex === false) $currentIndex = 0;
     $settings['mode'] = $modes[($currentIndex + 1) % count($modes)];
-    wizwiz_saveServerSwitchSettings($settings);
-    editText($message_id, wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    v2raystore_saveServerSwitchSettings($settings);
+    editText($message_id, v2raystore_getSwitchSettingsMenuText(), v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
 }
 if(in_array($data, ['editSwitchDefaultGb','editSwitchPercent','editSwitchMinGb','editSwitchDailyLimit'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -1026,7 +1026,7 @@ if(in_array($data, ['editSwitchDefaultGb','editSwitchPercent','editSwitchMinGb',
     exit();
 }
 if(in_array($userInfo['step'] ?? '', ['editSwitchDefaultGb','editSwitchPercent','editSwitchMinGb','editSwitchDailyLimit'], true) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $settings = wizwiz_getServerSwitchSettings();
+    $settings = v2raystore_getServerSwitchSettings();
     if($userInfo['step'] == 'editSwitchDailyLimit'){
         if(!ctype_digit(trim((string)$text)) || intval($text) < 0){
             sendMessage("لطفاً یک عدد صحیح صفر یا بزرگ‌تر وارد کنید.", $cancelKey);
@@ -1046,55 +1046,55 @@ if(in_array($userInfo['step'] ?? '', ['editSwitchDefaultGb','editSwitchPercent',
         elseif($userInfo['step'] == 'editSwitchPercent') $settings['percent'] = floatval($text);
         else $settings['min_gb'] = floatval($text);
     }
-    wizwiz_saveServerSwitchSettings($settings);
+    v2raystore_saveServerSwitchSettings($settings);
     setUser();
     sendMessage("✅ تنظیمات تغییر سرور ذخیره شد.", $removeKeyboard);
-    sendMessage(wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    sendMessage(v2raystore_getSwitchSettingsMenuText(), v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
 }
 if($data == 'selectSwitchPairFrom' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "🌎 سرور مبدا را برای تنظیم حجم ثابت انتخاب کنید:", wizwiz_getSwitchPairFromKeys(false, 'gb'), "HTML");
+    editText($message_id, "🌎 سرور مبدا را برای تنظیم حجم ثابت انتخاب کنید:", v2raystore_getSwitchPairFromKeys(false, 'gb'), "HTML");
     exit();
 }
 if($data == 'selectSwitchPairPercentFrom' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "🌎 سرور مبدا را برای تنظیم درصد اختصاصی انتخاب کنید:", wizwiz_getSwitchPairFromKeys(false, 'percent'), "HTML");
+    editText($message_id, "🌎 سرور مبدا را برای تنظیم درصد اختصاصی انتخاب کنید:", v2raystore_getSwitchPairFromKeys(false, 'percent'), "HTML");
     exit();
 }
 if($data == 'selectSwitchPairDeleteFrom' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "🗑 سرور مبدا مسیر اختصاصی را انتخاب کنید:", wizwiz_getSwitchPairFromKeys(true), "HTML");
+    editText($message_id, "🗑 سرور مبدا مسیر اختصاصی را انتخاب کنید:", v2raystore_getSwitchPairFromKeys(true), "HTML");
     exit();
 }
 if(preg_match('/^switchPairFrom(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "🌎 سرور مقصد را انتخاب کنید:", wizwiz_getSwitchPairToKeys($match[1], false, 'gb'), "HTML");
+    editText($message_id, "🌎 سرور مقصد را انتخاب کنید:", v2raystore_getSwitchPairToKeys($match[1], false, 'gb'), "HTML");
     exit();
 }
 if(preg_match('/^switchPairPercentFrom(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "🌎 سرور مقصد را انتخاب کنید:", wizwiz_getSwitchPairToKeys($match[1], false, 'percent'), "HTML");
+    editText($message_id, "🌎 سرور مقصد را انتخاب کنید:", v2raystore_getSwitchPairToKeys($match[1], false, 'percent'), "HTML");
     exit();
 }
 if(preg_match('/^switchPairDeleteFrom(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "🗑 سرور مقصد مسیری که می‌خواهید حذف شود را انتخاب کنید:", wizwiz_getSwitchPairToKeys($match[1], true), "HTML");
+    editText($message_id, "🗑 سرور مقصد مسیری که می‌خواهید حذف شود را انتخاب کنید:", v2raystore_getSwitchPairToKeys($match[1], true), "HTML");
     exit();
 }
 if(preg_match('/^switchPairTo(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    $fromTitle = wizwiz_switchGetServerTitle($match[1]);
-    $toTitle = wizwiz_switchGetServerTitle($match[2]);
+    $fromTitle = v2raystore_switchGetServerTitle($match[1]);
+    $toTitle = v2raystore_switchGetServerTitle($match[2]);
     sendMessage("🔻 حجم کسر اختصاصی مسیر زیر را به گیگابایت وارد کنید:\n\n<b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nمثال: <code>2</code>", $cancelKey, "HTML");
     setUser('editSwitchPairCost' . intval($match[1]) . '_' . intval($match[2]));
     exit();
 }
 if(preg_match('/^switchPairPercentTo(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    $fromTitle = wizwiz_switchGetServerTitle($match[1]);
-    $toTitle = wizwiz_switchGetServerTitle($match[2]);
+    $fromTitle = v2raystore_switchGetServerTitle($match[1]);
+    $toTitle = v2raystore_switchGetServerTitle($match[2]);
     sendMessage("📊 درصد کسر اختصاصی مسیر زیر را وارد کنید:\n\n<b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nمثال: <code>15</code> یعنی ۱۵٪ از حجم باقی‌مانده کم شود.\nبرای سرویس ۳۰ گیگ می‌شود ۴.۵ گیگ و برای سرویس ۵ گیگ می‌شود ۰.۷۵ گیگ.", $cancelKey, "HTML");
     setUser('editSwitchPairPercent' . intval($match[1]) . '_' . intval($match[2]));
     exit();
 }
 if(preg_match('/^switchPairDeleteTo(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_deleteSwitchPairCostGb($match[1], $match[2]);
-    editText($message_id, "✅ تنظیم اختصاصی این مسیر حذف شد.\nاز این بعد برای این مسیر، تنظیمات عمومی اعمال می‌شود.", wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    v2raystore_deleteSwitchPairCostGb($match[1], $match[2]);
+    editText($message_id, "✅ تنظیم اختصاصی این مسیر حذف شد.\nاز این بعد برای این مسیر، تنظیمات عمومی اعمال می‌شود.", v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
 }
 if(preg_match('/^editSwitchPairCost(\d+)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -1102,10 +1102,10 @@ if(preg_match('/^editSwitchPairCost(\d+)_(\d+)$/', $userInfo['step'] ?? '', $mat
         sendMessage("لطفاً مقدار حجم را فقط به عدد وارد کنید. مثال: 2.5", $cancelKey);
         exit();
     }
-    wizwiz_setSwitchPairCostGb($match[1], $match[2], floatval($text));
+    v2raystore_setSwitchPairCostGb($match[1], $match[2], floatval($text));
     setUser();
     sendMessage("✅ حجم ثابت اختصاصی مسیر ذخیره شد.", $removeKeyboard);
-    sendMessage(wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    sendMessage(v2raystore_getSwitchSettingsMenuText(), v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
 }
 if(preg_match('/^editSwitchPairPercent(\d+)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -1113,10 +1113,10 @@ if(preg_match('/^editSwitchPairPercent(\d+)_(\d+)$/', $userInfo['step'] ?? '', $
         sendMessage("لطفاً درصد را بین 0 تا 100 وارد کنید. مثال: 15", $cancelKey);
         exit();
     }
-    wizwiz_setSwitchPairPercent($match[1], $match[2], floatval($text));
+    v2raystore_setSwitchPairPercent($match[1], $match[2], floatval($text));
     setUser();
     sendMessage("✅ درصد اختصاصی مسیر ذخیره شد.", $removeKeyboard);
-    sendMessage(wizwiz_getSwitchSettingsMenuText(), wizwiz_getSwitchSettingsMenuKeys(), "HTML");
+    sendMessage(v2raystore_getSwitchSettingsMenuText(), v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
 }
 
@@ -1218,14 +1218,14 @@ if(preg_match('/^changePaymentKeys(\w+)/',$data,$match) && ($from_id == $admin |
 }
 if(preg_match('/^changePaymentKeys(\w+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
 
-    $paymentKeys = wizwiz_getPaymentKeys();
+    $paymentKeys = v2raystore_getPaymentKeys();
     $value = trim((string)$text);
     if(in_array(strtolower($value), ['/empty', 'empty', 'خالی'], true)) $value = '';
     $paymentKeys[$match[1]] = $value;
     if(in_array($match[1], ['bankAccount', 'holderName', 'secondBankAccount', 'secondHolderName'], true)){
         $paymentKeys['cardInfoVersion'] = time();
     }
-    wizwiz_savePaymentKeys($paymentKeys);
+    v2raystore_savePaymentKeys($paymentKeys);
 
     sendMessage($mainValues['saved_successfuly'],$removeKeyboard);
     sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
@@ -1260,7 +1260,7 @@ if(preg_match('/^addAgentManualDiscount_(\d+)$/', $userInfo['step'], $m) && $tex
         exit();
     }
     $discountValue = (string)(0 + $text);
-    wizwiz_ensureBasicUserRecord($targetId);
+    v2raystore_ensureBasicUserRecord($targetId);
     $discount = json_encode(['normal'=>$discountValue], JSON_UNESCAPED_UNICODE);
     $now = time();
     $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 1, `discount_percent` = ?, `agent_date` = ?, `step` = 'none' WHERE `userid` = ?");
@@ -1500,7 +1500,7 @@ if($data=="inviteSetting" && ($from_id == $admin || $userInfo['isAdmin'] == true
         [['text'=>"❗️بنر دعوت",'callback_data'=>"inviteBanner"]],
         [
             ['text'=>$inviteAmount,'callback_data'=>"editInviteAmount"],
-            ['text'=>"مقدار پورسانت",'callback_data'=>"wizwizch"]
+            ['text'=>"مقدار پورسانت",'callback_data'=>"v2raystore"]
             ],
         [
             ['text'=>$buttonValues['back_button'],'callback_data'=>"botSettings"]
@@ -1615,7 +1615,7 @@ if($userInfo['step'] == "editInviteAmount" && ($from_id == $admin || $userInfo['
             [['text'=>"❗️بنر دعوت",'callback_data'=>"inviteBanner"]],
             [
                 ['text'=>number_format($text) . " تومان",'callback_data'=>"editInviteAmount"],
-                ['text'=>"مقدار پورسانت",'callback_data'=>"wizwizch"]
+                ['text'=>"مقدار پورسانت",'callback_data'=>"v2raystore"]
                 ], 
             [
                 ['text'=>$buttonValues['back_button'],'callback_data'=>"botSettings"]
@@ -1680,7 +1680,7 @@ if($data=="myInfo"){
     $myWallet = number_format($userInfo['wallet']) . " تومان";
     
     $accountKeys = [];
-    if(wizwiz_isWalletOpenForCurrentUser()){
+    if(v2raystore_isWalletOpenForCurrentUser()){
         $accountKeys[] = [
             ['text'=>"شارژ کیف پول 💰",'callback_data'=>"increaseMyWallet"],
             ['text'=>"انتقال موجودی",'callback_data'=>"transferMyWallet"]
@@ -1703,7 +1703,7 @@ if($data=="myInfo"){
             $keys,"html");
 }
 if($data=="transferMyWallet"){
-    if(!wizwiz_isWalletOpenForCurrentUser()){
+    if(!v2raystore_isWalletOpenForCurrentUser()){
         alert("کیف پول در حال حاضر برای حساب شما غیرفعال است.", true);
         exit();
     }
@@ -1714,7 +1714,7 @@ if($data=="transferMyWallet"){
     }else alert("موجودی حساب شما کم است");
 }
 if($userInfo['step'] =="transferMyWallet" && $text != $buttonValues['cancel']){
-    if(!wizwiz_isWalletOpenForCurrentUser()){
+    if(!v2raystore_isWalletOpenForCurrentUser()){
         setUser();
         sendMessage("کیف پول در حال حاضر برای حساب شما غیرفعال است.", $removeKeyboard);
         exit();
@@ -1757,7 +1757,7 @@ if(preg_match('/^tranfserUserAmount(\d+)/',$userInfo['step'],$match) && $text !=
     }else sendMessage($mainValues['send_only_number']);
 }
 if($data=="increaseMyWallet"){
-    if(!wizwiz_isWalletOpenForCurrentUser()){
+    if(!v2raystore_isWalletOpenForCurrentUser()){
         alert("کیف پول در حال حاضر برای حساب شما غیرفعال است.", true);
         exit();
     }
@@ -1766,7 +1766,7 @@ if($data=="increaseMyWallet"){
     setUser($data);
 }
 if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
-    if(!wizwiz_isWalletOpenForCurrentUser()){
+    if(!v2raystore_isWalletOpenForCurrentUser()){
         setUser();
         sendMessage("کیف پول در حال حاضر برای حساب شما غیرفعال است.", $removeKeyboard);
         exit();
@@ -1812,18 +1812,18 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
 if(preg_match('/increaseWalletWithCartToCart(.*)/',$data, $match)) {
     delMessage();
     setUser($data);
-    wizwiz_sendCartToCartInstructions($match[1], 'increase_wallet_cart_to_cart', 'HTML');
+    v2raystore_sendCartToCartInstructions($match[1], 'increase_wallet_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
-        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
+    if(function_exists('v2raystore_isReceiptPhotoMessage') ? v2raystore_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         setUser();
         $uid = $userInfo['userid'];
         $name = $userInfo['name'];
         $username = $userInfo['username'];
     
-        wizwiz_markPayReceiptSent($match[1], $fileid);
+        v2raystore_markPayReceiptSent($match[1], $fileid);
         
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
@@ -1838,15 +1838,15 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
         sendMessage($mainValues['reached_main_menu'],getMainKeys());
         $msg = str_replace(['PRICE', 'USERNAME', 'NAME', 'USER-ID'],[$price, $username, $name, $from_id], $mainValues['increase_wallet_request_message']);
         
-        $keyboard = wizwiz_adminPendingWalletKeyboard($match[1], $uid);
-        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
-            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+        $keyboard = v2raystore_adminPendingWalletKeyboard($match[1], $uid);
+        if(function_exists('v2raystore_sendAdminPaymentPhoto')){
+            $adminSend = v2raystore_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
             if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
         }else{
             sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
         }
     }else{
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($match[1]);
         else sendMessage($mainValues['please_send_only_image']);
     }
 }
@@ -1871,8 +1871,8 @@ if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $u
     $stmt->close();
     if($changed <= 0){
         alert('این درخواست قبلاً تأیید/رد شده یا در حال پردازش است.', true);
-        if(($payInfo['state'] ?? '') == 'approved' && function_exists('wizwiz_orderStatusKeyboard')){
-            editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
+        if(($payInfo['state'] ?? '') == 'approved' && function_exists('v2raystore_orderStatusKeyboard')){
+            editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
         }
         exit();
     }
@@ -1884,8 +1884,8 @@ if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $u
 
     sendMessage("افزایش حساب شما با موفقیت تأیید شد\n✅ مبلغ " . number_format($price). " تومان به حساب شما اضافه شد",null,null,$userId);
     
-    if(function_exists('wizwiz_orderStatusKeyboard')){
-        editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
+    if(function_exists('v2raystore_orderStatusKeyboard')){
+        editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
     }else{
         editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
     }
@@ -1901,11 +1901,11 @@ if(preg_match('/^decPayment(.*)/',$data,$match) && ($from_id == $admin || $userI
         $decUserId = intval($decPayInfo['user_id'] ?? 0);
         if(($decPayInfo['state'] ?? '') != 'sent'){
             alert('این درخواست قبلاً تأیید/رد شده یا قابل رد کردن نیست.', true);
-            if(($decPayInfo['state'] ?? '') == 'approved' && function_exists('wizwiz_orderStatusKeyboard')) editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $decUserId, 'success'));
+            if(($decPayInfo['state'] ?? '') == 'approved' && function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $decUserId, 'success'));
             exit();
         }
     }
-    $keys = function_exists('wizwiz_orderStatusKeyboard') ? wizwiz_orderStatusKeyboard('❌ رد شد', $decUserId, 'danger') : json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE);
+    $keys = function_exists('v2raystore_orderStatusKeyboard') ? v2raystore_orderStatusKeyboard('❌ رد شد', $decUserId, 'danger') : json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE);
     file_put_contents("temp" . $from_id . ".txt", $keys);
     sendMessage("لطفاً دلیل عدم تأیید افزایش موجودی را وارد کنید",$cancelKey);
     setUser("decPayment" . $message_id . "_" . $match[1]);
@@ -2357,18 +2357,18 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         else{
             $token = RandomString(30);
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
-            $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+            $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
             $vray_link = json_encode($vraylink);
         }
-        $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-        $__wizwizSubLink = isset($subLink) ? $subLink : '';
-        $__wizwizServerType = isset($serverType) ? $serverType : '';
-        $__wizwizRemark = isset($remark) ? $remark : '';
-        $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-            $__wizwizLoopLinks = [];
+        $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+        $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+        $__v2raystoreRemark = isset($remark) ? $remark : '';
+        $__v2raystoreLoopLinks = $vraylink;
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+            $__v2raystoreLoopLinks = [];
         }
-        foreach($__wizwizLoopLinks as $link){
+        foreach($__v2raystoreLoopLinks as $link){
             $acc_text = "
     
         🔮 $remark \n " . ($botState['configLinkState'] != "off" && $serverType != "marzban"?"<code>$link</code>":"");
@@ -2795,20 +2795,20 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $vray_link = json_encode($response->vray_links);
         }else{
             $token = RandomString(30);
-            $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+            $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
     
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink);
         }
-        $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-        $__wizwizSubLink = isset($subLink) ? $subLink : '';
-        $__wizwizServerType = isset($serverType) ? $serverType : '';
-        $__wizwizRemark = isset($remark) ? $remark : '';
-        $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-            $__wizwizLoopLinks = [];
+        $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+        $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+        $__v2raystoreRemark = isset($remark) ? $remark : '';
+        $__v2raystoreLoopLinks = $vraylink;
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+            $__v2raystoreLoopLinks = [];
         }
-        foreach($__wizwizLoopLinks as $link){
+        foreach($__v2raystoreLoopLinks as $link){
         $acc_text = "
         
 😍 سفارش جدید شما
@@ -2875,7 +2875,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     }
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"wizwizch"]
+            ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"v2raystore"]
         ],
         ]]);
         
@@ -2892,7 +2892,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     }
     $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                 [$serverTitle, 'ارزی ریالی', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);
-    $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
+    $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
     
     sendMessage($msg,$keys,"html", $admin);
 }
@@ -2954,7 +2954,7 @@ elseif($payType == "RENEW_ACCOUNT"){
 sendMessage("✅سرویس $remark با موفقیت تمدید شد",getMainKeys());
 $keys = json_encode(['inline_keyboard'=>[
     [
-        ['text'=>"به به تمدید 😍",'callback_data'=>"wizwizch"]
+        ['text'=>"به به تمدید 😍",'callback_data'=>"v2raystore"]
         ],
     ]]);
 
@@ -3021,7 +3021,7 @@ if($response->success){
     
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"اخیش یکی زمان زد 😁",'callback_data'=>"wizwizch"]
+            ['text'=>"اخیش یکی زمان زد 😁",'callback_data'=>"v2raystore"]
             ],
         ]]);
 sendMessage("
@@ -3089,7 +3089,7 @@ if($response->success){
     $stmt->close();
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"اخیش یکی حجم زد 😁",'callback_data'=>"wizwizch"]
+            ['text'=>"اخیش یکی حجم زد 😁",'callback_data'=>"v2raystore"]
             ],
         ]]);
 sendMessage("
@@ -3168,7 +3168,7 @@ elseif($payType == "RENEW_SCONFIG"){
 }
     
     editKeys(json_encode(['inline_keyboard'=>[
-		    [['text'=>"پرداخت انجام شد",'callback_data'=>"wizwizch"]]
+		    [['text'=>"پرداخت انجام شد",'callback_data'=>"v2raystore"]]
 		    ]]));
 }else{
     if($request_json->payment_status == 'partially_paid'){
@@ -3297,11 +3297,11 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
     $afterMsgState = (strlen(trim($afterMsg)) > 0) ? "فعال ✅" : "خاموش 🚫";
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"📦 عملیات گروهی", 'callback_data'=>"wizwizch", 'style'=>'primary']],
+        [['text'=>"📦 عملیات گروهی", 'callback_data'=>"v2raystore", 'style'=>'primary']],
         [['text'=>"✅ همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive", 'style'=>'success'], ['text'=>"👤 فقط یک کاربر",'callback_data'=>"updateConfigsUser", 'style'=>'primary']],
         [['text'=>"🧩 یک کانفیگ",'callback_data'=>"updateConfigsOne", 'style'=>'primary'], ['text'=>"🌐 بر اساس دامنه/ساب",'callback_data'=>"updateConfigsByDomain", 'style'=>'primary']],
 
-        [['text'=>"🧰 ابزارها", 'callback_data'=>"wizwizch", 'style'=>'primary']],
+        [['text'=>"🧰 ابزارها", 'callback_data'=>"v2raystore", 'style'=>'primary']],
         [['text'=>"➕ افزودن دستی برای کاربر",'callback_data'=>"manualAttachConfig", 'style'=>'success'], ['text'=>"✉️ پیام پس از آپدیت",'callback_data'=>"updateConfigsAfterMessage", 'style'=>'primary']],
         [['text'=>"🗑 پاکسازی قدیمی‌ها",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'danger']],
 
@@ -4660,7 +4660,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
                 sendMessage(str_replace("AMOUNT", $discount, $mainValues['valid_discount_code']));
                 $keys = json_encode(['inline_keyboard'=>[
                     [
-                        ['text'=>"❤️", "callback_data"=>"wizwizch"]
+                        ['text'=>"❤️", "callback_data"=>"v2raystore"]
                         ],
                     ]]);
             sendMessage(
@@ -4737,7 +4737,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         $stmt->execute();
         $rowId = $stmt->insert_id;
         $stmt->close();
-        wizwiz_notifyPurchaseStarted($hash_id, 'انتخاب پلن دلخواه');
+        v2raystore_notifyPurchaseStarted($hash_id, 'انتخاب پلن دلخواه');
     }
     
     
@@ -4763,12 +4763,12 @@ if(preg_match('/^haveDiscount(.+?)_(.*)/',$data,$match)){
     elseif($match[1] == "Renew") setUser('discountRenew' . $match[2]);
 }
 if($data=="getTestAccount"){
-    if(function_exists('wizwiz_canUserGetTestAccount') && !wizwiz_canUserGetTestAccount($userInfo, $from_id)){
-        $used = function_exists('wizwiz_getUserTestAccountUsedCount') ? wizwiz_getUserTestAccountUsedCount($userInfo) : 1;
-        $limit = function_exists('wizwiz_getTestAccountLimitText') ? wizwiz_getTestAccountLimitText($userInfo) : '1 بار';
+    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id)){
+        $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo) : 1;
+        $limit = function_exists('v2raystore_getTestAccountLimitText') ? v2raystore_getTestAccountLimitText($userInfo) : '1 بار';
         alert("شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}. در صورت نیاز، لطفاً با پشتیبانی در ارتباط باشید.");
         exit();
-    }elseif(!function_exists('wizwiz_canUserGetTestAccount') && $userInfo['freetrial'] != null && $from_id != $admin && $userInfo['isAdmin'] != true){
+    }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] != null && $from_id != $admin && $userInfo['isAdmin'] != true){
         alert("شما اکانت تست را قبلاً استفاده کرده‌اید.");
         exit();
     }
@@ -4861,7 +4861,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
                 sendMessage(str_replace("AMOUNT", $discount, $mainValues['valid_discount_code']));
                 $keys = json_encode(['inline_keyboard'=>[
                     [
-                        ['text'=>"❤️", "callback_data"=>"wizwizch"]
+                        ['text'=>"❤️", "callback_data"=>"v2raystore"]
                         ],
                     ]]);
                 sendMessage(
@@ -4965,7 +4965,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
             $stmt->execute();
             $rowId = $stmt->insert_id;
             $stmt->close();
-            wizwiz_notifyPurchaseStarted($hash_id, isset($accountCount) ? 'انتخاب پلن خرید انبوه' : 'انتخاب پلن خرید');
+            v2raystore_notifyPurchaseStarted($hash_id, isset($accountCount) ? 'انتخاب پلن خرید انبوه' : 'انتخاب پلن خرید');
         }else{
             $price = $afterDiscount;
         }
@@ -5149,7 +5149,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     }
     else{
         $token = RandomString(30);
-        $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+        $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
     
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link = json_encode($vraylink);
@@ -5157,15 +5157,15 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     delMessage();
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
-    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-        $__wizwizSubLink = isset($subLink) ? $subLink : '';
-        $__wizwizServerType = isset($serverType) ? $serverType : '';
-        $__wizwizRemark = isset($remark) ? $remark : '';
-        $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-            $__wizwizLoopLinks = [];
+    $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+        $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+        $__v2raystoreRemark = isset($remark) ? $remark : '';
+        $__v2raystoreLoopLinks = $vraylink;
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+            $__v2raystoreLoopLinks = [];
         }
-        foreach($__wizwizLoopLinks as $link){
+        foreach($__v2raystoreLoopLinks as $link){
         $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -5240,12 +5240,12 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"wizwizch"]
+            ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"v2raystore"]
         ],
         ]]);
     $msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                 ['کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_custom_account_request']);
-    $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle ?? '', $file_detail['title'] ?? '');
+    $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle ?? '', $file_detail['title'] ?? '');
     sendMessage($msg,$keys,"html", $admin);
 }
 if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
@@ -5259,7 +5259,7 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     if($match[1] == "Sub"){
-        $subLink = wizwiz_makeCustomerSubLink($order['server_id'], $order['token'], $order['uuid'] ?? "", $order['inbound_id'] ?? 0, $order['remark'] ?? "");
+        $subLink = v2raystore_makeCustomerSubLink($order['server_id'], $order['token'], $order['uuid'] ?? "", $order['inbound_id'] ?? 0, $order['remark'] ?? "");
         if($subLink == ""){
             alert("لینک ساب پنل برای این سرویس پیدا نشد.");
             exit;
@@ -5358,19 +5358,19 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$data, $match)) {
     
     setUser($data);
     delMessage();
-    wizwiz_sendCartToCartInstructions($match[1], 'buy_account_cart_to_cart', 'HTML');
+    v2raystore_sendCartToCartInstructions($match[1], 'buy_account_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
-        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
+    if(function_exists('v2raystore_isReceiptPhotoMessage') ? v2raystore_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
         $payInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        wizwiz_markPayReceiptSent($match[1], $fileid);
+        v2raystore_markPayReceiptSent($match[1], $fileid);
         
         $fid = $payInfo['plan_id'];
         $volume = $payInfo['volume'];
@@ -5411,25 +5411,25 @@ if(preg_match('/payCustomWithCartToCart(.*)/',$userInfo['step'], $match) and $te
     
         $msg = str_replace(['TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                             ["کارت به کارت", $from_id, $username, $first_name, $fileprice, $remark,$volume, $days], $mainValues['buy_custom_account_request']);
-        $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle ?? '', $filename ?? ($res['title'] ?? ''));
+        $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle ?? '', $filename ?? ($res['title'] ?? ''));
         $keyboard = json_encode(['inline_keyboard' => [
             [
                 ['text' => $buttonValues['approve'], 'callback_data' => "accept" . $match[1], 'style' => 'success'],
                 ['text' => $buttonValues['decline'], 'callback_data' => "declineOrder" . $match[1], 'style' => 'danger']
             ],
-            [wizwiz_userPrivateButton($uid)]
+            [v2raystore_userPrivateButton($uid)]
         ]], JSON_UNESCAPED_UNICODE);
-        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
-            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+        if(function_exists('v2raystore_sendAdminPaymentPhoto')){
+            $adminSend = v2raystore_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
             if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
         }else{
             $adminMsg = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
-            if(function_exists('wizwiz_storeAdminPayMessage') && isset($adminMsg->ok) && $adminMsg->ok && isset($adminMsg->result->message_id)){
-                wizwiz_storeAdminPayMessage($match[1], $admin, intval($adminMsg->result->message_id));
+            if(function_exists('v2raystore_storeAdminPayMessage') && isset($adminMsg->ok) && $adminMsg->ok && isset($adminMsg->result->message_id)){
+                v2raystore_storeAdminPayMessage($match[1], $admin, intval($adminMsg->result->message_id));
             }
         }
     }else{
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($match[1]);
         else sendMessage($mainValues['please_send_only_image']);
     }
 }
@@ -5582,7 +5582,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     }
     else{
         $token = RandomString(30);
-        $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+        $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
     
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link= json_encode($vraylink);
@@ -5590,16 +5590,16 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
 
-    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-    $__wizwizSubLink = isset($subLink) ? $subLink : '';
-    $__wizwizServerType = isset($serverType) ? $serverType : '';
-    $__wizwizRemark = isset($remark) ? $remark : '';
-    $__wizwizLoopLinks = $vraylink;
-    if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-        $__wizwizLoopLinks = [];
+    $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+    $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+    $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+    $__v2raystoreRemark = isset($remark) ? $remark : '';
+    $__v2raystoreLoopLinks = $vraylink;
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+        $__v2raystoreLoopLinks = [];
     }
 
-    foreach($__wizwizLoopLinks as $vray_link){
+    foreach($__v2raystoreLoopLinks as $vray_link){
         $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -5645,10 +5645,10 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     $stmt->close();
 
 
-    if(function_exists('wizwiz_orderStatusKeyboard')){
-        editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', $uid, 'success'));
+    if(function_exists('v2raystore_orderStatusKeyboard')){
+        editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $uid, 'success'));
     }else{
-        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE));
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE));
     }
     
     $filename = $file_detail['title'];
@@ -5693,7 +5693,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     if($admin != $from_id){ 
         $keys = json_encode(['inline_keyboard'=>[
             [
-                ['text'=>"به به 🛍",'callback_data'=>"wizwizch"]
+                ['text'=>"به به 🛍",'callback_data'=>"v2raystore"]
             ],
             ]]);
         $msg = str_replace(['USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'FILENAME'],
@@ -5914,18 +5914,18 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 $token = RandomString(30);
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link= json_encode($vraylink);
-                $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+                $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
             }
 
-            $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-        $__wizwizSubLink = isset($subLink) ? $subLink : '';
-        $__wizwizServerType = isset($serverType) ? $serverType : '';
-        $__wizwizRemark = isset($remark) ? $remark : '';
-        $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-            $__wizwizLoopLinks = [];
+            $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+        $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+        $__v2raystoreRemark = isset($remark) ? $remark : '';
+        $__v2raystoreLoopLinks = $vraylink;
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+            $__v2raystoreLoopLinks = [];
         }
-        foreach($__wizwizLoopLinks as $link){
+        foreach($__v2raystoreLoopLinks as $link){
                 $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -6003,7 +6003,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"wizwizch"]
+            ['text'=>"بنازم خرید جدید ❤️",'callback_data'=>"v2raystore"]
         ],
         ]]);
     if($payInfo['type'] == "RENEW_SCONFIG"){
@@ -6013,7 +6013,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     else{
         $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                 [$serverTitle, 'کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);
-        $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
+        $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
     }
 
     sendMessage($msg,$keys,"html", $admin);
@@ -6062,19 +6062,19 @@ if(preg_match('/payWithCartToCart(.*)/',$data,$match)) {
     }
     setUser($data);
     delMessage();
-    wizwiz_sendCartToCartInstructions($match[1], 'buy_account_cart_to_cart', 'HTML');
+    v2raystore_sendCartToCartInstructions($match[1], 'buy_account_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
-        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
+    if(function_exists('v2raystore_isReceiptPhotoMessage') ? v2raystore_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
         $payInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
         
-        wizwiz_markPayReceiptSent($match[1], $fileid);
+        v2raystore_markPayReceiptSent($match[1], $fileid);
     
         
         $fid = $payInfo['plan_id'];
@@ -6120,21 +6120,21 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
         else {
             $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],[$serverTitle, 'کارت به کارت', $from_id, $username, $name, $fileprice, $filename, $volume, $days], $mainValues['buy_new_account_request']);
         }
-        $msg = wizwiz_appendServerPlanToChannelReport($msg, $serverTitle, $filename);
+        $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle, $filename);
 
-        $keyboard = wizwiz_adminPendingOrderKeyboard($match[1], $uid);
+        $keyboard = v2raystore_adminPendingOrderKeyboard($match[1], $uid);
         setUser('', 'temp');
-        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
-            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+        if(function_exists('v2raystore_sendAdminPaymentPhoto')){
+            $adminSend = v2raystore_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
             if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
         }else{
             $res = sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
-            if(function_exists('wizwiz_storeAdminPayMessage') && isset($res->ok) && $res->ok && isset($res->result->message_id)){
-                wizwiz_storeAdminPayMessage($match[1], $admin, intval($res->result->message_id));
+            if(function_exists('v2raystore_storeAdminPayMessage') && isset($res->ok) && $res->ok && isset($res->result->message_id)){
+                v2raystore_storeAdminPayMessage($match[1], $admin, intval($res->result->message_id));
             }
         }
     }else{
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($match[1]);
         else sendMessage($mainValues['please_send_only_image']);
     }
 }
@@ -6146,9 +6146,9 @@ if($data=="availableServers"){
 
     $keys = array();
     $keys[] = [
-        ['text'=>"تعداد باقیمانده",'callback_data'=>"wizwizch"],
-        ['text'=>"پلن",'callback_data'=>"wizwizch"],
-        ['text'=>'سرور','callback_data'=>"wizwizch"]
+        ['text'=>"تعداد باقیمانده",'callback_data'=>"v2raystore"],
+        ['text'=>"پلن",'callback_data'=>"v2raystore"],
+        ['text'=>'سرور','callback_data'=>"v2raystore"]
         ];
     while($file_detail = $serversList->fetch_assoc()){
         $days = $file_detail['days'];
@@ -6166,9 +6166,9 @@ if($data=="availableServers"){
             $name = $name->fetch_assoc()['title'];
             
             $keys[] = [
-                ['text'=>$acount . " اکانت",'callback_data'=>"wizwizch"],
-                ['text'=>$title??" ",'callback_data'=>"wizwizch"],
-                ['text'=>$name??" ",'callback_data'=>"wizwizch"]
+                ['text'=>$acount . " اکانت",'callback_data'=>"v2raystore"],
+                ['text'=>$title??" ",'callback_data'=>"v2raystore"],
+                ['text'=>$name??" ",'callback_data'=>"v2raystore"]
                 ];
         }
     }
@@ -6184,8 +6184,8 @@ if($data=="availableServers2"){
 
     $keys = array();
     $keys[] = [
-        ['text'=>"تعداد باقیمانده",'callback_data'=>"wizwizch"],
-        ['text'=>'سرور','callback_data'=>"wizwizch"]
+        ['text'=>"تعداد باقیمانده",'callback_data'=>"v2raystore"],
+        ['text'=>'سرور','callback_data'=>"v2raystore"]
         ];
     while($file_detail2 = $serversList->fetch_assoc()){
         $days2 = $file_detail2['days'];
@@ -6205,8 +6205,8 @@ if($data=="availableServers2"){
             $acount2 = $sInfo['ucount'];
             
             $keys[] = [
-                ['text'=>$acount2 . " اکانت",'callback_data'=>"wizwizch"],
-                ['text'=>$title2??" ",'callback_data'=>"wizwizch"],
+                ['text'=>$acount2 . " اکانت",'callback_data'=>"v2raystore"],
+                ['text'=>$title2??" ",'callback_data'=>"v2raystore"],
                 ];
         }
     }
@@ -6235,7 +6235,7 @@ if($data=="requestAgency"){
 }
 if(preg_match('/^agencyDecline(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editKeys(json_encode(['inline_keyboard'=>[
-        [['text'=>$buttonValues['declined'],'callback_data'=>"wizwizch"]]
+        [['text'=>$buttonValues['declined'],'callback_data'=>"v2raystore"]]
         ]]));
     sendMessage($mainValues['agency_request_declined'], null,null,$match[1]);
     setUser(-1, 'is_agent', $match[1]);
@@ -6247,7 +6247,7 @@ if(preg_match('/^agencyApprove(\d+)/',$data,$match) && ($from_id == $admin || $u
 if(preg_match('/^agencyApprove(\d+)_(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text)){
         editKeys(json_encode(['inline_keyboard'=>[
-            [['text'=>$buttonValues['approved'],'callback_data'=>"wizwizch"]]
+            [['text'=>$buttonValues['approved'],'callback_data'=>"v2raystore"]]
             ]]), $match[2]);
         sendMessage($mainValues['saved_successfuly']);
         setUser();
@@ -6261,17 +6261,17 @@ if(preg_match('/^agencyApprove(\d+)_(\d+)/',$userInfo['step'],$match) && $text !
 }
 if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser();
-    $result = wizwiz_approveSentOrderByHash($match[1], false);
+    $result = v2raystore_approveSentOrderByHash($match[1], false);
     if(!$result['ok']){
         alert($result['message'], true);
         exit();
     }
-    $approvedText = function_exists('wizwiz_approvalStatusTextFromResult') ? wizwiz_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
-    $copyText = function_exists('wizwiz_approvalCopyTextFromResult') ? wizwiz_approvalCopyTextFromResult($result) : '';
-    if(function_exists('wizwiz_orderStatusKeyboard')){
-        editKeys(wizwiz_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
+    $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
+    if(function_exists('v2raystore_orderStatusKeyboard')){
+        editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
     }else{
-        editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE));
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE));
     }
     exit();
     
@@ -6464,20 +6464,20 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
             }
             else{
                 $token = RandomString(30);
-                $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+                $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
         
                 $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
                 $vray_link = json_encode($vraylink);
             }
-            $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-        $__wizwizSubLink = isset($subLink) ? $subLink : '';
-        $__wizwizServerType = isset($serverType) ? $serverType : '';
-        $__wizwizRemark = isset($remark) ? $remark : '';
-        $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-            $__wizwizLoopLinks = [];
+            $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+        $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+        $__v2raystoreRemark = isset($remark) ? $remark : '';
+        $__v2raystoreLoopLinks = $vraylink;
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+            $__v2raystoreLoopLinks = [];
         }
-        foreach($__wizwizLoopLinks as $link){
+        foreach($__v2raystoreLoopLinks as $link){
                 $acc_text = "
 😍 سفارش جدید شما
 📡 پروتکل: $protocol
@@ -6538,7 +6538,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     }
 
     unset($markup[count($markup)-1]);
-    $markup[] = [['text'=>"✅",'callback_data'=>"wizwizch"]];
+    $markup[] = [['text'=>"✅",'callback_data'=>"v2raystore"]];
     $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
 
     editKeys($keys);
@@ -6573,7 +6573,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         if($admin != $from_id){
             $keys = json_encode(['inline_keyboard'=>[
                 [
-                    ['text'=>"به به 🛍",'callback_data'=>"wizwizch"]
+                    ['text'=>"به به 🛍",'callback_data'=>"v2raystore"]
                 ],
                 ]]);
                 
@@ -6600,7 +6600,7 @@ if(preg_match('/^declineOrder(.+)/',$data, $match) and ($from_id == $admin || $u
     }
     if(($decPay['state'] ?? '') == 'approved'){
         alert('این سفارش قبلاً تأیید شده و قابل رد کردن نیست.', true);
-        if(function_exists('wizwiz_orderStatusKeyboard')) editKeys(wizwiz_orderStatusKeyboard('✅ تأیید شد', intval($decPay['user_id'] ?? 0), 'success'));
+        if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', intval($decPay['user_id'] ?? 0), 'success'));
         exit();
     }
     if(in_array(($decPay['state'] ?? ''), ['processing','auto_processing'], true)){
@@ -6609,7 +6609,7 @@ if(preg_match('/^declineOrder(.+)/',$data, $match) and ($from_id == $admin || $u
     }
     if(in_array(($decPay['state'] ?? ''), ['declined','auto_cancelled'], true)){
         alert('این سفارش قبلاً رد یا لغو شده است.', true);
-        if(function_exists('wizwiz_orderStatusKeyboard')) editKeys(wizwiz_orderStatusKeyboard('❌ رد شد', intval($decPay['user_id'] ?? 0), 'danger'));
+        if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', intval($decPay['user_id'] ?? 0), 'danger'));
         exit();
     }
     setUser('declineOrder|' . $hashId . '|' . $message_id . '|' . intval($decPay['user_id'] ?? 0));
@@ -6635,10 +6635,10 @@ if(preg_match('/^declineOrder\|(.+)\|(\d+)\|(\d+)$/',$userInfo['step'] ?? '', $m
         exit();
     }
 
-    if(function_exists('wizwiz_orderStatusKeyboard')){
-        editKeys(wizwiz_orderStatusKeyboard('❌ رد شد', $uid, 'danger'), $targetMsgId);
+    if(function_exists('v2raystore_orderStatusKeyboard')){
+        editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', $uid, 'danger'), $targetMsgId);
     }else{
-        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE), $targetMsgId);
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE), $targetMsgId);
     }
     sendMessage('پیامت رو براش ارسال کردم ... 🤝',$removeKeyboard);
     sendMessage($mainValues['reached_main_menu'],getMainKeys());
@@ -6652,10 +6652,10 @@ if(preg_match('/decline/',$data) and ($from_id == $admin || $userInfo['isAdmin']
 if(preg_match('/decline(\d+)_(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) and $text != $buttonValues['cancel']){
     setUser();
     $uid = $match[1];
-    if(function_exists('wizwiz_orderStatusKeyboard')){
-        editKeys(wizwiz_orderStatusKeyboard('❌ رد شد', intval($uid), 'danger'), $match[2]);
+    if(function_exists('v2raystore_orderStatusKeyboard')){
+        editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', intval($uid), 'danger'), $match[2]);
     }else{
-        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'wizwizch']]]], JSON_UNESCAPED_UNICODE), $match[2]);
+        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE), $match[2]);
     }
 
     sendMessage('پیامت رو براش ارسال کردم ... 🤝',$removeKeyboard);
@@ -6718,7 +6718,7 @@ if($data == 'dayPlanSettings' and ($from_id == $admin || $userInfo['isAdmin'] ==
         exit;
     }
     $keyboard = [];
-    $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"تعداد روز",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"تعداد روز",'callback_data'=>"v2raystore"]];
     while($cat = $res->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
@@ -6783,7 +6783,7 @@ if(preg_match('/^deleteDayPlan(\d+)/',$data,$match) and ($from_id == $admin || $
         exit;
     }
     $keyboard = [];
-    $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"تعداد روز",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"تعداد روز",'callback_data'=>"v2raystore"]];
     while($cat = $res->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
@@ -6833,7 +6833,7 @@ if(preg_match('/^changeDayPlanPrice(\d+)/',$userInfo['step'],$match) and $text !
             exit;
         }
         $keyboard = [];
-        $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"تعداد روز",'callback_data'=>"wizwizch"]];
+        $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"تعداد روز",'callback_data'=>"v2raystore"]];
         while($cat = $res->fetch_assoc()){
             $id = $cat['id'];
             $title = $cat['volume'];
@@ -6885,7 +6885,7 @@ if(preg_match('/^changeDayPlanDay(\d+)/',$userInfo['step'],$match) && ($from_id 
         exit;
     }
     $keyboard = [];
-    $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"تعداد روز",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"تعداد روز",'callback_data'=>"v2raystore"]];
     while($cat = $res->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
@@ -6919,7 +6919,7 @@ if($data == 'volumePlanSettings' and ($from_id == $admin || $userInfo['isAdmin']
         exit;
     }
     $keyboard = [];
-    $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"مقدار حجم",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"مقدار حجم",'callback_data'=>"v2raystore"]];
     while ($cat = $plans->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
@@ -6982,7 +6982,7 @@ if(preg_match('/^deleteVolumePlan(\d+)/',$data,$match) and ($from_id == $admin |
         exit;
     }
     $keyboard = [];
-    $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"مقدار حجم",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"مقدار حجم",'callback_data'=>"v2raystore"]];
     while ($cat = $plans->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
@@ -7028,7 +7028,7 @@ if(preg_match('/^changeVolumePlanPrice(\d+)/',$userInfo['step'],$match) and $tex
             exit;
         }
         $keyboard = [];
-        $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"مقدار حجم",'callback_data'=>"wizwizch"]];
+        $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"مقدار حجم",'callback_data'=>"v2raystore"]];
         while ($cat = $plans->fetch_assoc()){
             $id = $cat['id'];
             $title = $cat['volume'];
@@ -7076,7 +7076,7 @@ if(preg_match('/^changeVolumePlanVolume(\d+)/',$userInfo['step'], $match) and $t
         exit;
     }
     $keyboard = [];
-    $keyboard[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"قیمت",'callback_data'=>"wizwizch"],['text'=>"مقدار حجم",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت",'callback_data'=>"v2raystore"],['text'=>"مقدار حجم",'callback_data'=>"v2raystore"]];
     while ($cat = $plans->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
@@ -7266,20 +7266,20 @@ if(preg_match('/^closeTicket_(\d+)/',$data,$match) and  $from_id != $admin){
     
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"$from_id",'callback_data'=>"wizwizch"],
-            ['text'=>"آیدی کاربر",'callback_data'=>'wizwizch']
+            ['text'=>"$from_id",'callback_data'=>"v2raystore"],
+            ['text'=>"آیدی کاربر",'callback_data'=>'v2raystore']
         ],
         [
-            ['text'=>$first_name??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"اسم کاربر",'callback_data'=>'wizwizch']
+            ['text'=>$first_name??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"اسم کاربر",'callback_data'=>'v2raystore']
         ],
         [
-            ['text'=>"$title",'callback_data'=>'wizwizch'],
-            ['text'=>"عنوان",'callback_data'=>'wizwizch']
+            ['text'=>"$title",'callback_data'=>'v2raystore'],
+            ['text'=>"عنوان",'callback_data'=>'v2raystore']
         ],
         [
-            ['text'=>"$category",'callback_data'=>'wizwizch'],
-            ['text'=>"دسته بندی",'callback_data'=>'wizwizch']
+            ['text'=>"$category",'callback_data'=>'v2raystore'],
+            ['text'=>"دسته بندی",'callback_data'=>'v2raystore']
         ],
         ]]);
     sendMessage("☑️| تیکت توسط کاربر بسته شد",$keys,"HTML",$admin);
@@ -7353,7 +7353,7 @@ if(preg_match("/^rate_+([0-9])+_+([0-9])/",$data,$match)){
     
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"رای تیکت",'callback_data'=>"wizwizch"]
+            ['text'=>"رای تیکت",'callback_data'=>"v2raystore"]
             ],
         ]]);
 
@@ -7392,16 +7392,16 @@ if($data=='ticketsCategory' and ($from_id == $admin || $userInfo['isAdmin'] == t
     $ticketCategory = $stmt->get_result();
     $stmt->close();
     $keys = array();
-    $keys[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"دسته بندی",'callback_data'=>"wizwizch"]];
+    $keys[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"دسته بندی",'callback_data'=>"v2raystore"]];
     
     if($ticketCategory->num_rows>0){
         while($row = $ticketCategory->fetch_assoc()){
             $rowId = $row['id'];
             $ticketName = $row['value'];
-            $keys[] = [['text'=>"❌",'callback_data'=>"delTicketCat_$rowId"],['text'=>$ticketName,'callback_data'=>"wizwizch"]];
+            $keys[] = [['text'=>"❌",'callback_data'=>"delTicketCat_$rowId"],['text'=>$ticketName,'callback_data'=>"v2raystore"]];
         }
     }else{
-        $keys[] = [['text'=>"دسته بندی یافت نشد",'callback_data'=>"wizwizch"]];
+        $keys[] = [['text'=>"دسته بندی یافت نشد",'callback_data'=>"v2raystore"]];
     }
     $keys[] = [['text'=>"افزودن دسته بندی",'callback_data'=>"addTicketCategory"]];
     $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"ticketsList"]];
@@ -7426,17 +7426,17 @@ if ($userInfo['step']=="addTicketCategory" and ($from_id == $admin || $userInfo[
     $stmt->close();
     
     $keys = array();
-    $keys[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"دسته بندی",'callback_data'=>"wizwizch"]];
+    $keys[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"دسته بندی",'callback_data'=>"v2raystore"]];
     
     if($ticketCategory->num_rows>0){
         while ($row = $ticketCategory->fetch_assoc()){
             
             $rowId = $row['id'];
             $ticketName = $row['value'];
-            $keys[] = [['text'=>"❌",'callback_data'=>"delTicketCat_$rowId"],['text'=>$ticketName,'callback_data'=>"wizwizch"]];
+            $keys[] = [['text'=>"❌",'callback_data'=>"delTicketCat_$rowId"],['text'=>$ticketName,'callback_data'=>"v2raystore"]];
         }
     }else{
-        $keys[] = [['text'=>"دسته بندی یافت نشد",'callback_data'=>"wizwizch"]];
+        $keys[] = [['text'=>"دسته بندی یافت نشد",'callback_data'=>"v2raystore"]];
     }
     $keys[] = [['text'=>"افزودن دسته بندی",'callback_data'=>"addTicketCategory"]];
     $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"ticketsList"]];
@@ -7459,17 +7459,17 @@ if(preg_match("/^delTicketCat_(\d+)/",$data,$match) and ($from_id == $admin || $
     $stmt->close();
     
     $keys = array();
-    $keys[] = [['text'=>"حذف",'callback_data'=>"wizwizch"],['text'=>"دسته بندی",'callback_data'=>"wizwizch"]];
+    $keys[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"دسته بندی",'callback_data'=>"v2raystore"]];
     
     if($ticketCategory->num_rows>0){
         while ($row = $ticketCategory->fetch_assoc()){
             
             $rowId = $row['id'];
             $ticketName = $row['value'];
-            $keys[] = [['text'=>"❌",'callback_data'=>"delTicketCat_$rowId"],['text'=>$ticketName,'callback_data'=>"wizwizch"]];
+            $keys[] = [['text'=>"❌",'callback_data'=>"delTicketCat_$rowId"],['text'=>$ticketName,'callback_data'=>"v2raystore"]];
         }
     }else{
-        $keys[] = [['text'=>"دسته بندی یافت نشد",'callback_data'=>"wizwizch"]];
+        $keys[] = [['text'=>"دسته بندی یافت نشد",'callback_data'=>"v2raystore"]];
     }
     $keys[] = [['text'=>"افزودن دسته بندی",'callback_data'=>"addTicketCategory"]];
     $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"ticketsList"]];
@@ -7641,7 +7641,7 @@ if(preg_match('/^closeTicket_(\d+)/',$data,$match) and  ($from_id == $admin || $
         ]]);
     sendMessage($ticketClosed,$keys,'html', $userId);
     editKeys(json_encode(['inline_keyboard'=>[
-        [['text'=>"تیکت بسته شد",'callback_data'=>"wizwizch"]]
+        [['text'=>"تیکت بسته شد",'callback_data'=>"v2raystore"]]
         ]]));
 
 }
@@ -7851,12 +7851,12 @@ if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin 
 if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $id = $match[1];
  
-    if(function_exists('wizwiz_canUserGetTestAccount') && !wizwiz_canUserGetTestAccount($userInfo, $from_id) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
-        $used = function_exists('wizwiz_getUserTestAccountUsedCount') ? wizwiz_getUserTestAccountUsedCount($userInfo) : 1;
-        $limit = function_exists('wizwiz_getTestAccountLimitText') ? wizwiz_getTestAccountLimitText($userInfo) : '1 بار';
+    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
+        $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo) : 1;
+        $limit = function_exists('v2raystore_getTestAccountLimitText') ? v2raystore_getTestAccountLimitText($userInfo) : '1 بار';
         alert("⚠️ شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}");
         exit;
-    }elseif(!function_exists('wizwiz_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
+    }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
         alert('⚠️شما قبلا هدیه رایگان خود را دریافت کردید');
         exit;
     }
@@ -8004,27 +8004,27 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $vray_link = json_encode($response->vray_links);
     }else{
         $token = RandomString(30);
-        $subLink = $botState['subLinkState']=="on"?wizwiz_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
+        $subLink = $botState['subLinkState']=="on"?v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark):"";
         $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
         $vray_link = json_encode($vraylink);
     }
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
-    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-        $__wizwizSubLink = isset($subLink) ? $subLink : '';
-        $__wizwizServerType = isset($serverType) ? $serverType : '';
-        $__wizwizRemark = isset($remark) ? $remark : '';
-        $__wizwizIsTestAccount = (intval($price ?? 0) === 0);
-        $__wizwizTestHeading = $__wizwizIsTestAccount ? '🧪 اکانت تست شما آماده شد' : null;
-        $__wizwizTestExtra = $__wizwizIsTestAccount ? "🔋 حجم اکانت تست: <b>{$volume} گیگ</b>
+    $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+        $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+        $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+        $__v2raystoreRemark = isset($remark) ? $remark : '';
+        $__v2raystoreIsTestAccount = (intval($price ?? 0) === 0);
+        $__v2raystoreTestHeading = $__v2raystoreIsTestAccount ? '🧪 اکانت تست شما آماده شد' : null;
+        $__v2raystoreTestExtra = $__v2raystoreIsTestAccount ? "🔋 حجم اکانت تست: <b>{$volume} گیگ</b>
 ⏰ مدت اعتبار تست: <b>{$days} روز</b>
 ℹ️ این اکانت تست است و {$volume} گیگ حجم دارد." : '';
-        $__wizwizLoopLinks = $vraylink;
-        if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType, null, $__wizwizTestHeading, $__wizwizTestExtra)){
-            $__wizwizLoopLinks = [];
+        $__v2raystoreLoopLinks = $vraylink;
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, $__v2raystoreTestHeading, $__v2raystoreTestExtra)){
+            $__v2raystoreLoopLinks = [];
         }
-        foreach($__wizwizLoopLinks as $link){
-        if($__wizwizIsTestAccount){
+        foreach($__v2raystoreLoopLinks as $link){
+        if($__v2raystoreIsTestAccount){
             $acc_text = "🧪 اکانت تست شما فعال شد
 🔮 نام اکانت تست: $remark
 🔋 حجم اکانت تست: $volume گیگ
@@ -8075,7 +8075,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     $newOrderId = intval($connection->insert_id);
     $order = $stmt->get_result();
     $stmt->close();
-    wizwiz_notifyTestAccountTaken($newOrderId, $from_id, $file_detail['title'] ?? '', $remark, $volume, $days);
+    v2raystore_notifyTestAccountTaken($newOrderId, $from_id, $file_detail['title'] ?? '', $remark, $volume, $days);
     
     if($inbound_id == 0) {
         $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` - 1 WHERE `id`=?");
@@ -8089,8 +8089,8 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         $stmt->close();
     }
 
-    if(function_exists('wizwiz_markTestAccountUsed')){
-        wizwiz_markTestAccountUsed($from_id);
+    if(function_exists('v2raystore_markTestAccountUsed')){
+        v2raystore_markTestAccountUsed($from_id);
     }else{
         setUser('used','freetrial');
     }    
@@ -8421,40 +8421,40 @@ if($userInfo['step'] == "showAccount" and $text != $buttonValues['cancel']){
         setUser();
         $keys = json_encode(['inline_keyboard'=>array_merge([
         [
-            ['text'=>$state??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"🔘 وضعیت اکانت 🔘",'callback_data'=>"wizwizch"],
+            ['text'=>$state??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"🔘 وضعیت اکانت 🔘",'callback_data'=>"v2raystore"],
             ],
         [
-    		['text'=>$remark??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"« نام اکانت »",'callback_data'=>"wizwizch"],
+    		['text'=>$remark??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"« نام اکانت »",'callback_data'=>"v2raystore"],
             ]],(!$isMarzban?[
         [
-            ['text'=>$upload?? " ",'callback_data'=>"wizwizch"],
-            ['text'=>"√ آپلود √",'callback_data'=>"wizwizch"],
+            ['text'=>$upload?? " ",'callback_data'=>"v2raystore"],
+            ['text'=>"√ آپلود √",'callback_data'=>"v2raystore"],
             ],
         [
-            ['text'=>$download??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"√ دانلود √",'callback_data'=>"wizwizch"],
+            ['text'=>$download??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"√ دانلود √",'callback_data'=>"v2raystore"],
             ]]:[
         [
-            ['text'=>$totalUsed?? " ",'callback_data'=>"wizwizch"],
-            ['text'=>"√ آپلود + دانلود √",'callback_data'=>"wizwizch"],
+            ['text'=>$totalUsed?? " ",'callback_data'=>"v2raystore"],
+            ['text'=>"√ آپلود + دانلود √",'callback_data'=>"v2raystore"],
             ]]),[
         [
-            ['text'=>$total??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"† حجم کلی †",'callback_data'=>"wizwizch"],
+            ['text'=>$total??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"† حجم کلی †",'callback_data'=>"v2raystore"],
             ],
         [
-            ['text'=>$leftMb??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"~ حجم باقیمانده ~",'callback_data'=>"wizwizch"],
+            ['text'=>$leftMb??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"~ حجم باقیمانده ~",'callback_data'=>"v2raystore"],
             ],
         [
-            ['text'=>$expiryTime??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"تاریخ اتمام",'callback_data'=>"wizwizch"],
+            ['text'=>$expiryTime??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"تاریخ اتمام",'callback_data'=>"v2raystore"],
             ],
         [
-            ['text'=>$expiryDay??" ",'callback_data'=>"wizwizch"],
-            ['text'=>"تعداد روز باقیمانده",'callback_data'=>"wizwizch"],
+            ['text'=>$expiryDay??" ",'callback_data'=>"v2raystore"],
+            ['text'=>"تعداد روز باقیمانده",'callback_data'=>"v2raystore"],
             ],
         (($botState['renewAccountState'] == "on" && $botState['updateConfigLinkState'] == "on")?
             [
@@ -8663,15 +8663,15 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
     include 'phpqrcode/qrlib.php';  
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
-    $__wizwizTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
-    $__wizwizSubLink = isset($subLink) ? $subLink : '';
-    $__wizwizServerType = isset($serverType) ? $serverType : '';
-    $__wizwizRemark = isset($remark) ? $remark : '';
-    $__wizwizLoopLinks = $vraylink;
-    if(function_exists('wizwiz_sendMultiDomainConfigMessage') && wizwiz_sendMultiDomainConfigMessage($__wizwizTargetUid, $__wizwizRemark, $vraylink, $__wizwizSubLink, $__wizwizServerType)){
-        $__wizwizLoopLinks = [];
+    $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
+    $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
+    $__v2raystoreServerType = isset($serverType) ? $serverType : '';
+    $__v2raystoreRemark = isset($remark) ? $remark : '';
+    $__v2raystoreLoopLinks = $vraylink;
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType)){
+        $__v2raystoreLoopLinks = [];
     }
-    foreach($__wizwizLoopLinks as $vray_link){
+    foreach($__v2raystoreLoopLinks as $vray_link){
         $acc_text = $botState['configLinkState'] != "off"?"<code>$vray_link</code>":".";
     
         $ecc = 'L';
@@ -9089,7 +9089,7 @@ if($data == 'backplan' and ($from_id == $admin || $userInfo['isAdmin'] == true))
         $keyboard[] = ['text' => "$title", 'callback_data' => "plansList$id"];
     }
     $keyboard = array_chunk($keyboard,2);
-    $keyboard[] = [['text'=>"➖➖➖",'callback_data'=>"wizwizch"]];
+    $keyboard[] = [['text'=>"➖➖➖",'callback_data'=>"v2raystore"]];
     $keyboard[] = [['text'=>'➕ افزودن پلن اختصاصی و اشتراکی','callback_data'=>"addNewPlan"]];
     $keyboard[] = [
         ['text'=>'➕ افزودن پلن رهگذر','callback_data'=>"addNewRahgozarPlan"],
@@ -9126,11 +9126,11 @@ if(($data=="editCustomPlan" || preg_match('/^editCustom(gbPrice|dayPrice)/',$use
     $keys = json_encode(['inline_keyboard'=>[
         [
             ['text'=>$gbPrice,'callback_data'=>"editCustomgbPrice"],
-            ['text'=>"هزینه هر گیگ",'callback_data'=>"wizwizch"]
+            ['text'=>"هزینه هر گیگ",'callback_data'=>"v2raystore"]
             ],
         [
             ['text'=>$dayPrice,'callback_data'=>"editCustomdayPrice"],
-            ['text'=>"هزینه هر روز",'callback_data'=>"wizwizch"]
+            ['text'=>"هزینه هر روز",'callback_data'=>"v2raystore"]
             ],
         [
             ['text'=>$buttonValues['back_button'],'callback_data'=>"backplan"]
@@ -9181,7 +9181,7 @@ if(preg_match('/planDetails(\d+)/', $data,$match) && ($from_id == $admin || $use
         exit;
     }else editText($message_id, "ویرایش تنظیمات پلن", $keys, "HTML");
 }
-if(preg_match('/^wizwizplanacclist(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^v2raystoreplanacclist(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `fileid`=?");
     $stmt->bind_param("i", $match[1]);
     $stmt->execute();
@@ -9217,7 +9217,7 @@ if(preg_match('/^wizwizplanacclist(\d+)/',$data,$match) and ($from_id == $admin 
         sendMessage($txt, null, "HTML");
     }
 }
-if(preg_match('/^wizwizplandelete(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^v2raystoreplandelete(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=?");
     $stmt->bind_param("i", $match[1]);
     $stmt->execute();
@@ -9226,12 +9226,12 @@ if(preg_match('/^wizwizplandelete(\d+)/',$data,$match) and ($from_id == $admin |
     
     editText($message_id,"لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
 }
-if(preg_match('/^wizwizplanname(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplanname(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
     delMessage();
     sendMessage("🔅 یه اسم برا پلن جدید انتخاب کن:",$cancelKey);exit;
 }
-if(preg_match('/^wizwizplanname(\d+)/',$userInfo['step'], $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^v2raystoreplanname(\d+)/',$userInfo['step'], $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=?");
     $stmt->bind_param("si", $text, $match[1]);
     $stmt->execute();
@@ -9246,12 +9246,12 @@ if(preg_match('/^wizwizplanname(\d+)/',$userInfo['step'], $match) && $text != $b
         exit;
     }else sendMessage("ویرایش تنظیمات پلن", $keys);
 }
-if(preg_match('/^wizwizplanslimit(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplanslimit(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
     delMessage();
     sendMessage("🔅 ظرفیت جدید برای پلن انتخاب کن:",$cancelKey);exit;
 }
-if(preg_match('/^wizwizplanslimit(\d+)/',$userInfo['step'], $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^v2raystoreplanslimit(\d+)/',$userInfo['step'], $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("UPDATE `server_plans` SET `acount`=? WHERE `id`=?");
     $stmt->bind_param("ii", $text, $match[1]);
     $stmt->execute();
@@ -9266,12 +9266,12 @@ if(preg_match('/^wizwizplanslimit(\d+)/',$userInfo['step'], $match) && $text != 
         exit;
     }else sendMessage("ویرایش تنظیمات پلن", $keys, "HTML");
 }
-if(preg_match('/^wizwizplansinobundid(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplansinobundid(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
     delMessage();
     sendMessage("🔅 سطر جدید برای پلن انتخاب کن:",$cancelKey);exit;
 }
-if(preg_match('/^wizwizplansinobundid(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplansinobundid(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $stmt = $connection->prepare("UPDATE `server_plans` SET `inbound_id`=? WHERE `id`=?");
     $stmt->bind_param("ii", $text, $match[1]);
     $stmt->execute();
@@ -9286,12 +9286,12 @@ if(preg_match('/^wizwizplansinobundid(\d+)/',$userInfo['step'], $match) && ($fro
         exit;
     }else sendMessage("ویرایش تنظیمات پلن", $keys, "HTML");
 }
-if(preg_match('/^wizwizplaneditdes(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplaneditdes(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
     delMessage();
     sendMessage("🎯 توضیحاتت رو برام وارد کن:",$cancelKey);exit;
 }
-if(preg_match('/^wizwizplaneditdes(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplaneditdes(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=? WHERE `id`=?");
     $stmt->bind_param("si", $text, $match[1]);
     $stmt->execute();
@@ -9411,12 +9411,12 @@ if(preg_match('/^editPFlow(\d+)_(.*)/',$data, $match) && ($from_id == $admin || 
     $keys = getPlanDetailsKeys($match[1]);
     editText($message_id, "ویرایش تنظیمات پلن", $keys, "HTML");
 }
-if(preg_match('/^wizwizplanrial(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplanrial(\d+)/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
     delMessage();
     sendMessage("🎯 شیطون قیمت و گرون کردی 😂 ، خب قیمت جدید و بزن ببینم :",$cancelKey);exit;
 }
-if(preg_match('/^wizwizplanrial(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)&& $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystoreplanrial(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)&& $text != $buttonValues['cancel']){
     if(is_numeric($text)){
         $stmt = $connection->prepare("UPDATE `server_plans` SET `price`=? WHERE `id`=?");
         $stmt->bind_param("ii", $text, $match[1]);
@@ -9666,8 +9666,8 @@ if(preg_match('/^editConfigNote(\d+)$/', $userInfo['step'], $match) && $text != 
     $noteLower = function_exists('mb_strtolower') ? mb_strtolower($note, 'UTF-8') : strtolower($note);
     if(in_array($noteLower, ['/empty', 'empty', 'حذف', 'پاک', 'پاک کردن'], true)){
         $note = '';
-    }elseif(function_exists('wizwiz_safeConfigNoteText')){
-        $note = wizwiz_safeConfigNoteText($note);
+    }elseif(function_exists('v2raystore_safeConfigNoteText')){
+        $note = v2raystore_safeConfigNoteText($note);
     }else{
         $note = trim($note);
         if(strlen($note) > 1200) $note = substr($note, 0, 1200);
@@ -9680,14 +9680,18 @@ if(preg_match('/^editConfigNote(\d+)$/', $userInfo['step'], $match) && $text != 
     setUser();
 
     $keys = getOrderDetailKeys($from_id, $oid, 0);
+    $noteResultMessage = $note === ''
+        ? "✅ یادداشت کانفیگ حذف شد."
+        : "📝 یادداشت کانفیگ: " . htmlspecialchars($note, ENT_QUOTES, 'UTF-8');
+
     if($keys != null){
         $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
         $keys['keyboard'] = farid_attachUpdateAllMyConfigsButton($keys['keyboard']);
-        sendMessage(($note === '' ? "✅ یادداشت کانفیگ حذف شد." : "✅ یادداشت کانفیگ ذخیره شد.") . "
+        sendMessage($note === '' ? ($noteResultMessage . "
 
-" . $keys['msg'], $keys['keyboard'], 'HTML');
+" . $keys['msg']) : $keys['msg'], $keys['keyboard'], 'HTML');
     }else{
-        sendMessage($note === '' ? "✅ یادداشت کانفیگ حذف شد." : "✅ یادداشت کانفیگ ذخیره شد.", $removeKeyboard);
+        sendMessage($noteResultMessage, $removeKeyboard, 'HTML');
     }
     exit;
 }
@@ -9747,7 +9751,7 @@ cdn.example.com
 }
 if(preg_match('/^changeCustomDomain(\d+)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $planId = intval($match[1]);
-    $normalizedDomain = wizwiz_normalizePlanDomainInput($text);
+    $normalizedDomain = v2raystore_normalizePlanDomainInput($text);
     if($text == "/empty" || $normalizedDomain === ""){
         $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_domain`= NULL WHERE `id` = ?");
         $stmt->bind_param("i", $planId);
@@ -10343,7 +10347,7 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
                 sendMessage(str_replace("AMOUNT", $discount, $mainValues['valid_discount_code']));
                 $keys = json_encode(['inline_keyboard'=>[
                     [
-                        ['text'=>"❤️", "callback_data"=>"wizwizch"]
+                        ['text'=>"❤️", "callback_data"=>"v2raystore"]
                         ],
                     ]]);
                 sendMessage(
@@ -10442,12 +10446,12 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$data,$match)) {
     setUser($data);
     delMessage();
 
-    wizwiz_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
+    v2raystore_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel']){
-    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
-        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
+    if(function_exists('v2raystore_isReceiptPhotoMessage') ? v2raystore_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -10455,7 +10459,7 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
         $hash_id = $payInfo['hash_id'];
         $stmt->close();
         
-        wizwiz_markPayReceiptSent($match[1], $fileid);
+        v2raystore_markPayReceiptSent($match[1], $fileid);
     
 
         
@@ -10496,15 +10500,15 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
             ]
         ]);
     
-        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
-            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+        if(function_exists('v2raystore_sendAdminPaymentPhoto')){
+            $adminSend = v2raystore_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
             if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
         }else{
             sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
         }
         setUser();
     }else{
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($match[1]);
         else sendMessage($mainValues['please_send_only_image']);
     }
 }
@@ -10551,7 +10555,7 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
 
 
     unset($markup[count($markup)-1]);
-    $markup[] = [['text'=>"✅",'callback_data'=>"wizwizch"]];
+    $markup[] = [['text'=>"✅",'callback_data'=>"v2raystore"]];
     $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
 
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -10725,7 +10729,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
     editText($message_id, "✅سرویس $remark با موفقیت تمدید شد",getMainKeys());
     $keys = json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"به به تمدید 😍",'callback_data'=>"wizwizch"]
+            ['text'=>"به به تمدید 😍",'callback_data'=>"v2raystore"]
             ],
         ]]);
     $msg = str_replace(['TYPE', "USER-ID", "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],['کیف پول', $from_id, $username, $first_name, $price, $remark, $volume, $days], $mainValues['renew_account_request_message']);
@@ -10736,7 +10740,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
 
 if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
     $oid = intval($match[1]);
-    $order = wizwiz_switchGetOrder($oid);
+    $order = v2raystore_switchGetOrder($oid);
     if(!$order){
         alert($mainValues['config_not_found'] ?? 'کانفیگ یافت نشد', true);
         exit();
@@ -10769,8 +10773,8 @@ if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
         alert('حجم سرویس شما تمام شده است. لطفاً ابتدا آن را تمدید یا شارژ کنید.', true);
         exit();
     }
-    $settings = wizwiz_getServerSwitchSettings();
-    if(!$isAdminSwitch && intval($settings['daily_limit']) > 0 && wizwiz_switchUsedToday($oid, $ownerId) >= intval($settings['daily_limit'])){
+    $settings = v2raystore_getServerSwitchSettings();
+    if(!$isAdminSwitch && intval($settings['daily_limit']) > 0 && v2raystore_switchUsedToday($oid, $ownerId) >= intval($settings['daily_limit'])){
         alert('⛔️ برای هر کانفیگ فقط ' . intval($settings['daily_limit']) . ' بار در روز می‌توانید تغییر سرور انجام دهید.', true);
         exit();
     }
@@ -10785,14 +10789,14 @@ if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
     while($srv = $servers->fetch_assoc()){
         $sid = intval($srv['id']);
         if(!$isAdminSwitch && intval($srv['ucount'] ?? 0) <= 0) continue;
-        $cost = wizwiz_calcSwitchDeductionGb($order, $sid, $remainingGb);
+        $cost = v2raystore_calcSwitchDeductionGb($order, $sid, $remainingGb);
         $changeGb = floatval($cost['change_gb'] ?? ($cost['deduct_gb'] ?? 0));
         $changeType = ($cost['change_type'] ?? 'deduct');
         if($changeType === 'deduct' && $remainingGb <= $changeGb){
             $label = $srv['title'] . ' (حجم کافی نیست)';
         }else{
             $sign = ($changeType === 'add') ? '+' : '-';
-            $label = $srv['title'] . ' (' . $sign . wizwiz_switchFormatGb($changeGb) . 'GB)';
+            $label = $srv['title'] . ' (' . $sign . v2raystore_switchFormatGb($changeGb) . 'GB)';
         }
         $keyboard[] = ['text'=>$label, 'callback_data'=>'switchSrvPreview' . $sid . '_' . $oid];
     }
@@ -10804,7 +10808,7 @@ if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
     $keyboard[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>($isAdminSwitch ? 'userOrderDetails' . $oid . '_0' : 'orderDetails' . $oid)]];
     $msg = "🌎 <b>تغییر سرور کانفیگ</b>\n\n" .
            "🔮 نام سرویس: <b>" . htmlspecialchars((string)$order['remark'], ENT_QUOTES, 'UTF-8') . "</b>\n" .
-           "📦 حجم باقی‌مانده فعلی: <b>" . wizwiz_switchFormatGb($remainingGb) . " GB</b>\n\n" .
+           "📦 حجم باقی‌مانده فعلی: <b>" . v2raystore_switchFormatGb($remainingGb) . " GB</b>\n\n" .
            "سرور مقصد را انتخاب کنید. عدد داخل پرانتز مقدار حجمی است که بابت تغییر سرور کم یا اضافه می‌شود.";
     editText($message_id, $msg, json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE), 'HTML');
     exit();
@@ -10813,7 +10817,7 @@ if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
 if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
     $sid = intval($match[1]);
     $oid = intval($match[2]);
-    $order = wizwiz_switchGetOrder($oid);
+    $order = v2raystore_switchGetOrder($oid);
     if(!$order){ alert($mainValues['config_not_found'] ?? 'کانفیگ یافت نشد', true); exit(); }
     $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
     $ownerId = intval($order['userid'] ?? 0);
@@ -10821,28 +10825,28 @@ if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
     $live = farid_switchGetOrderLiveState($order);
     if(empty($live['ok'])){ alert('⛔️ ' . ($live['message'] ?? 'امکان بررسی حجم سرویس وجود ندارد.'), true); exit(); }
     $remainingGb = floatval($live['remaining_gb'] ?? 0);
-    $cost = wizwiz_calcSwitchDeductionGb($order, $sid, $remainingGb);
+    $cost = v2raystore_calcSwitchDeductionGb($order, $sid, $remainingGb);
     $changeGb = floatval($cost['change_gb'] ?? ($cost['deduct_gb'] ?? 0));
     $changeType = ($cost['change_type'] ?? 'deduct');
     if($changeType === 'deduct' && $remainingGb <= $changeGb){
-        alert('حجم باقی‌مانده برای این تغییر کافی نیست. حجم باقی‌مانده: ' . wizwiz_switchFormatGb($remainingGb) . 'GB، حجم موردنیاز: ' . wizwiz_switchFormatGb($changeGb) . 'GB', true);
+        alert('حجم باقی‌مانده برای این تغییر کافی نیست. حجم باقی‌مانده: ' . v2raystore_switchFormatGb($remainingGb) . 'GB، حجم موردنیاز: ' . v2raystore_switchFormatGb($changeGb) . 'GB', true);
         exit();
     }
-    $fromTitle = wizwiz_switchGetServerTitle($order['server_id']);
-    $toTitle = wizwiz_switchGetServerTitle($sid);
+    $fromTitle = v2raystore_switchGetServerTitle($order['server_id']);
+    $toTitle = v2raystore_switchGetServerTitle($sid);
     $afterGb = ($changeType === 'add') ? ($remainingGb + $changeGb) : max(0, $remainingGb - $changeGb);
     $priceDiff = number_format(intval($cost['price_diff'] ?? 0));
     $reason = htmlspecialchars((string)($cost['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
     $changeLine = ($changeType === 'add')
-        ? "🔺 حجم افزایشی: <b>" . wizwiz_switchFormatGb($changeGb) . " GB</b>\n"
-        : "🔻 حجم کسرشونده: <b>" . wizwiz_switchFormatGb($changeGb) . " GB</b>\n";
+        ? "🔺 حجم افزایشی: <b>" . v2raystore_switchFormatGb($changeGb) . " GB</b>\n"
+        : "🔻 حجم کسرشونده: <b>" . v2raystore_switchFormatGb($changeGb) . " GB</b>\n";
     $msg = "⚠️ <b>تأیید تغییر سرور</b>\n\n" .
            "🔮 سرویس: <b>" . htmlspecialchars((string)$order['remark'], ENT_QUOTES, 'UTF-8') . "</b>\n" .
            "📍 از: <b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . "</b>\n" .
            "📍 به: <b>" . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\n" .
-           "📦 حجم فعلی: <b>" . wizwiz_switchFormatGb($remainingGb) . " GB</b>\n" .
+           "📦 حجم فعلی: <b>" . v2raystore_switchFormatGb($remainingGb) . " GB</b>\n" .
            $changeLine .
-           "✅ حجم بعد از تغییر: <b>" . wizwiz_switchFormatGb($afterGb) . " GB</b>\n" .
+           "✅ حجم بعد از تغییر: <b>" . v2raystore_switchFormatGb($afterGb) . " GB</b>\n" .
            "💰 اختلاف قیمت شناسایی‌شده: <b>{$priceDiff} تومان</b>\n" .
            "🧮 روش محاسبه: {$reason}\n\n" .
            "بعد از تأیید، کانفیگ از سرور قبلی حذف می‌شود و لینک جدید در یک پیام جداگانه برای کاربر ارسال می‌شود.";
@@ -10872,29 +10876,29 @@ if(preg_match('/^confirmSwitchServer(\d+)_(\d+)$/', $data, $match)){
         $resultChangeType = ($result['change_type'] ?? 'deduct');
         $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
         $resultChangeLine = ($resultChangeType === 'add')
-            ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
-            : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+            ? "🔺 حجم اضافه‌شده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n"
+            : "🔻 حجم کسرشده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n";
         $extra = "✅ سرور سرویس شما تغییر کرد.\n" .
                  "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
                  $resultChangeLine .
-                 "📦 حجم باقی‌مانده جدید: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
+                 "📦 حجم باقی‌مانده جدید: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
         farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
     }
-    if(function_exists('wizwiz_notifyServerSwitch')){
-        wizwiz_notifyServerSwitch($result, $from_id, $isAdminSwitch);
+    if(function_exists('v2raystore_notifyServerSwitch')){
+        v2raystore_notifyServerSwitch($result, $from_id, $isAdminSwitch);
     }
 
     $backCb = $isAdminSwitch ? ('userOrderDetails' . $oid . '_0') : ('orderDetails' . $oid);
     $resultChangeType = ($result['change_type'] ?? 'deduct');
     $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
     $resultChangeLine = ($resultChangeType === 'add')
-        ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
-        : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+        ? "🔺 حجم اضافه‌شده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n"
+        : "🔻 حجم کسرشده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n";
     $msg = "✅ سرور کانفیگ با موفقیت تغییر کرد.\n\n" .
            "🔮 نام جدید: <b>" . htmlspecialchars((string)$newRemark, ENT_QUOTES, 'UTF-8') . "</b>\n" .
            "📍 مقصد: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
            $resultChangeLine .
-           "📦 حجم باقی‌مانده: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
+           "📦 حجم باقی‌مانده: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
            "لینک جدید در پیام جداگانه برای کاربر ارسال شد.";
     editText($message_id, $msg, json_encode(['inline_keyboard'=>[
         [['text'=>'📄 مشاهده جزئیات سرویس', 'callback_data'=>$backCb]],
@@ -11027,28 +11031,28 @@ if(preg_match('/^switchServer(\d+)_(\d+)$/',$data,$match)){
         $resultChangeType = ($result['change_type'] ?? 'deduct');
         $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
         $resultChangeLine = ($resultChangeType === 'add')
-            ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
-            : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+            ? "🔺 حجم اضافه‌شده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n"
+            : "🔻 حجم کسرشده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n";
         $extra = "✅ سرور سرویس شما تغییر کرد.\n" .
                  "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
                  $resultChangeLine .
-                 "📦 حجم باقی‌مانده جدید: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
+                 "📦 حجم باقی‌مانده جدید: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
         farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
     }
-    if(function_exists('wizwiz_notifyServerSwitch')){
-        wizwiz_notifyServerSwitch($result, $from_id, $isAdminSwitch);
+    if(function_exists('v2raystore_notifyServerSwitch')){
+        v2raystore_notifyServerSwitch($result, $from_id, $isAdminSwitch);
     }
 
     $resultChangeType = ($result['change_type'] ?? 'deduct');
     $resultChangeGb = floatval($result['change_gb'] ?? ($result['deduct_gb'] ?? 0));
     $resultChangeLine = ($resultChangeType === 'add')
-        ? "🔺 حجم اضافه‌شده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n"
-        : "🔻 حجم کسرشده: <b>" . wizwiz_switchFormatGb($resultChangeGb) . " GB</b>\n";
+        ? "🔺 حجم اضافه‌شده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n"
+        : "🔻 حجم کسرشده: <b>" . v2raystore_switchFormatGb($resultChangeGb) . " GB</b>\n";
     $msg = "✅ سرور کانفیگ با موفقیت تغییر کرد.\n\n" .
            "🔮 نام جدید: <b>" . htmlspecialchars($newRemark, ENT_QUOTES, 'UTF-8') . "</b>\n" .
            "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
            $resultChangeLine .
-           "📦 حجم باقی‌مانده: <b>" . wizwiz_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
+           "📦 حجم باقی‌مانده: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
            "لینک جدید در یک پیام جداگانه برای کاربر ارسال شد.";
     editText($message_id, $msg, json_encode(['inline_keyboard'=>[
         [['text'=>'🔙 بازگشت به جزئیات کانفیگ', 'callback_data'=>'orderDetails' . intval($result['order_id'] ?? $oid)]],
@@ -11519,13 +11523,13 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
 if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$data,$match)) {
     delMessage();
     setUser($data);
-    wizwiz_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
+    v2raystore_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
 
     exit;
 }
 if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) and $text != $buttonValues['cancel']){
-    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
-        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
+    if(function_exists('v2raystore_isReceiptPhotoMessage') ? v2raystore_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -11551,7 +11555,7 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
         
         $planid = $increaseInfo[2];
 
-        wizwiz_markPayReceiptSent($match[1], $fileid);
+        v2raystore_markPayReceiptSent($match[1], $fileid);
     
 
         
@@ -11579,15 +11583,15 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
         ]);
 
 
-        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
-            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+        if(function_exists('v2raystore_sendAdminPaymentPhoto')){
+            $adminSend = v2raystore_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
             if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
         }else{
             sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
         }
         setUser();
     }else{ 
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($match[1]);
         else sendMessage($mainValues['please_send_only_image']);
     }
 
@@ -11762,7 +11766,7 @@ if(preg_match('/payIncraseDayWithWallet(.*)/', $data,$match)){
         
         $keys = json_encode(['inline_keyboard'=>[
             [
-                ['text'=>"اخیش یکی زمان زد 😁",'callback_data'=>"wizwizch"]
+                ['text'=>"اخیش یکی زمان زد 😁",'callback_data'=>"v2raystore"]
                 ],
             ]]);
         sendMessage("
@@ -11882,12 +11886,12 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$data)) {
     setUser($data);
     delMessage();
     
-    wizwiz_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
+    v2raystore_sendCartToCartInstructions($match[1], 'renew_ccount_cart_to_cart', 'HTML');
     exit;
 }
 if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $text != $buttonValues['cancel']){
-    if(function_exists('wizwiz_isReceiptPhotoMessage') ? wizwiz_isReceiptPhotoMessage($update) : isset($update->message->photo)){
-        $fileid = function_exists('wizwiz_getBestPhotoFileId') ? wizwiz_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
+    if(function_exists('v2raystore_isReceiptPhotoMessage') ? v2raystore_isReceiptPhotoMessage($update) : isset($update->message->photo)){
+        $fileid = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, $fileid ?? '') : $fileid;
         $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
         $stmt->bind_param("s", $match[1]);
         $stmt->execute();
@@ -11913,7 +11917,7 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
         
         $planid = $increaseInfo[2];
     
-        wizwiz_markPayReceiptSent($match[1], $fileid);
+        v2raystore_markPayReceiptSent($match[1], $fileid);
     
         $stmt = $connection->prepare("SELECT * FROM `increase_plan` WHERE `id` = ?");
         $stmt->bind_param("i", $planid);
@@ -11939,15 +11943,15 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
             ]
         ]);
 
-        if(function_exists('wizwiz_sendAdminPaymentPhoto')){
-            $adminSend = wizwiz_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
+        if(function_exists('v2raystore_sendAdminPaymentPhoto')){
+            $adminSend = v2raystore_sendAdminPaymentPhoto($match[1], $fileid, $msg, $keyboard, "HTML", $uid);
             if(empty($adminSend['ok'])) sendMessage("⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.", null, "HTML");
         }else{
             sendPhoto($fileid, $msg,$keyboard, "HTML", $admin);
         }
         setUser();
     }else{
-        if(function_exists('wizwiz_sendReceiptPhotoOnlyNotice')) wizwiz_sendReceiptPhotoOnlyNotice($match[1]);
+        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($match[1]);
         else sendMessage($mainValues['please_send_only_image']);
     }
 }
@@ -12061,7 +12065,7 @@ if(preg_match('/decIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin || 
 
     $acctxt = '';
     editKeys(json_encode(['inline_keyboard'=>[
-		    [['text'=>"لغو شد ❌",'callback_data'=>"wizwizch"]]
+		    [['text'=>"لغو شد ❌",'callback_data'=>"v2raystore"]]
 		    ]]));
     
     sendMessage("افزایش حجم $volume گیگ اشتراک $remark لغو شد",null,null,$uid);
@@ -12104,7 +12108,7 @@ if(preg_match('/decIncreaseDay(.*)/',$data,$match) && ($from_id == $admin || $us
 
     $acctxt = '';
     editKeys(json_encode(['inline_keyboard'=>[
-		    [['text'=>"لغو شد ❌",'callback_data'=>"wizwizch"]]
+		    [['text'=>"لغو شد ❌",'callback_data'=>"v2raystore"]]
 		    ]]));
     
     sendMessage("افزایش زمان $volume روز اشتراک $remark لغو شد",null,null,$uid);
@@ -12185,7 +12189,7 @@ if(preg_match('/payIncraseWithWallet(.*)/', $data,$match)){
         $stmt->close();
         $keys = json_encode(['inline_keyboard'=>[
             [
-                ['text'=>"اخیش یکی حجم زد 😁",'callback_data'=>"wizwizch"]
+                ['text'=>"اخیش یکی حجم زد 😁",'callback_data'=>"v2raystore"]
                 ],
             ]]);
         sendMessage("
@@ -12250,7 +12254,7 @@ if(preg_match('/^addNewCategory/',$userInfo['step']) and $text!=$buttonValues['c
         sendMessage($mainValues['reached_main_menu'],getCategoriesKeys());
     }
 }
-if(preg_match('/^wizwizcategorydelete(\d+)_(\d+)/',$data, $match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^v2raystorecategorydelete(\d+)_(\d+)/',$data, $match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("DELETE FROM `server_categories` WHERE `id`=?");
     $stmt->bind_param("i", $match[1]);
     $stmt->execute();
@@ -12266,12 +12270,12 @@ if(preg_match('/^wizwizcategorydelete(\d+)_(\d+)/',$data, $match) and ($from_id 
     $keys = getCategoriesKeys($match[2]);
     editText($message_id,"☑️ مدیریت دسته ها:", $keys);
 }
-if(preg_match('/^wizwizcategoryedit/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^v2raystorecategoryedit/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     setUser($data);
     delMessage();
     sendMessage("〽️ یه اسم جدید برا دسته بندی انتخاب کن:",$cancelKey);exit;
 }
-if(preg_match('/wizwizcategoryedit(\d+)_(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/v2raystorecategoryedit(\d+)_(\d+)/',$userInfo['step'], $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $stmt = $connection->prepare("UPDATE `server_categories` SET `title`=? WHERE `id`=?");
     $stmt->bind_param("si", $text, $match[1]);
     $stmt->execute();
@@ -12603,7 +12607,7 @@ if(preg_match('/^addServerPanePassword(.*)/',$userInfo['step'],$match) and $text
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15); 
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($ch, $loginUrl));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, v2raystore_panelLoginHeaders($ch, $loginUrl));
         $loginResponse = json_decode(curl_exec($ch),true);
         curl_close($ch);
         
@@ -12745,7 +12749,7 @@ if(preg_match('/^editServerPanePassword(.*)/',$userInfo['step'],$match) and $tex
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
         curl_setopt($ch, CURLOPT_TIMEOUT, 15); 
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($postFields));
-        curl_setopt($ch, CURLOPT_HTTPHEADER, wizwiz_panelLoginHeaders($ch, $loginUrl));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, v2raystore_panelLoginHeaders($ch, $loginUrl));
         $loginResponse = json_decode(curl_exec($ch),true);
         curl_close($ch);
     }
@@ -12763,7 +12767,7 @@ if(preg_match('/^editServerPanePassword(.*)/',$userInfo['step'],$match) and $tex
     sendMessage('☑️ مدیریت سرور ها:',$keys);
     setUser();
 }
-if(preg_match('/^wizwizdeleteserver(\d+)/',$data,$match) and ($from_id == $admin || ($userInfo['isAdmin'] == true && $permissions['servers']))){
+if(preg_match('/^v2raystoredeleteserver(\d+)/',$data,$match) and ($from_id == $admin || ($userInfo['isAdmin'] == true && $permissions['servers']))){
     editText($message_id,"از حذف سرور مطمئنی؟",json_encode(['inline_keyboard'=>[
         [['text'=>"بله",'callback_data'=>"yesDeleteServer" . $match[1]],['text'=>"نخير",'callback_data'=>"showServerSettings" . $match[1] . "_0"]]
         ]]));
@@ -13007,7 +13011,7 @@ if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == tr
     setUser();
     $msg = "
 👤 عزیزم به بخش مدیریت خوشومدی 
-🤌 هرچی نیاز داشتی میتونی اینجا طبق نیازهات اضافه و تغییر بدی ، عزیزم $first_name جان اگه از فروش ربات درآمد داری از من حمایت کن تا پروژه همیشه به‌روزرسانی بمونه !
+🤌 هرچی نیاز داشتی میتونی اینجا طبق نیازهای فروشگاهت اضافه و تغییر بدی، عزیزم $first_name جان.
 
 
 
@@ -13018,62 +13022,62 @@ if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == tr
 
 if(in_array($data ?? '', ['faqMenu', 'tutorialsMenu', 'reciveApplications'], true)){
     $helpType = (($data ?? '') === 'faqMenu') ? 'faq' : 'tutorial';
-    editText($message_id, wizwiz_helpUserMenuText($helpType), wizwiz_helpUserMenuKeys($helpType), 'HTML');
+    editText($message_id, v2raystore_helpUserMenuText($helpType), v2raystore_helpUserMenuKeys($helpType), 'HTML');
     exit();
 }
 if(preg_match('/^help(Faq|Tut)Item_(\d+)$/', $data ?? '', $match)){
     $helpType = ($match[1] === 'Faq') ? 'faq' : 'tutorial';
-    editText($message_id, wizwiz_helpUserItemText($helpType, $match[2]), wizwiz_helpUserItemKeys($helpType), 'HTML');
+    editText($message_id, v2raystore_helpUserItemText($helpType, $match[2]), v2raystore_helpUserItemKeys($helpType), 'HTML');
     exit();
 }
 
 if($data == 'adminHelpMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_helpAdminHomeText(), wizwiz_helpAdminHomeKeys(), 'HTML');
+    editText($message_id, v2raystore_helpAdminHomeText(), v2raystore_helpAdminHomeKeys(), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpList_(faq|tutorial)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_helpAdminListText($match[1]), wizwiz_helpAdminListKeys($match[1]), 'HTML');
+    editText($message_id, v2raystore_helpAdminListText($match[1]), v2raystore_helpAdminListKeys($match[1]), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpItem_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    editText($message_id, v2raystore_helpAdminItemText($match[1], $match[2]), v2raystore_helpAdminItemKeys($match[1], $match[2]), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpToggle_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    $item = v2raystore_helpFindItem($match[1], $match[2]);
     if($item){
-        wizwiz_helpUpdateItem($match[1], $match[2], ['enabled'=>empty($item['enabled'])]);
-        editText($message_id, wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+        v2raystore_helpUpdateItem($match[1], $match[2], ['enabled'=>empty($item['enabled'])]);
+        editText($message_id, v2raystore_helpAdminItemText($match[1], $match[2]), v2raystore_helpAdminItemKeys($match[1], $match[2]), 'HTML');
     }else alert('مورد پیدا نشد.', true);
     exit();
 }
 if(preg_match('/^adminHelpDelete_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    $item = v2raystore_helpFindItem($match[1], $match[2]);
     if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
-    editText($message_id, "🗑 آیا از حذف این مورد مطمئن هستید؟\n\n<b>" . wizwiz_h($item['title']) . "</b>", wizwiz_helpAdminDeleteKeys($match[1], $match[2]), 'HTML');
+    editText($message_id, "🗑 آیا از حذف این مورد مطمئن هستید؟\n\n<b>" . v2raystore_h($item['title']) . "</b>", v2raystore_helpAdminDeleteKeys($match[1], $match[2]), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpConfirmDelete_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    wizwiz_helpDeleteItem($match[1], $match[2]);
-    editText($message_id, wizwiz_helpAdminListText($match[1]), wizwiz_helpAdminListKeys($match[1]), 'HTML');
+    v2raystore_helpDeleteItem($match[1], $match[2]);
+    editText($message_id, v2raystore_helpAdminListText($match[1]), v2raystore_helpAdminListKeys($match[1]), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpAdd_(faq|tutorial)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $cfg = wizwiz_helpTypeConfig($match[1]);
-    sendMessage("➕ لطفاً عنوان مورد جدید برای <b>" . wizwiz_h($cfg['title']) . "</b> را ارسال کنید.", $cancelKey, 'HTML');
+    $cfg = v2raystore_helpTypeConfig($match[1]);
+    sendMessage("➕ لطفاً عنوان مورد جدید برای <b>" . v2raystore_h($cfg['title']) . "</b> را ارسال کنید.", $cancelKey, 'HTML');
     setUser('adminHelpAddTitle_' . $match[1]);
     setUser('', 'temp');
     exit();
 }
 if(preg_match('/^adminHelpEditTitle_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    $item = v2raystore_helpFindItem($match[1], $match[2]);
     if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
-    sendMessage("✏️ عنوان جدید را ارسال کنید:\n\nعنوان فعلی: <b>" . wizwiz_h($item['title']) . "</b>", $cancelKey, 'HTML');
+    sendMessage("✏️ عنوان جدید را ارسال کنید:\n\nعنوان فعلی: <b>" . v2raystore_h($item['title']) . "</b>", $cancelKey, 'HTML');
     setUser('adminHelpEditTitle_' . $match[1] . '_' . intval($match[2]));
     exit();
 }
 if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $item = wizwiz_helpFindItem($match[1], $match[2]);
+    $item = v2raystore_helpFindItem($match[1], $match[2]);
     if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
     sendMessage("📝 متن جدید را ارسال کنید.\n\nمی‌توانید متن چندخطی بفرستید.", $cancelKey, 'HTML');
     setUser('adminHelpEditText_' . $match[1] . '_' . intval($match[2]));
@@ -13085,9 +13089,9 @@ if(preg_match('/^adminHelpAddTitle_(faq|tutorial)$/', $userInfo['step'] ?? '', $
         sendMessage('عنوان نمی‌تواند خالی باشد. دوباره ارسال کنید.');
         exit();
     }
-    setUser(function_exists('wizwiz_helpLimitText') ? wizwiz_helpLimitText($title, 120) : $title, 'temp');
+    setUser(function_exists('v2raystore_helpLimitText') ? v2raystore_helpLimitText($title, 120) : $title, 'temp');
     setUser('adminHelpAddText_' . $match[1]);
-    sendMessage("📝 حالا متن کامل این مورد را ارسال کنید.\n\nعنوان: <b>" . wizwiz_h($title) . "</b>", $cancelKey, 'HTML');
+    sendMessage("📝 حالا متن کامل این مورد را ارسال کنید.\n\nعنوان: <b>" . v2raystore_h($title) . "</b>", $cancelKey, 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpAddText_(faq|tutorial)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -13102,11 +13106,11 @@ if(preg_match('/^adminHelpAddText_(faq|tutorial)$/', $userInfo['step'] ?? '', $m
         sendMessage('متن نمی‌تواند خالی باشد. دوباره ارسال کنید.');
         exit();
     }
-    wizwiz_helpAddItem($match[1], $title, $body);
+    v2raystore_helpAddItem($match[1], $title, $body);
     setUser();
     setUser('', 'temp');
     sendMessage('✅ مورد جدید ذخیره شد.', $removeKeyboard, 'HTML');
-    sendMessage(wizwiz_helpAdminListText($match[1]), wizwiz_helpAdminListKeys($match[1]), 'HTML');
+    sendMessage(v2raystore_helpAdminListText($match[1]), v2raystore_helpAdminListKeys($match[1]), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpEditTitle_(faq|tutorial)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -13115,10 +13119,10 @@ if(preg_match('/^adminHelpEditTitle_(faq|tutorial)_(\d+)$/', $userInfo['step'] ?
         sendMessage('عنوان نمی‌تواند خالی باشد. دوباره ارسال کنید.');
         exit();
     }
-    wizwiz_helpUpdateItem($match[1], $match[2], ['title'=>$title]);
+    v2raystore_helpUpdateItem($match[1], $match[2], ['title'=>$title]);
     setUser();
     sendMessage('✅ عنوان ذخیره شد.', $removeKeyboard, 'HTML');
-    sendMessage(wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    sendMessage(v2raystore_helpAdminItemText($match[1], $match[2]), v2raystore_helpAdminItemKeys($match[1], $match[2]), 'HTML');
     exit();
 }
 if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -13127,10 +13131,10 @@ if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $userInfo['step'] ??
         sendMessage('متن نمی‌تواند خالی باشد. دوباره ارسال کنید.');
         exit();
     }
-    wizwiz_helpUpdateItem($match[1], $match[2], ['body'=>$body]);
+    v2raystore_helpUpdateItem($match[1], $match[2], ['body'=>$body]);
     setUser();
     sendMessage('✅ متن ذخیره شد.', $removeKeyboard, 'HTML');
-    sendMessage(wizwiz_helpAdminItemText($match[1], $match[2]), wizwiz_helpAdminItemKeys($match[1], $match[2]), 'HTML');
+    sendMessage(v2raystore_helpAdminItemText($match[1], $match[2]), v2raystore_helpAdminItemKeys($match[1], $match[2]), 'HTML');
     exit();
 }
 
@@ -13235,7 +13239,7 @@ function getAdminKeysPlus(){
     // فیلد style از Bot API جدید پشتیبانی می‌شود؛ کلاینت‌های قدیمی‌تر آن را نادیده می‌گیرند.
     $keys = [];
 
-    $keys[] = [['text'=>'📊 گزارش‌ها و جستجو', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'📊 گزارش‌ها و جستجو', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['bot_reports'], 'callback_data'=>'botReports', 'style'=>'primary'],
         ['text'=>$buttonValues['user_reports'], 'callback_data'=>'userReports', 'style'=>'primary']
@@ -13245,7 +13249,7 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['message_to_user'], 'callback_data'=>'messageToSpeceficUser', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🧾 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'🧾 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu', 'style'=>'success'],
         ['text'=>$buttonValues['create_account'], 'callback_data'=>'createMultipleAccounts', 'style'=>'success']
@@ -13262,7 +13266,7 @@ function getAdminKeysPlus(){
         ['text'=>'📊 تنظیمات آمار کانال', 'callback_data'=>'reportChannelSettingsMenu', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['server_settings'], 'callback_data'=>'serversSetting', 'style'=>'primary'],
         ['text'=>$buttonValues['categories_settings'], 'callback_data'=>'categoriesSetting', 'style'=>'primary']
@@ -13276,7 +13280,7 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['bot_settings'], 'callback_data'=>'botSettings', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>'🔐 قفل و دسترسی اعضای جدید', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary'],
         ['text'=>'🚪 معافیت جوین اجباری', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
@@ -13297,7 +13301,7 @@ function getAdminKeysPlus(){
         ['text'=>'درخواست‌های رد شده', 'callback_data'=>'rejectedAgentList', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'wizwizch', 'style'=>'primary']];
+    $keys[] = [['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['tickets_list'], 'callback_data'=>'ticketsList', 'style'=>'primary'],
         ['text'=>$buttonValues['message_to_all'], 'callback_data'=>'message2All', 'style'=>'primary']
@@ -13501,7 +13505,7 @@ function farid_setUpdateAfterMessage($msg){
 // ===========================
 function farid_syncOldConfigCandidatesBeforeClean($days, $basis, $max = 300){
     global $connection;
-    if(!function_exists('wizwiz_syncOrderExpiryFromPanel')) return 0;
+    if(!function_exists('v2raystore_syncOrderExpiryFromPanel')) return 0;
 
     $days = intval($days);
     if($days <= 0) $days = 10;
@@ -13529,7 +13533,7 @@ function farid_syncOldConfigCandidatesBeforeClean($days, $basis, $max = 300){
 
     $synced = 0;
     while($order = $res->fetch_assoc()){
-        $info = wizwiz_syncOrderExpiryFromPanel($order, true);
+        $info = v2raystore_syncOrderExpiryFromPanel($order, true);
         if(is_array($info) && !empty($info['found'])) $synced++;
     }
     return $synced;
@@ -13590,7 +13594,7 @@ function farid_extractSubIdFromInput($input){
 function farid_subUrlMatchesServer($input, $serverId){
     $input = trim((string)$input);
     if($input === '' || strpos($input, '://') === false) return false;
-    if(!function_exists('wizwiz_getPanelSubscriptionUris')) return false;
+    if(!function_exists('v2raystore_getPanelSubscriptionUris')) return false;
 
     $iu = @parse_url($input);
     if(!is_array($iu) || empty($iu['host'])) return false;
@@ -13598,7 +13602,7 @@ function farid_subUrlMatchesServer($input, $serverId){
     $inputPort = intval($iu['port'] ?? (($iu['scheme'] ?? 'http') === 'https' ? 443 : 80));
     $inputPath = '/' . ltrim($iu['path'] ?? '/', '/');
 
-    $uris = wizwiz_getPanelSubscriptionUris($serverId);
+    $uris = v2raystore_getPanelSubscriptionUris($serverId);
     foreach(['subURI','subJsonURI'] as $key){
         if(empty($uris[$key])) continue;
         $pu = @parse_url($uris[$key]);
@@ -13842,7 +13846,7 @@ function farid_registerManualConfigForUser($targetUserId, $input){
     if(empty($links) && !empty($found['provided_link']) && empty($found['is_sub'])){
         $links[] = trim((string)$found['provided_link']);
     }
-    $links = wizwiz_normalizeConfigLinksArray($links);
+    $links = v2raystore_normalizeConfigLinksArray($links);
     if(empty($links)) return [false, 'کانفیگ پیدا شد، ولی ساخت لینک خروجی ممکن نشد.'];
 
     $linkJson = json_encode(array_values($links), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -13881,11 +13885,11 @@ function farid_registerManualConfigForUser($targetUserId, $input){
 
     $subLink = '';
     if(($botState['subLinkState'] ?? 'off') == 'on'){
-        $subLink = wizwiz_makeCustomerSubLink($serverId, $token, $uuid, $inboundId, $remark);
+        $subLink = v2raystore_makeCustomerSubLink($serverId, $token, $uuid, $inboundId, $remark);
     }
 
     if(($botState['configLinkState'] ?? '') != 'off' && count($links) > 1){
-        $msg = wizwiz_buildMultiDomainConfigMessage($remark, $links, $subLink, '✅ کانفیگ به حساب شما اضافه شد');
+        $msg = v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink, '✅ کانفیگ به حساب شما اضافه شد');
     }else{
         $safeLinks = array_map(function($l){ return htmlspecialchars($l, ENT_QUOTES, 'UTF-8'); }, $links);
         $msg = "✅ کانفیگ به حساب شما اضافه شد.\n\n" .
@@ -13957,7 +13961,7 @@ function farid_findOrderIdBySearchText($input, $userId = 0, $onlyNonAgent = fals
         $res = $stmt->get_result();
         $stmt->close();
         while($order = $res->fetch_assoc()){
-            $panelSub = wizwiz_findPanelSubId(intval($order['server_id']), $order['token'], $order['uuid'], intval($order['inbound_id']), $order['remark']);
+            $panelSub = v2raystore_findPanelSubId(intval($order['server_id']), $order['token'], $order['uuid'], intval($order['inbound_id']), $order['remark']);
             if($panelSub !== '' && $panelSub === $subId) return intval($order['id']);
         }
     }
@@ -15001,8 +15005,8 @@ function farid_renewAccountConnectionLinks($order){
         $vraylink = getConnectionLink($server_id, $newUuid, $protocol, $remark, $port, $netType, $inboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
     }
 
-    if(function_exists('wizwiz_normalizeConfigLinksArray')){
-        $normalizedLinks = wizwiz_normalizeConfigLinksArray($vraylink);
+    if(function_exists('v2raystore_normalizeConfigLinksArray')){
+        $normalizedLinks = v2raystore_normalizeConfigLinksArray($vraylink);
     }else{
         if(is_string($vraylink)) $normalizedLinks = [$vraylink];
         elseif(is_object($vraylink)) $normalizedLinks = (array)$vraylink;
@@ -15045,8 +15049,8 @@ function farid_generateUpdatedVrayLinks($order){
     if(!is_array($order)) return null;
 
     // Sync expiry time from the panel whenever configs are refreshed.
-    if(function_exists('wizwiz_syncOrderExpiryFromPanel')){
-        $syncInfo = wizwiz_syncOrderExpiryFromPanel($order, true);
+    if(function_exists('v2raystore_syncOrderExpiryFromPanel')){
+        $syncInfo = v2raystore_syncOrderExpiryFromPanel($order, true);
         if(is_array($syncInfo) && !empty($syncInfo['found']) && intval($syncInfo['expire_date'] ?? 0) > 0){
             $order['expire_date'] = intval($syncInfo['expire_date']);
         }
@@ -15296,7 +15300,7 @@ function farid_switchSanaeiNewAttachClientToInbound($serverId, $inboundId, $clie
     curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 5);
     curl_setopt($curl, CURLOPT_TIMEOUT, 8);
     curl_setopt($curl, CURLOPT_POSTFIELDS, http_build_query(['username'=>$serverName, 'password'=>$serverPass]));
-    curl_setopt($curl, CURLOPT_HTTPHEADER, function_exists('wizwiz_panelLoginHeaders') ? wizwiz_panelLoginHeaders($curl, $loginUrl) : []);
+    curl_setopt($curl, CURLOPT_HTTPHEADER, function_exists('v2raystore_panelLoginHeaders') ? v2raystore_panelLoginHeaders($curl, $loginUrl) : []);
     curl_setopt($curl, CURLOPT_HEADER, 1);
     $loginResponseRaw = curl_exec($curl);
     if($loginResponseRaw === false){ curl_close($curl); return null; }
@@ -15329,8 +15333,8 @@ function farid_switchSanaeiNewAttachClientToInbound($serverId, $inboundId, $clie
 
     $last = null;
     foreach($attempts as $attempt){
-        if(function_exists('wizwiz_sanaeiNewJsonPost')){
-            wizwiz_sanaeiNewJsonPost($curl, $attempt['url'], $session, $attempt['payload']);
+        if(function_exists('v2raystore_sanaeiNewJsonPost')){
+            v2raystore_sanaeiNewJsonPost($curl, $attempt['url'], $session, $attempt['payload']);
         }else{
             curl_setopt_array($curl, [
                 CURLOPT_URL => $attempt['url'],
@@ -15495,7 +15499,7 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $targetServerId = intval($targetServerId);
     $actorId = intval($actorId);
     $isAdminSwitch = (bool)$isAdminSwitch;
-    $order = wizwiz_switchGetOrder($orderId);
+    $order = v2raystore_switchGetOrder($orderId);
     if(!$order) return ['ok'=>false, 'message'=>'کانفیگ پیدا نشد.'];
     $ownerId = intval($order['userid'] ?? 0);
     if(!$isAdminSwitch && $ownerId !== $actorId) return ['ok'=>false, 'message'=>'شما به این کانفیگ دسترسی ندارید.'];
@@ -15508,8 +15512,8 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     if(!$targetInfo || intval($targetInfo['active'] ?? 0) != 1 || intval($targetInfo['state'] ?? 0) != 1) return ['ok'=>false, 'message'=>'سرور مقصد فعال نیست.'];
     if(!$isAdminSwitch && intval($targetInfo['ucount'] ?? 0) <= 0) return ['ok'=>false, 'message'=>'ظرفیت سرور مقصد تمام شده است.'];
 
-    $settings = wizwiz_getServerSwitchSettings();
-    if(!$isAdminSwitch && intval($settings['daily_limit']) > 0 && wizwiz_switchUsedToday($orderId, $ownerId) >= intval($settings['daily_limit'])){
+    $settings = v2raystore_getServerSwitchSettings();
+    if(!$isAdminSwitch && intval($settings['daily_limit']) > 0 && v2raystore_switchUsedToday($orderId, $ownerId) >= intval($settings['daily_limit'])){
         return ['ok'=>false, 'message'=>'برای هر کانفیگ فقط ' . intval($settings['daily_limit']) . ' بار در روز امکان تغییر سرور دارید.'];
     }
 
@@ -15531,19 +15535,19 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $remainingGb = $remainingBytes / 1073741824;
     if($remainingBytes <= 0) return ['ok'=>false, 'message'=>'حجم سرویس تمام شده است.'];
 
-    $cost = wizwiz_calcSwitchDeductionGb($order, $targetServerId, $remainingGb);
+    $cost = v2raystore_calcSwitchDeductionGb($order, $targetServerId, $remainingGb);
     $changeType = ($cost['change_type'] ?? 'deduct');
     $changeGb = floatval($cost['change_gb'] ?? ($cost['deduct_gb'] ?? 0));
     $changeBytes = (int)floor($changeGb * 1073741824);
     if($changeType === 'deduct' && $remainingBytes <= $changeBytes){
-        return ['ok'=>false, 'message'=>'حجم باقی‌مانده برای این تغییر کافی نیست. حجم باقی‌مانده: ' . wizwiz_switchFormatGb($remainingGb) . 'GB، کسر موردنیاز: ' . wizwiz_switchFormatGb($changeGb) . 'GB'];
+        return ['ok'=>false, 'message'=>'حجم باقی‌مانده برای این تغییر کافی نیست. حجم باقی‌مانده: ' . v2raystore_switchFormatGb($remainingGb) . 'GB، کسر موردنیاز: ' . v2raystore_switchFormatGb($changeGb) . 'GB'];
     }
     $newBytes = ($changeType === 'add') ? ($remainingBytes + $changeBytes) : max(0, $remainingBytes - $changeBytes);
     $newVolumeGb = round($newBytes / 1073741824, 2);
     if($newVolumeGb <= 0) return ['ok'=>false, 'message'=>'بعد از تغییر سرور، حجم قابل استفاده‌ای باقی نمی‌ماند.'];
 
     $targetPlan = $cost['target_plan'] ?? null;
-    if(!is_array($targetPlan)) $targetPlan = wizwiz_switchGetPlan($order['fileid'] ?? 0);
+    if(!is_array($targetPlan)) $targetPlan = v2raystore_switchGetPlan($order['fileid'] ?? 0);
     $targetPlanId = intval($cost['target_plan_id'] ?? ($order['fileid'] ?? 0));
     if($targetPlanId <= 0) $targetPlanId = intval($order['fileid'] ?? 0);
     $custom = farid_switchPlanCustomFields($targetPlan);
@@ -15645,7 +15649,7 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
         }
     }
 
-    $links = wizwiz_normalizeConfigLinksArray($links);
+    $links = v2raystore_normalizeConfigLinksArray($links);
     if(empty($links)) return ['ok'=>false, 'message'=>'کانفیگ در مقصد ساخته شد، ولی لینک خروجی ساخته نشد. لطفاً از پنل بررسی کنید.'];
 
     if(is_array($deleteOldAction)){
@@ -15676,7 +15680,7 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $stmt->close();
 
     $logChangeGb = ($changeType === 'add') ? (-1 * $changeGb) : $changeGb;
-    wizwiz_recordSwitchLog($orderId, $ownerId, $oldServerId, $targetServerId, $oldRemark, $newRemark, $logChangeGb);
+    v2raystore_recordSwitchLog($orderId, $ownerId, $oldServerId, $targetServerId, $oldRemark, $newRemark, $logChangeGb);
 
     return [
         'ok' => true,
@@ -15684,7 +15688,7 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
         'owner_id' => $ownerId,
         'old_server_id' => $oldServerId,
         'target_server_id' => $targetServerId,
-        'target_title' => wizwiz_switchGetServerTitle($targetServerId),
+        'target_title' => v2raystore_switchGetServerTitle($targetServerId),
         'old_remark' => $oldRemark,
         'new_remark' => $newRemark,
         'links' => $links,
@@ -15704,8 +15708,8 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage =
 
     if($links == null) return;
 
-    if(function_exists('wizwiz_normalizeConfigLinksArray')){
-        $links = wizwiz_normalizeConfigLinksArray($links);
+    if(function_exists('v2raystore_normalizeConfigLinksArray')){
+        $links = v2raystore_normalizeConfigLinksArray($links);
     }else{
         if(is_string($links)) $links = [$links];
         elseif(is_object($links)) $links = (array)$links;
@@ -15718,8 +15722,8 @@ function farid_sendUpdatedConfigToUser($userId, $remark, $links, $afterMessage =
 
     // اگر چند دامنه/چند لینک وجود دارد، همه را در یک پیام واحد ارسال کن.
     if(count($links) > 1 && ($botState['configLinkState'] ?? '') != 'off'){
-        if(function_exists('wizwiz_buildMultiDomainConfigMessage')){
-            $text = wizwiz_buildMultiDomainConfigMessage($remark, $links, '', $title);
+        if(function_exists('v2raystore_buildMultiDomainConfigMessage')){
+            $text = v2raystore_buildMultiDomainConfigMessage($remark, $links, '', $title);
         }else{
             $safeRemark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
             $safeTitle = htmlspecialchars((string)$title, ENT_QUOTES, 'UTF-8');

@@ -310,7 +310,7 @@ function showForm($type){
                        expireTime: <span><?php echo $expiryTime;?></span>
                     </p>
                 </div>
-                <p style="font-size:10px">Made with 🖤 in <a target="_blank" href="https://github.com/wizwizdev/wizwizxui-timebot">wizwiz</a></p>
+                <p style="font-size:10px">Made with 🖤 in <a target="_blank" href="https://github.com/v2raystoredev/v2ray-store">v2raystore</a></p>
             </form>
         </div>
 
@@ -326,7 +326,7 @@ function showForm($type){
                 <fieldset>
                     <button class="search" type="submit">جستجو</button>
                 </fieldset>
-                <p style="font-size:13px">Made with 🖤 in <a target="_blank" href="https://github.com/wizwizdev/wizwizxui-timebot">wizwiz</a></p>
+                <p style="font-size:13px">Made with 🖤 in <a target="_blank" href="https://github.com/v2raystoredev/v2ray-store">v2raystore</a></p>
             </form>
         </div>
         <br>
