@@ -10,6 +10,163 @@ if($connection->connect_error){
 $connection->set_charset("utf8mb4");
 
 
+function wizwiz_ensureOrderNoteColumn(){
+    global $connection;
+    $exists = @($connection->query("SHOW COLUMNS FROM `orders_list` LIKE 'config_note'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `orders_list` ADD `config_note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `remark`"));
+    }
+}
+wizwiz_ensureOrderNoteColumn();
+
+function wizwiz_safeConfigNoteText($note){
+    $note = trim((string)$note);
+    $note = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $note);
+    if(function_exists('mb_strlen') && mb_strlen($note, 'UTF-8') > 300){
+        $note = mb_substr($note, 0, 300, 'UTF-8');
+    }elseif(strlen($note) > 1200){
+        $note = substr($note, 0, 1200);
+    }
+    return $note;
+}
+
+function wizwiz_orderDetailButtonCallback($button){
+    return strtolower(trim((string)($button['callback_data'] ?? '')));
+}
+
+function wizwiz_isMyConfigProtocolRow($row){
+    global $buttonValues;
+    if(!is_array($row) || count($row) == 0) return false;
+
+    $texts = [];
+    $callbacks = [];
+    foreach($row as $button){
+        if(!is_array($button)) continue;
+        $texts[] = trim((string)($button['text'] ?? ''));
+        $callbacks[] = wizwiz_orderDetailButtonCallback($button);
+    }
+    $joinedText = trim(implode(' ', $texts));
+    $joinedCallback = trim(implode(' ', $callbacks));
+    $selectedProtocol = trim((string)($buttonValues['selected_protocol'] ?? ''));
+
+    if($selectedProtocol !== '' && $joinedText === $selectedProtocol) return true;
+    if(preg_match('/(پروتکل\s*انتخاب|selected[_\s-]*protocol)/ui', $joinedText . ' ' . $joinedCallback)) return true;
+
+    $allProtocolButtons = true;
+    $hasProtocolWord = false;
+    foreach($texts as $t){
+        $plain = trim(str_replace(['☑️','✅','✔️','✓'], '', $t));
+        $plain = trim(preg_replace('/\s+/u', ' ', $plain));
+        if(preg_match('/\b(vless|vmess|trojan)\b/i', $plain)) $hasProtocolWord = true;
+        else $allProtocolButtons = false;
+    }
+    if($hasProtocolWord && $allProtocolButtons) return true;
+    if(strpos($joinedCallback, 'changeaccprotocol') !== false || strpos($joinedCallback, 'changeprotocolisdisable') !== false) return true;
+
+    return false;
+}
+
+function wizwiz_isMyConfigInfoRow($row){
+    if(!is_array($row) || count($row) == 0) return false;
+    foreach($row as $button){
+        if(!is_array($button)) return false;
+        $cb = (string)($button['callback_data'] ?? '');
+        if($cb !== 'wizwizch') return false;
+    }
+    return true;
+}
+
+function wizwiz_isMyConfigPagerRow($row){
+    if(!is_array($row) || count($row) == 0) return false;
+    foreach($row as $button){
+        $cb = (string)($button['callback_data'] ?? '');
+        if(strpos($cb, 'orderDetails') !== 0) return false;
+    }
+    return true;
+}
+
+function wizwiz_isMyConfigImportantSingleButton($button){
+    $cb = wizwiz_orderDetailButtonCallback($button);
+    $text = trim((string)($button['text'] ?? ''));
+    if(strpos($cb, 'editconfignote') === 0) return true;
+    if(strpos($cb, 'switchlocation') === 0) return true;
+    if(strpos($cb, 'changaccountconnectionlink') === 0) return true;
+    if(strpos($cb, 'updateconfigconnectionlink') === 0) return true;
+    if(strpos($cb, 'deletemyconfig') === 0) return true;
+    if(in_array($cb, ['mysubscriptions', 'agentconfigslist', 'mainmenu'], true)) return true;
+    if(preg_match('/(حذف|لغو|بازگشت|برگشت|لینک\s*جدید|بروزرسانی\s*لینک|به‌روزرسانی\s*لینک)/u', $text)) return true;
+    return false;
+}
+
+function wizwiz_prepareMyConfigDetailKeyboard($keyboard, $orderId, $agentBought = false, $note = ''){
+    global $buttonValues;
+    if(!is_array($keyboard)) return $keyboard;
+
+    $topRows = [];
+    $buttons = [];
+    $importantRows = [];
+    $dangerRows = [];
+    $backRows = [];
+    $noteAdded = false;
+
+    foreach($keyboard as $row){
+        if(!is_array($row) || count($row) == 0) continue;
+        if(wizwiz_isMyConfigProtocolRow($row)) continue;
+
+        if(wizwiz_isMyConfigPagerRow($row) || wizwiz_isMyConfigInfoRow($row)){
+            $topRows[] = $row;
+            continue;
+        }
+
+        foreach($row as $button){
+            if(!is_array($button) || !isset($button['text'])) continue;
+            $cb = wizwiz_orderDetailButtonCallback($button);
+            if(strpos($cb, 'deleteMyConfig') === 0 || strpos($cb, 'deletemyconfig') === 0){
+                $dangerRows[] = [$button];
+            }elseif(in_array($cb, ['mysubscriptions', 'agentconfigslist', 'mainmenu'], true)){
+                $backRows[] = [$button];
+            }elseif(wizwiz_isMyConfigImportantSingleButton($button)){
+                $importantRows[] = [$button];
+            }else{
+                $buttons[] = $button;
+            }
+        }
+    }
+
+    $noteText = trim((string)$note) === '' ? '📝 ثبت یادداشت کانفیگ' : '✏️ ویرایش یادداشت کانفیگ';
+    $noteRow = [[
+        'text' => $noteText,
+        'callback_data' => 'editConfigNote' . intval($orderId),
+        'style' => 'primary'
+    ]];
+
+    $out = [];
+    foreach($topRows as $row) $out[] = $row;
+    $out[] = $noteRow;
+
+    foreach($importantRows as $row){
+        $cb = isset($row[0]) ? wizwiz_orderDetailButtonCallback($row[0]) : '';
+        if(strpos($cb, 'editconfignote') === 0) continue;
+        $out[] = $row;
+    }
+
+    $chunk = [];
+    foreach($buttons as $button){
+        $chunk[] = $button;
+        if(count($chunk) == 2){
+            $out[] = $chunk;
+            $chunk = [];
+        }
+    }
+    if(count($chunk) > 0) $out[] = $chunk;
+
+    foreach($dangerRows as $row) $out[] = $row;
+    foreach($backRows as $row) $out[] = $row;
+
+    return $out;
+}
+
+
 function wizwiz_cleanSingleDomainHost($domain){
     $domain = trim(str_replace(["\r", "\n", "\t"], "", (string)$domain));
     if($domain === "") return "";
@@ -5613,6 +5770,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $inbound_id = $order['inbound_id'];
         $link_status = $order['expire_date'] > time()  ? $buttonValues['active'] : $buttonValues['deactive'];
         $price = $order['amount'];
+        $configNote = function_exists('wizwiz_safeConfigNoteText') ? wizwiz_safeConfigNoteText($order['config_note'] ?? '') : trim((string)($order['config_note'] ?? ''));
         
     	$stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ?");
     	$stmt->bind_param('i', $server_id);
@@ -6178,6 +6336,12 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
+        if(trim((string)$configNote) !== ''){
+            $msg .= "
+
+📝 یادداشت کانفیگ:
+<blockquote>" . htmlspecialchars($configNote, ENT_QUOTES, 'UTF-8') . "</blockquote>";
+        }
         
         
         if($found){
@@ -6200,6 +6364,9 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $keyboard[] = [['text' => $buttonValues['delete_config'], 'callback_data' => "deleteMyConfig" . $id]];
 
         $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => ($agentBought == true?"agentConfigsList":"mySubscriptions")]];
+        if(function_exists('wizwiz_prepareMyConfigDetailKeyboard')){
+            $keyboard = wizwiz_prepareMyConfigDetailKeyboard($keyboard, $id, $agentBought, $configNote);
+        }
         return ["keyboard"=>wizwiz_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }

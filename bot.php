@@ -9621,6 +9621,76 @@ if(preg_match('/^orderDetails(\d+)(_|)(?<offset>\d+|)/', $data, $match)){
         alert($mainValues['no_order_found']);exit;
     }else editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
 }
+if(preg_match('/^editConfigNote(\d+)$/', $data, $match)){
+    $oid = intval($match[1]);
+    $stmt = $connection->prepare("SELECT `id`, `remark`, `config_note` FROM `orders_list` WHERE `id`=? AND `userid`=? AND `status`=1 LIMIT 1");
+    $stmt->bind_param("ii", $oid, $from_id);
+    $stmt->execute();
+    $orderNoteInfo = $stmt->get_result();
+    $stmt->close();
+
+    if(!$orderNoteInfo || $orderNoteInfo->num_rows == 0){
+        alert($mainValues['no_order_found'] ?? 'سفارشی یافت نشد');
+        exit;
+    }
+
+    $orderNoteInfo = $orderNoteInfo->fetch_assoc();
+    $currentNote = trim((string)($orderNoteInfo['config_note'] ?? ''));
+    setUser('editConfigNote' . $oid);
+    delMessage();
+    $notePreview = $currentNote !== '' ? "
+
+📝 یادداشت فعلی:
+<blockquote>" . htmlspecialchars($currentNote, ENT_QUOTES, 'UTF-8') . "</blockquote>" : "";
+    sendMessage("📝 یادداشت کانفیگ <b>" . htmlspecialchars($orderNoteInfo['remark'], ENT_QUOTES, 'UTF-8') . "</b> را ارسال کنید.
+
+برای حذف یادداشت، عبارت <code>/empty</code> را بفرستید.
+حداکثر ۳۰۰ کاراکتر." . $notePreview, $cancelKey, 'HTML');
+    exit;
+}
+if(preg_match('/^editConfigNote(\d+)$/', $userInfo['step'], $match) && $text != $buttonValues['cancel']){
+    $oid = intval($match[1]);
+    $stmt = $connection->prepare("SELECT `id`, `remark` FROM `orders_list` WHERE `id`=? AND `userid`=? AND `status`=1 LIMIT 1");
+    $stmt->bind_param("ii", $oid, $from_id);
+    $stmt->execute();
+    $orderNoteInfo = $stmt->get_result();
+    $stmt->close();
+
+    if(!$orderNoteInfo || $orderNoteInfo->num_rows == 0){
+        setUser();
+        sendMessage($mainValues['no_order_found'] ?? 'سفارشی یافت نشد', $removeKeyboard);
+        exit;
+    }
+
+    $note = trim((string)$text);
+    $noteLower = function_exists('mb_strtolower') ? mb_strtolower($note, 'UTF-8') : strtolower($note);
+    if(in_array($noteLower, ['/empty', 'empty', 'حذف', 'پاک', 'پاک کردن'], true)){
+        $note = '';
+    }elseif(function_exists('wizwiz_safeConfigNoteText')){
+        $note = wizwiz_safeConfigNoteText($note);
+    }else{
+        $note = trim($note);
+        if(strlen($note) > 1200) $note = substr($note, 0, 1200);
+    }
+
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `config_note`=? WHERE `id`=? AND `userid`=? LIMIT 1");
+    $stmt->bind_param("sii", $note, $oid, $from_id);
+    $stmt->execute();
+    $stmt->close();
+    setUser();
+
+    $keys = getOrderDetailKeys($from_id, $oid, 0);
+    if($keys != null){
+        $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
+        $keys['keyboard'] = farid_attachUpdateAllMyConfigsButton($keys['keyboard']);
+        sendMessage(($note === '' ? "✅ یادداشت کانفیگ حذف شد." : "✅ یادداشت کانفیگ ذخیره شد.") . "
+
+" . $keys['msg'], $keys['keyboard'], 'HTML');
+    }else{
+        sendMessage($note === '' ? "✅ یادداشت کانفیگ حذف شد." : "✅ یادداشت کانفیگ ذخیره شد.", $removeKeyboard);
+    }
+    exit;
+}
 if($data=="cantEditGrpc"){
     alert("نوعیت این کانفیگ رو تغییر داده نمیتونید!");
     exit();
