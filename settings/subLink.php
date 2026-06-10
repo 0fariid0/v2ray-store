@@ -41,16 +41,16 @@ $token = $_GET['token'];
         $stmt->close();
         $serverType = $server_info['type'];
 
-        $panelSubLink = wizwiz_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
+        $panelSubLink = v2raystore_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
         if($panelSubLink != '' && strpos($panelSubLink, 'settings/subLink.php') === false){
             header('Location: ' . $panelSubLink, true, 302);
             exit();
         }
         // For latest 3x-ui, if the bot-local subscription endpoint is used, serve the exact protocol links
         // returned by the panel API instead of regenerating them locally.
-        if($serverType == 'sanaei_new' && function_exists('wizwiz_sanaeiNewSubLinksFromPanel')){
-            $realSubId = wizwiz_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
-            $panelApiLinks = wizwiz_sanaeiNewSubLinksFromPanel($server_id, $realSubId);
+        if($serverType == 'sanaei_new' && function_exists('v2raystore_sanaeiNewSubLinksFromPanel')){
+            $realSubId = v2raystore_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
+            $panelApiLinks = v2raystore_sanaeiNewSubLinksFromPanel($server_id, $realSubId);
             if(!empty($panelApiLinks)){
                 echo base64_encode(implode("
 ", $panelApiLinks));

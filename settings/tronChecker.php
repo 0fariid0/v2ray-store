@@ -313,7 +313,7 @@ while($payParam = $paysList->fetch_assoc()){
                     
                     $keys = json_encode(['inline_keyboard'=>[
                         [
-                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'wizwizch'],
+                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'v2raystore'],
                             ],
                         ]]);
                 sendMessage("
@@ -403,7 +403,7 @@ while($payParam = $paysList->fetch_assoc()){
                     
                     $keys = json_encode(['inline_keyboard'=>[
                         [
-                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'wizwizch'],
+                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'v2raystore'],
                             ],
                         ]]);
                     $user_info = Bot('getChat',['chat_id'=>$user_id])->result;
@@ -480,7 +480,7 @@ while($payParam = $paysList->fetch_assoc()){
                         sendMessage("پرداخت شما با تکسید آیدی $hash_id با موفقیت انجام شد. $volume روز به مدت زمان سرویس شما اضافه شد",null,null,$user_id);
                         $keys = json_encode(['inline_keyboard'=>[
                         [
-                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'wizwizch'],
+                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'v2raystore'],
                             ],
                             ]]);
                                     $user_info = Bot('getChat',['chat_id'=>$user_id])->result;
@@ -555,7 +555,7 @@ while($payParam = $paysList->fetch_assoc()){
                         sendMessage("پرداخت شما با تکسید آیدی $hash_id تأیید شد. $volume گیگ به حجم سرویس شما اضافه شد",null,null,$user_id);
                         $keys = json_encode(['inline_keyboard'=>[
                         [
-                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'wizwizch'],
+                            ['text'=>"خرید از درگاه ترون 💞",'callback_data'=>'v2raystore'],
                             ],
                             ]]);
                                     $user_info = Bot('getChat',['chat_id'=>$user_id])->result;

@@ -2,8 +2,8 @@
 include_once '../baseInfo.php';
 include_once '../config.php';
 
-if(function_exists('wizwiz_processDailyChannelStats')){
-    wizwiz_processDailyChannelStats(false);
+if(function_exists('v2raystore_processDailyChannelStats')){
+    v2raystore_processDailyChannelStats(false);
 }
 
 $sellState=$botState['sellState']=="off"?"خاموش ❌":"روشن ✅";
