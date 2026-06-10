@@ -30,6 +30,40 @@ function wizwiz_safeConfigNoteText($note){
     return $note;
 }
 
+function wizwiz_buildConfigDetailsMessage($state, $remark, $configLinks = '', $subLink = '', $configNote = ''){
+    $msg = "وضعیت کانفیگ: " . $state . "
+
+";
+    $msg .= "🔮 نام کانفیگ: " . htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8') . "
+";
+
+    $configNote = function_exists('wizwiz_safeConfigNoteText') ? wizwiz_safeConfigNoteText($configNote) : trim((string)$configNote);
+    if(trim((string)$configNote) !== ''){
+        $msg .= "
+📝 یادداشت کانفیگ:
+<blockquote>" . htmlspecialchars($configNote, ENT_QUOTES, 'UTF-8') . "</blockquote>
+";
+    }
+
+    $configLinks = trim((string)$configLinks);
+    if($configLinks !== ''){
+        $msg .= "
+لینک اتصال: " . $configLinks . "
+";
+    }
+
+    $subLink = trim((string)$subLink);
+    if($subLink !== ''){
+        $msg .= "
+لینک سابسکریپشن: " . $subLink . "
+";
+    }
+
+    $msg .= "⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
+";
+    return $msg;
+}
+
 function wizwiz_orderDetailButtonCallback($button){
     return strtolower(trim((string)($button['callback_data'] ?? '')));
 }
@@ -6001,7 +6035,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
 
         
         $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
-        $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
+        $msg = wizwiz_buildConfigDetailsMessage($enable, $remark, $configLinks, $subLink, $configNote);
 
         if(($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
             $keyboard[] = [['text' => $buttonValues['change_config_location'] ?? '🌎 تغییر لوکیشن', 'callback_data' => "switchLocation{$id}", 'style'=>'primary']];
@@ -6335,13 +6369,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $customerSubLink = wizwiz_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
         $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
-        $msg = str_replace(['STATE', 'NAME','CONNECT-LINK', 'SUB-LINK'], [$enable, $remark, $configLinks, $subLink], $mainValues['config_details_message']);
-        if(trim((string)$configNote) !== ''){
-            $msg .= "
-
-📝 یادداشت کانفیگ:
-<blockquote>" . htmlspecialchars($configNote, ENT_QUOTES, 'UTF-8') . "</blockquote>";
-        }
+        $msg = wizwiz_buildConfigDetailsMessage($enable, $remark, $configLinks, $subLink, $configNote);
         
         
         if($found){
