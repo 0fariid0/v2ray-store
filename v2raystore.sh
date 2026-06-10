@@ -20,6 +20,13 @@ CONFIG_FILE="${CONFIG_DIR}/dbrootv2raystore.txt"
 LOCAL_CMD="/usr/local/bin/v2ray-store"
 LOG_FILE="/tmp/v2raystore_update.log"
 DEFAULT_DB_NAME="v2raystore"
+PHP_UPLOAD_LIMIT="1024M"
+PHP_POST_LIMIT="1024M"
+PHP_MEMORY_LIMIT="1024M"
+PHP_MAX_EXECUTION_TIME="600"
+PHP_MAX_INPUT_TIME="600"
+PHP_MAX_INPUT_VARS="10000"
+MYSQL_MAX_ALLOWED_PACKET="1024M"
 
 # Legacy identifiers are assembled so the old brand is not displayed anywhere.
 LEGACY_PART="wiz"
@@ -98,10 +105,11 @@ apt_recover() {
 install_packages() {
     apt_recover
     apt-get update -y >/dev/null 2>&1 || true
-    apt-get install -y apache2 mysql-server php libapache2-mod-php php-mysql php-mbstring php-zip php-gd php-json php-curl php-soap php-ssh2 git wget curl unzip openssl ca-certificates certbot python3-certbot-apache >/dev/null 2>&1
+    apt-get install -y apache2 mysql-server php libapache2-mod-php php-mysql php-mbstring php-zip php-gd php-json php-curl php-soap php-ssh2 php-opcache php-xml php-intl php-bcmath git wget curl unzip openssl ca-certificates certbot python3-certbot-apache >/dev/null 2>&1
     systemctl enable mysql.service >/dev/null 2>&1 || systemctl enable mariadb >/dev/null 2>&1 || true
     systemctl start mysql.service >/dev/null 2>&1 || systemctl start mariadb >/dev/null 2>&1 || true
     systemctl enable apache2 >/dev/null 2>&1 || true
+    configure_php_performance --quiet
     systemctl restart apache2 >/dev/null 2>&1 || true
     ufw allow 80 >/dev/null 2>&1 || true
     ufw allow 443 >/dev/null 2>&1 || true
@@ -221,6 +229,113 @@ EOF2
 
 root_db_user() { grep '\$user' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
 root_db_pass() { grep '\$pass' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
+
+
+ini_set_value() {
+    local file="$1" key="$2" value="$3"
+    [ -f "$file" ] || return 0
+    python3 - "$file" "$key" "$value" <<'PYINNER'
+import re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+try:
+    text = path.read_text(encoding='utf-8', errors='ignore')
+except FileNotFoundError:
+    sys.exit(0)
+line = f"{key} = {value}"
+pattern = re.compile(rf"^\s*;?\s*{re.escape(key)}\s*=\s*.*$", re.MULTILINE)
+if pattern.search(text):
+    text = pattern.sub(line, text, count=1)
+else:
+    if text and not text.endswith('\n'):
+        text += '\n'
+    text += f"\n; V2Ray Store performance/upload tuning\n{line}\n"
+path.write_text(text, encoding='utf-8')
+PYINNER
+}
+
+configure_php_performance() {
+    local quiet="${1:-}" php_ini opcache_ini mysql_conf apache_changed=0
+    [ "$quiet" != "--quiet" ] && section "PHP / Upload Performance"
+
+    if command -v a2enmod >/dev/null 2>&1; then
+        a2enmod rewrite headers expires deflate >/dev/null 2>&1 && apache_changed=1 || true
+    fi
+    command -v phpenmod >/dev/null 2>&1 && phpenmod opcache >/dev/null 2>&1 || true
+
+    if [ -d /etc/php ]; then
+        while IFS= read -r php_ini; do
+            [ -f "$php_ini" ] || continue
+            [ -f "${php_ini}.v2raystore.bak" ] || cp -a "$php_ini" "${php_ini}.v2raystore.bak" 2>/dev/null || true
+            ini_set_value "$php_ini" upload_max_filesize "$PHP_UPLOAD_LIMIT"
+            ini_set_value "$php_ini" post_max_size "$PHP_POST_LIMIT"
+            ini_set_value "$php_ini" memory_limit "$PHP_MEMORY_LIMIT"
+            ini_set_value "$php_ini" max_execution_time "$PHP_MAX_EXECUTION_TIME"
+            ini_set_value "$php_ini" max_input_time "$PHP_MAX_INPUT_TIME"
+            ini_set_value "$php_ini" max_input_vars "$PHP_MAX_INPUT_VARS"
+            ini_set_value "$php_ini" max_file_uploads "100"
+            ini_set_value "$php_ini" default_socket_timeout "600"
+            ini_set_value "$php_ini" realpath_cache_size "4096K"
+            ini_set_value "$php_ini" realpath_cache_ttl "600"
+            ini_set_value "$php_ini" expose_php "Off"
+            ini_set_value "$php_ini" display_errors "Off"
+            ini_set_value "$php_ini" log_errors "On"
+            ini_set_value "$php_ini" output_buffering "4096"
+        done < <(find /etc/php -type f -name php.ini 2>/dev/null)
+
+        while IFS= read -r opcache_ini; do
+            [ -f "$opcache_ini" ] || continue
+            [ -f "${opcache_ini}.v2raystore.bak" ] || cp -a "$opcache_ini" "${opcache_ini}.v2raystore.bak" 2>/dev/null || true
+            ini_set_value "$opcache_ini" opcache.enable "1"
+            ini_set_value "$opcache_ini" opcache.enable_cli "1"
+            ini_set_value "$opcache_ini" opcache.memory_consumption "256"
+            ini_set_value "$opcache_ini" opcache.interned_strings_buffer "32"
+            ini_set_value "$opcache_ini" opcache.max_accelerated_files "100000"
+            ini_set_value "$opcache_ini" opcache.validate_timestamps "1"
+            ini_set_value "$opcache_ini" opcache.revalidate_freq "60"
+            ini_set_value "$opcache_ini" opcache.save_comments "1"
+            ini_set_value "$opcache_ini" opcache.fast_shutdown "1"
+        done < <(find /etc/php -type f -path '*/mods-available/opcache.ini' 2>/dev/null)
+    fi
+
+    mkdir -p /etc/mysql/conf.d 2>/dev/null || true
+    mysql_conf="/etc/mysql/conf.d/v2raystore-performance.cnf"
+    cat > "$mysql_conf" <<EOF
+[mysqld]
+max_allowed_packet=${MYSQL_MAX_ALLOWED_PACKET}
+net_read_timeout=600
+net_write_timeout=600
+wait_timeout=28800
+interactive_timeout=28800
+
+[client]
+max_allowed_packet=${MYSQL_MAX_ALLOWED_PACKET}
+EOF
+
+    if [ -d /etc/apache2/conf-available ]; then
+        cat > /etc/apache2/conf-available/v2raystore-security-performance.conf <<'EOF'
+ServerTokens Prod
+ServerSignature Off
+FileETag None
+TraceEnable Off
+EOF
+        a2enconf v2raystore-security-performance >/dev/null 2>&1 && apache_changed=1 || true
+    fi
+
+    systemctl restart mysql >/dev/null 2>&1 || systemctl restart mariadb >/dev/null 2>&1 || true
+    systemctl restart php*-fpm >/dev/null 2>&1 || true
+    systemctl reload apache2 >/dev/null 2>&1 || systemctl restart apache2 >/dev/null 2>&1 || true
+
+    if [ "$quiet" != "--quiet" ]; then
+        success "PHP performance and upload limits were applied automatically."
+        kv "upload_max_filesize" "${DIM}${PHP_UPLOAD_LIMIT}${NC}"
+        kv "post_max_size" "${DIM}${PHP_POST_LIMIT}${NC}"
+        kv "memory_limit" "${DIM}${PHP_MEMORY_LIMIT}${NC}"
+        kv "MySQL packet" "${DIM}${MYSQL_MAX_ALLOWED_PACKET}${NC}"
+    fi
+}
 
 
 fix_panel_entrypoint() {
@@ -346,7 +461,7 @@ backup_full_bot() { backup_path "$BOT_DIR" "bot-full"; }
 
 clean_bot_after_update() {
     rm -rf "$BOT_DIR/webpanel" 2>/dev/null || true
-    rm -f "$BOT_DIR/tempCookie.txt" "$BOT_DIR/settings/message${LEGACY_NAME}.json" "$BOT_DIR/${LEGACY_NAME}.sh" "$BOT_DIR/${LEGACY_BACKUP_FILE}" 2>/dev/null || true
+    rm -f "$BOT_DIR/tempCookie.txt" "$BOT_DIR/index.html" "$BOT_DIR/settings/message${LEGACY_NAME}.json" "$BOT_DIR/settings/${LEGACY_MESSAGE_FILE}" "$BOT_DIR/${LEGACY_NAME}.sh" "$BOT_DIR/${LEGACY_BACKUP_FILE}" 2>/dev/null || true
 }
 
 validate_token() {
@@ -971,6 +1086,7 @@ show_status() {
     apache_s=$(systemctl is-active apache2 2>/dev/null || echo inactive)
     mysql_s=$(systemctl is-active mysql 2>/dev/null || systemctl is-active mariadb 2>/dev/null || echo inactive)
     kv "PHP" "${DIM}${phpv}${NC}"
+    kv "PHP upload" "${DIM}$(php -r 'echo ini_get("upload_max_filesize") . " / " . ini_get("post_max_size");' 2>/dev/null || echo n/a)${NC}"
     [ "$apache_s" = active ] && kv "Apache" "$(dot ok) ${GREEN}active${NC}" || kv "Apache" "$(dot bad) ${RED}${apache_s}${NC}"
     [ "$mysql_s" = active ] && kv "MySQL/MariaDB" "$(dot ok) ${GREEN}active${NC}" || kv "MySQL/MariaDB" "$(dot bad) ${RED}${mysql_s}${NC}"
 
@@ -1069,6 +1185,7 @@ main_menu() {
             "Change panel username/password"
             "Repair webhook"
             "SSL tools"
+            "Optimize PHP/upload settings"
             "Install local command"
             "Delete"
             "Exit"
@@ -1086,6 +1203,7 @@ main_menu() {
                 "Change panel username/password") change_panel_password; pause_screen; break ;;
                 "Repair webhook") repair_webhook; pause_screen; break ;;
                 "SSL tools") ssl_menu; break ;;
+                "Optimize PHP/upload settings") configure_php_performance; pause_screen; break ;;
                 "Install local command") install_local_command; pause_screen; break ;;
                 "Delete") run_delete; pause_screen; break ;;
                 "Exit") exit 0 ;;
@@ -1108,12 +1226,13 @@ case "${1:-menu}" in
     password|panel-password) change_panel_password ;;
     webhook) repair_webhook ;;
     ssl) ssl_menu ;;
+    php|php-tune|optimize) configure_php_performance ;;
     delete|remove) run_delete ;;
     status) show_status ;;
     help|-h|--help)
         echo "${BRAND_NAME}"
         echo "Install/update command: bash <(curl -s ${RAW_INSTALL_URL})"
-        echo "Commands: status, diagnostics, repair, panel, backup, token, domain, webhook, ssl, password, delete"
+        echo "Commands: status, diagnostics, repair, panel, backup, token, domain, webhook, ssl, password, php-tune, delete"
         ;;
     *) main_menu ;;
 esac
