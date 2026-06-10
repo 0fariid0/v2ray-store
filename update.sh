@@ -483,6 +483,7 @@ update_crons_for_domain() {
     grep -v "wizwizxui-timebot/settings/gift2all.php" | \
     grep -v "wizwizxui-timebot/settings/tronChecker.php" | \
     grep -v "wizwizxui-timebot/settings/reportGroupBackup.php" | \
+    grep -v "settings/reportGroupBackup.php" | \
     grep -v "backupnutif.php" > "${old_cron}.new" || true
 
     {
@@ -492,7 +493,7 @@ update_crons_for_domain() {
         echo "* * * * * curl -fsS https://${domain}/wizwizxui-timebot/settings/warnusers.php >/dev/null 2>&1"
         echo "* * * * * curl -fsS https://${domain}/wizwizxui-timebot/settings/gift2all.php >/dev/null 2>&1"
         echo "*/3 * * * * curl -fsS https://${domain}/wizwizxui-timebot/settings/tronChecker.php >/dev/null 2>&1"
-        echo "* * * * * php ${BOT_DIR}/settings/reportGroupBackup.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/reportGroupBackup.php >/dev/null 2>&1"
         [ -n "$pathsss" ] && echo "* * * * * curl -fsS https://${domain}/${pathsss}/backupnutif.php >/dev/null 2>&1"
     } | sort -u | crontab -
 
