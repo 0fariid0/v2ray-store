@@ -10713,8 +10713,10 @@ function wizwiz_reportForumEnabled(){
 
 function wizwiz_reportTopicItems(){
     return [
-        'purchase' => ['title'=>'🛒 خرید و پرداخت', 'events'=>['purchase_started','auto_approved']],
-        'test' => ['title'=>'🧪 اکانت تست', 'events'=>['test_account']],
+        // شروع خرید و اکانت تست از گزارش‌های مالی نهایی جدا هستند تا تاپیک خرید و پرداخت شلوغ نشود.
+        'purchase_start' => ['title'=>'🟡 شروع خرید و اکانت تست', 'events'=>['purchase_started','test_account']],
+        // این تاپیک فقط برای گزارش‌های انجام‌شده/مالی مثل تایید خودکار، خرید کیف پولی، تمدید و افزایش‌ها استفاده می‌شود.
+        'purchase' => ['title'=>'🛒 خرید و پرداخت', 'events'=>['auto_approved']],
         'location' => ['title'=>'🌎 تغییر لوکیشن', 'events'=>['server_switched']],
         'stats' => ['title'=>'📊 آمار ربات', 'events'=>['daily_stats']],
         'errors' => ['title'=>'⚠️ خطاها و هشدارها', 'events'=>['approval_failed','admin_order_send_failed']],
@@ -10761,7 +10763,24 @@ function wizwiz_reportTopicHasEnabledEvents($topicKey){
     return false;
 }
 
+function wizwiz_reportCleanupLegacyTopics(){
+    static $done = false;
+    if($done) return;
+    $done = true;
+    if(!wizwiz_reportForumEnabled()) return;
+
+    $topics = wizwiz_reportTopicStore();
+    if(!is_array($topics) || count($topics) == 0) return;
+
+    $validKeys = array_keys(wizwiz_reportTopicItems());
+    foreach(array_keys($topics) as $topicKey){
+        // تاپیک‌های قدیمی مثل test که در نسخه‌های قبلی جدا ساخته می‌شدند، بعد از تغییر دسته‌بندی حذف می‌شوند.
+        if(!in_array($topicKey, $validKeys, true)) wizwiz_reportDeleteTopic($topicKey);
+    }
+}
+
 function wizwiz_reportEnsureTopic($eventKey){
+    wizwiz_reportCleanupLegacyTopics();
     $chat = wizwiz_getIncomeReportChatId();
     if($chat === null || trim((string)$chat) === '') return 0;
     if(!wizwiz_reportForumEnabled()) return 0;
@@ -11536,7 +11555,7 @@ function wizwiz_getReportSettingsMenuText(){
            "⏳ فاصله بین هر بکاپ: <b>" . wizwiz_h($backupDelay) . " ثانیه</b>\n" .
            "📌 آخرین بکاپ دیتابیس: <b>" . wizwiz_h($backupLast) . "</b>\n" .
            "⏭ بکاپ بعدی: <b>" . wizwiz_h($backupNext) . "</b>\n\n" .
-           "بکاپ‌ها به‌صورت صفی و یکی‌یکی ارسال می‌شوند تا دیتابیس ربات و پنل‌ها همزمان dump نشوند و فشار روی سرور کم بماند. اگر حالت تاپیک فعال باشد، ربات گزارش‌ها را داخل تاپیک‌های جدا مثل خرید، آمار، خطا، تغییر لوکیشن و دیتابیس ارسال می‌کند.";
+           "بکاپ‌ها به‌صورت صفی و یکی‌یکی ارسال می‌شوند تا دیتابیس ربات و پنل‌ها همزمان dump نشوند و فشار روی سرور کم بماند. اگر حالت تاپیک فعال باشد، گزارش‌های مالی نهایی داخل تاپیک خرید و پرداخت می‌روند و شروع خرید/اکانت تست داخل تاپیک جداگانه ارسال می‌شود.";
 }
 
 function wizwiz_getReportSettingsMenuKeys(){
