@@ -12,7 +12,8 @@ PANEL_DIR="/var/www/html/${PANEL_SLUG}"
 BASE_INFO="${BOT_DIR}/baseInfo.php"
 REPO_URL="https://github.com/0fariid0/v2ray-store.git"
 RAW_INSTALL_URL="https://raw.githubusercontent.com/0fariid0/v2ray-store/main/v2raystore.sh"
-PANEL_ZIP_URL="https://github.com/0fariid0/v2ray-store/releases/latest/download/v2raystore-panel.zip"
+PANEL_ZIP_URL="https://raw.githubusercontent.com/0fariid0/v2ray-store/main/v2raystore-panel.zip"
+PANEL_RELEASE_ZIP_URL="https://github.com/0fariid0/v2ray-store/releases/latest/download/v2raystore-panel.zip"
 BACKUP_DIR="/root/v2raystore_update_backups"
 CONFIG_DIR="/root/confv2raystore"
 CONFIG_FILE="${CONFIG_DIR}/dbrootv2raystore.txt"
@@ -166,16 +167,47 @@ EOF2
 root_db_user() { grep '\$user' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
 root_db_pass() { grep '\$pass' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
 
+
+fix_panel_entrypoint() {
+    [ -d "$PANEL_DIR" ] || return 0
+    rm -f "$PANEL_DIR/index.html" 2>/dev/null || true
+    if [ -f "$PANEL_DIR/.htaccess" ]; then
+        grep -q '^DirectoryIndex index.php' "$PANEL_DIR/.htaccess" 2>/dev/null || sed -i '1iDirectoryIndex index.php' "$PANEL_DIR/.htaccess"
+    else
+        echo 'DirectoryIndex index.php' > "$PANEL_DIR/.htaccess"
+    fi
+}
+
 update_panel_db_include() {
     [ -f "$PANEL_DIR/includ/db.php" ] || return 0
     cat > "$PANEL_DIR/includ/db.php" <<'PHP'
 <?php
-include '../v2ray-store/baseInfo.php';
+$baseInfoCandidates = array(
+    dirname(__DIR__, 2) . '/v2ray-store/baseInfo.php',
+    '/var/www/html/v2ray-store/baseInfo.php',
+    (isset($_SERVER['DOCUMENT_ROOT']) ? rtrim($_SERVER['DOCUMENT_ROOT'], '/') . '/v2ray-store/baseInfo.php' : ''),
+);
+
+$baseInfoLoaded = false;
+foreach ($baseInfoCandidates as $baseInfoFile) {
+    if ($baseInfoFile !== '' && is_file($baseInfoFile)) {
+        include $baseInfoFile;
+        $baseInfoLoaded = true;
+        break;
+    }
+}
+
+if (!$baseInfoLoaded) {
+    http_response_code(500);
+    die('V2Ray Store panel error: baseInfo.php was not found. Please run Install / Update again.');
+}
+
 $servername = "localhost";
 $conn = new mysqli($servername, $dbUserName, $dbPassword, $dbName);
 $conn->set_charset("utf8mb4");
 if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
+    http_response_code(500);
+    die("V2Ray Store panel database connection failed: " . $conn->connect_error);
 }
 PHP
 }
@@ -335,6 +367,7 @@ migrate_legacy_installation() {
     fi
 
     update_panel_db_include
+    fix_panel_entrypoint
     clean_legacy_crons
     if [ -f "$BASE_INFO" ]; then
         dom=$(current_domain)
@@ -416,15 +449,71 @@ EOF2
     success "Database and baseInfo.php were created."
 }
 
+find_panel_package_dir() {
+    local root="$1" candidate
+    for candidate in \
+        "$root" \
+        "$root/${PANEL_SLUG}" \
+        "$root/panel" \
+        "$root/v2raystore-panel" \
+        "$root/v2raystore_panel" \
+        "$root"/*; do
+        [ -d "$candidate" ] || continue
+        if [ -f "$candidate/login.php" ] && [ -f "$candidate/includ/db.php" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+download_panel_package() {
+    local output="$1" url
+    for url in "$PANEL_ZIP_URL" "$PANEL_RELEASE_ZIP_URL"; do
+        [ -n "$url" ] || continue
+        rm -f "$output"
+        : > "$LOG_FILE"
+        echo -ne " ${YELLOW}⏳${NC} Downloading panel package ..."
+        if wget -q -O "$output" "$url" >> "$LOG_FILE" 2>&1 && unzip -tq "$output" >/dev/null 2>> "$LOG_FILE"; then
+            echo -e "\r ${GREEN}✔${NC} Downloading panel package"
+            return 0
+        fi
+        echo -e "\r ${RED}✘${NC} Downloading panel package from current source"
+        tail -n 10 "$LOG_FILE" 2>/dev/null
+    done
+    rm -f "$output"
+    return 1
+}
+
 install_or_update_panel() {
     install_packages
+    local tmp_zip tmp_extract panel_source
+    tmp_zip="/tmp/v2raystore-panel.$$.zip"
+    tmp_extract="/tmp/v2raystore-panel.$$"
+    rm -rf "$tmp_zip" "$tmp_extract"
+
+    download_panel_package "$tmp_zip" || {
+        error "Panel package was not found. Current panel was kept unchanged."
+        warning "Put v2raystore-panel.zip in the repository root or upload it as a release asset with the same name."
+        return 1
+    }
+
+    mkdir -p "$tmp_extract"
+    run_step "Extracting panel" "unzip -oq '$tmp_zip' -d '$tmp_extract'" || { rm -rf "$tmp_zip" "$tmp_extract"; return 1; }
+    panel_source=$(find_panel_package_dir "$tmp_extract") || {
+        rm -rf "$tmp_zip" "$tmp_extract"
+        error "Downloaded panel package is not valid. Current panel was kept unchanged."
+        return 1
+    }
+
     backup_path "$PANEL_DIR" "panel"
     rm -rf "$PANEL_DIR"
     mkdir -p "$PANEL_DIR"
-    run_step "Downloading panel" "wget -O /tmp/v2raystore-panel.zip '$PANEL_ZIP_URL'" || return 1
-    unzip -oq /tmp/v2raystore-panel.zip -d "$PANEL_DIR"
-    rm -f /tmp/v2raystore-panel.zip
+    cp -a "$panel_source/." "$PANEL_DIR/" || { rm -rf "$tmp_zip" "$tmp_extract"; return 1; }
+    rm -rf "$tmp_zip" "$tmp_extract"
+
     update_panel_db_include
+    fix_panel_entrypoint
     chown -R www-data:www-data "$PANEL_DIR/" 2>/dev/null || true
     chmod -R 755 "$PANEL_DIR/" 2>/dev/null || true
     if [ -f "$CONFIG_FILE" ]; then
@@ -512,20 +601,26 @@ full_install_or_update() {
         fi
         install_or_update_bot_files || return 1
         migrate_legacy_installation || true
-        install_or_update_panel || true
+        local panel_failed=0
+        install_or_update_panel || panel_failed=1
         local dom token url
         dom=$(current_domain)
         url=$(php_var botUrl)
         token=$(php_var botToken)
         [ -n "$dom" ] && update_crons_for_domain "$dom"
         [ -n "$token" ] && [ -n "$url" ] && set_bot_webhook "$token" "$url" || true
+        if [ "$panel_failed" -eq 1 ]; then
+            warning "Bot update/migration finished, but panel update failed and the current panel was kept unchanged."
+            warning "Add v2raystore-panel.zip to your repository root, then run Install / Update again."
+            return 1
+        fi
         send_admin_message "✅ ${BRAND_NAME} با موفقیت آپدیت و منتقل شد."
-        success "Update/migration finished. Your database and baseInfo.php were preserved."
+        success "Update/migration finished. Your database, baseInfo.php and panel settings were preserved."
     else
         confirm "No installation found. Install ${BRAND_NAME} now?" || return 0
         install_or_update_bot_files || return 1
         create_database_and_baseinfo || return 1
-        install_or_update_panel || true
+        install_or_update_panel || return 1
         send_admin_message "✅ ${BRAND_NAME} با موفقیت نصب شد."
         success "Installation finished."
     fi
