@@ -10,6 +10,62 @@ if($connection->connect_error){
 $connection->set_charset("utf8mb4");
 
 
+if(!function_exists('v2raystore_textSettingsAllowedKeys')){
+    function v2raystore_textSettingsAllowedKeys(){
+        return ['start_message'];
+    }
+}
+
+if(!function_exists('v2raystore_loadTextSettingsFromDb')){
+    function v2raystore_loadTextSettingsFromDb(){
+        global $connection;
+        if(!isset($connection) || !($connection instanceof mysqli)) return [];
+
+        $res = @$connection->query("SELECT `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' ORDER BY `id` DESC LIMIT 1");
+        if(!$res || $res->num_rows < 1) return [];
+
+        $row = $res->fetch_assoc();
+        $settings = json_decode($row['value'] ?? '', true);
+        return is_array($settings) ? $settings : [];
+    }
+}
+
+if(!function_exists('v2raystore_getMainText')){
+    function v2raystore_getMainText($key, $fallback = ''){
+        global $mainValues;
+        $key = (string)$key;
+        if(!in_array($key, v2raystore_textSettingsAllowedKeys(), true)){
+            return (string)$fallback;
+        }
+
+        $settings = v2raystore_loadTextSettingsFromDb();
+        if(array_key_exists($key, $settings) && trim((string)$settings[$key]) !== ''){
+            return (string)$settings[$key];
+        }
+
+        if(isset($mainValues[$key]) && trim((string)$mainValues[$key]) !== ''){
+            return (string)$mainValues[$key];
+        }
+
+        return (string)$fallback;
+    }
+}
+
+if(!function_exists('v2raystore_applyTextSettingsFromDb')){
+    function v2raystore_applyTextSettingsFromDb(){
+        global $mainValues;
+        if(!isset($mainValues) || !is_array($mainValues)) return;
+
+        $settings = v2raystore_loadTextSettingsFromDb();
+        foreach(v2raystore_textSettingsAllowedKeys() as $key){
+            if(array_key_exists($key, $settings) && trim((string)$settings[$key]) !== ''){
+                $mainValues[$key] = (string)$settings[$key];
+            }
+        }
+    }
+}
+
+
 function v2raystore_ensureOrderNoteColumn(){
     global $connection;
     $exists = @($connection->query("SHOW COLUMNS FROM `orders_list` LIKE 'config_note'"));
@@ -4211,6 +4267,8 @@ $botState = $stmt->get_result()->fetch_assoc()['value'];
 if(!is_null($botState)) $botState = json_decode($botState,true);
 else $botState = array();
 $stmt->close();
+
+v2raystore_applyTextSettingsFromDb();
 
 // اعمال تنظیمات جداگانه فروش و کیف پول برای نماینده‌ها بدون تغییر رفتار کاربران عادی.
 $botState = v2raystore_applyRoleSpecificStates($botState, $userInfo);

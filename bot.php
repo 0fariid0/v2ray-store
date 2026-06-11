@@ -760,11 +760,15 @@ if($userInfo['phone'] == null && $from_id != $admin && $userInfo['isAdmin'] != t
 }
 if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'] or $data == 'mainMenu') {
     setUser();
-    setUser("", "temp"); 
+    setUser("", "temp");
+    $startMessage = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
+    if(trim((string)$startMessage) === '') $startMessage = 'به ربات خوش آمدید.';
+
     if(isset($data) and $data == "mainMenu"){
-        $res = editText($message_id, $mainValues['start_message'], getMainKeys());
-        if(!$res->ok){
-            sendMessage($mainValues['start_message'], getMainKeys());
+        // متن خوش‌آمد ممکن است شامل کاراکترهای Markdown/HTML باشد؛ بدون ParseMode ارسال می‌شود تا تلگرام reject نکند.
+        $res = editText($message_id, $startMessage, getMainKeys(), null);
+        if(!$res || empty($res->ok)){
+            sendMessage($startMessage, getMainKeys(), null);
         }
     }else{
         if($from_id != $admin && empty($userInfo['first_start'])){
@@ -776,7 +780,7 @@ if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'
             sendMessage(str_replace(["FULLNAME", "USERNAME", "USERID"], ["<a href='tg://user?id=$from_id'>$first_name</a>", $username, $from_id], $mainValues['new_member_joined'])
                 ,$keys, "html",$admin);
         }
-        sendMessage($mainValues['start_message'],getMainKeys());
+        sendMessage($startMessage, getMainKeys(), null);
     }
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -1131,10 +1135,12 @@ if(preg_match('/^editSwitchPairPercent(\d+)_(\d+)$/', $userInfo['step'] ?? '', $
 }
 
 if($data=="adminTextSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $preview = htmlspecialchars($mainValues['start_message'] ?? '', ENT_QUOTES, 'UTF-8');
+    $currentWelcomeText = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
+    $previewRaw = function_exists('mb_strlen') && mb_strlen($currentWelcomeText, 'UTF-8') > 2500 ? mb_substr($currentWelcomeText, 0, 2500, 'UTF-8') . "\n..." : $currentWelcomeText;
+    $preview = htmlspecialchars($previewRaw, ENT_QUOTES, 'UTF-8');
     $msg = "📝 <b>تنظیم متن‌ها</b>\n\n" .
            "از این بخش می‌توانید متن خوش‌آمدگویی صفحه اصلی ربات را تغییر دهید.\n" .
-           "این متن در فایل <code>settings/values.php</code> و کلید <code>start_message</code> ذخیره می‌شود.\n\n" .
+           "از این به بعد متن در دیتابیس ذخیره می‌شود تا با کش PHP، OPcache یا دسترسی فایل خراب نشود.\n\n" .
            "📌 متن فعلی:\n<pre>" . $preview . "</pre>";
     editText($message_id, $msg, farid_textSettingsKeyboard(), "HTML");
     exit();
@@ -13164,41 +13170,99 @@ function farid_valuesFilePath(){
 }
 
 function farid_updateMainValueInValuesFile($key, $value){
-    $file = farid_valuesFilePath();
-    if(!file_exists($file)) return 'فایل settings/values.php پیدا نشد.';
-    if(!is_writable($file)) return 'فایل settings/values.php قابل نوشتن نیست. دسترسی فایل را بررسی کنید.';
+    // نام تابع برای سازگاری نگه داشته شده؛ منبع اصلی ذخیره متن‌ها از این به بعد دیتابیس است.
+    return farid_updateMainValueInDatabase($key, $value);
+}
 
-    $content = file_get_contents($file);
-    if($content === false) return 'خواندن فایل settings/values.php ناموفق بود.';
+function farid_updateMainValueInDatabase($key, $value){
+    global $connection;
+
+    $allowedKeys = ['start_message'];
+    if(!in_array($key, $allowedKeys, true)){
+        return 'کلید متنی مجاز نیست.';
+    }
+    if(!isset($connection) || !($connection instanceof mysqli)){
+        return 'اتصال دیتابیس در دسترس نیست.';
+    }
+
+    $value = trim((string)$value);
+    if($value === '') return 'متن نمی‌تواند خالی باشد.';
+
+    // اگر به هر دلیل جدول setting در دیتابیس قدیمی ناقص بود، اینجا امن‌سازی می‌شود.
+    @$connection->query("CREATE TABLE IF NOT EXISTS `setting` (
+      `id` int(255) NOT NULL AUTO_INCREMENT,
+      `type` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+      `value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+      PRIMARY KEY (`id`)
+    ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+
+    $current = [];
+    $settingId = 0;
+    $stmt = @$connection->prepare("SELECT `id`, `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' ORDER BY `id` DESC LIMIT 1");
+    if($stmt){
+        $stmt->execute();
+        $res = $stmt->get_result();
+        if($res && $res->num_rows > 0){
+            $row = $res->fetch_assoc();
+            $settingId = intval($row['id'] ?? 0);
+            $decoded = json_decode($row['value'] ?? '', true);
+            if(is_array($decoded)) $current = $decoded;
+        }
+        $stmt->close();
+    }
+
+    $current[$key] = $value;
+    $json = json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if($json === false) return 'ساخت JSON تنظیمات متن ناموفق بود.';
+
+    if($settingId > 0){
+        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `id` = ?");
+        if(!$stmt) return 'آماده‌سازی آپدیت دیتابیس ناموفق بود: ' . $connection->error;
+        $stmt->bind_param('si', $json, $settingId);
+    }else{
+        $type = 'TEXT_SETTINGS';
+        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        if(!$stmt) return 'آماده‌سازی ذخیره دیتابیس ناموفق بود: ' . $connection->error;
+        $stmt->bind_param('ss', $type, $json);
+    }
+
+    if(!$stmt->execute()){
+        $err = $stmt->error ?: $connection->error;
+        $stmt->close();
+        return 'ذخیره در دیتابیس ناموفق بود: ' . $err;
+    }
+    $stmt->close();
+
+    // برای سازگاری با نسخه‌های قدیمی، اگر فایل قابل نوشتن باشد آن را هم آپدیت می‌کنیم؛
+    // اما اگر فایل قابل نوشتن نبود، ذخیره اصلی دیتابیس خراب نمی‌شود.
+    farid_tryUpdateMainValueInValuesFile($key, $value);
+
+    if(function_exists('v2raystore_applyTextSettingsFromDb')){
+        v2raystore_applyTextSettingsFromDb();
+    }
+
+    return true;
+}
+
+function farid_tryUpdateMainValueInValuesFile($key, $value){
+    $file = farid_valuesFilePath();
+    if(!file_exists($file) || !is_writable($file)) return false;
+
+    $content = @file_get_contents($file);
+    if($content === false) return false;
 
     $quotedKey = preg_quote($key, '/');
     $pattern = '/([\'\"]' . $quotedKey . '[\'\"]\s*=>\s*)(?:\"(?:\\\\.|[^\"\\\\])*\"|\'(?:\\\\.|[^\'\\\\])*\')/s';
     $replacement = '$1' . var_export((string)$value, true);
     $newContent = preg_replace($pattern, $replacement, $content, 1, $count);
 
-    if($newContent === null) return 'خطا هنگام پردازش فایل values.php رخ داد.';
-    if($count < 1) return 'کلید start_message داخل values.php پیدا نشد.';
+    if($newContent === null || $count < 1) return false;
 
     $backup = $file . '.bak_' . date('Ymd_His');
     @copy($file, $backup);
-
-    if(file_put_contents($file, $newContent, LOCK_EX) === false){
-        return 'نوشتن فایل settings/values.php ناموفق بود.';
-    }
-
-    // بررسی سریع سینتکس فایل بعد از ذخیره، در صورتی که exec فعال باشد.
-    if(function_exists('exec')){
-        $cmd = 'php -l ' . escapeshellarg($file) . ' 2>&1';
-        $out = [];
-        $code = 0;
-        @exec($cmd, $out, $code);
-        if($code !== 0){
-            if(file_exists($backup)) @copy($backup, $file);
-            return 'متن ذخیره نشد چون فایل values.php بعد از تغییر خطای سینتکس داشت: ' . implode("\n", $out);
-        }
-    }
-
-    return true;
+    $ok = @file_put_contents($file, $newContent, LOCK_EX) !== false;
+    if($ok && function_exists('opcache_invalidate')) @opcache_invalidate($file, true);
+    return $ok;
 }
 
 function getAdminKeysPlus(){
