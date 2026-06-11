@@ -1,12 +1,7 @@
 <?php
-// Interval-based database backups for the report group/forum topic.
-// This file is intentionally separate from the original dbbackupv2raystore.sh mechanism.
-// The old backup system remains untouched.
+// V2Ray Store scheduled report runner.
+// Runs from cron and sends daily stats + database backups to the configured report group/topic.
 
-// Cron may run this file from /root or another working directory.
-// config.php uses relative includes like settings/values.php, so we must
-// move to the project root before loading it. This fixes scheduled backups
-// not running while manual backups from inside the bot still work.
 $projectRoot = realpath(__DIR__ . '/..');
 if($projectRoot){
     @chdir($projectRoot);
@@ -28,15 +23,22 @@ if($lock){
 
 try {
     require_once __DIR__ . '/../config.php';
+
+    // آمار روزانه باید از کران هم اجرا شود، نه فقط از دکمه دستی داخل ربات.
+    if(function_exists('wizwiz_processDailyChannelStats')){
+        wizwiz_processDailyChannelStats(false);
+    }elseif(function_exists('v2raystore_processDailyChannelStats')){
+        v2raystore_processDailyChannelStats(false);
+    }
+
+    // بکاپ دیتابیس؛ برای سازگاری با نسخه‌های قدیمی و جدید هر دو نام تابع پشتیبانی می‌شود.
+    if(function_exists('wizwiz_runReportDatabaseBackups')){
+        wizwiz_runReportDatabaseBackups(false);
+    }elseif(function_exists('v2raystore_runReportDatabaseBackups')){
+        v2raystore_runReportDatabaseBackups(false);
+    }
 } catch (Throwable $e) {
     @file_put_contents(sys_get_temp_dir() . '/v2raystore_report_group_backup_error.log', date('Y-m-d H:i:s') . ' ' . $e->getMessage() . PHP_EOL, FILE_APPEND);
-    if($lock){ @flock($lock, LOCK_UN); @fclose($lock); }
-    exit('config_error');
-}
-
-if(function_exists('v2raystore_runReportDatabaseBackups')){
-    // The function itself checks the configured interval and runs every enabled backup one-by-one.
-    v2raystore_runReportDatabaseBackups(false);
 }
 
 if($lock){
