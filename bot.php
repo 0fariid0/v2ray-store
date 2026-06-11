@@ -448,12 +448,7 @@ if(preg_match('/^autoCancelOrder\|(.+)\|(-?\d+)\|(\d+)$/', $userInfo['step'] ?? 
     setUser();
     sendMessage(($result['ok'] ? '✅ ' : '❌ ') . $result['message'], $removeKeyboard, 'HTML');
     if($result['ok']){
-        $cancelTitle = (($result['type'] ?? '') === 'RENEW_ACCOUNT') ? '↩️ تمدید لغو شد و سرویس به قبل از تمدید برگشت.' : '❌ سفارش خودکار لغو و حذف شد.';
-        editText($reportMsgId, $cancelTitle . "
-
-🔖 کد پرداخت: <code>" . htmlspecialchars($hashId, ENT_QUOTES, 'UTF-8') . "</code>
-📝 دلیل:
-" . htmlspecialchars($text, ENT_QUOTES, 'UTF-8'), null, 'HTML', $reportChatId);
+        editText($reportMsgId, "❌ سفارش خودکار لغو و حذف شد.\n\n🔖 کد پرداخت: <code>" . htmlspecialchars($hashId, ENT_QUOTES, 'UTF-8') . "</code>\n📝 دلیل:\n" . htmlspecialchars($text, ENT_QUOTES, 'UTF-8'), null, 'HTML', $reportChatId);
     }
     exit();
 }
@@ -765,15 +760,12 @@ if($userInfo['phone'] == null && $from_id != $admin && $userInfo['isAdmin'] != t
 }
 if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'] or $data == 'mainMenu') {
     setUser();
-    setUser("", "temp");
-    $startMessage = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
-    if(trim((string)$startMessage) === '') $startMessage = 'به ربات خوش آمدید.';
-
+    setUser("", "temp"); 
+    $startMessageText = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
     if(isset($data) and $data == "mainMenu"){
-        // متن خوش‌آمد ممکن است شامل کاراکترهای Markdown/HTML باشد؛ بدون ParseMode ارسال می‌شود تا تلگرام reject نکند.
-        $res = editText($message_id, $startMessage, getMainKeys(), null);
-        if(!$res || empty($res->ok)){
-            sendMessage($startMessage, getMainKeys(), null);
+        $res = editText($message_id, $startMessageText, getMainKeys(), null);
+        if(!$res->ok){
+            sendMessage($startMessageText, getMainKeys(), null);
         }
     }else{
         if($from_id != $admin && empty($userInfo['first_start'])){
@@ -785,7 +777,7 @@ if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'
             sendMessage(str_replace(["FULLNAME", "USERNAME", "USERID"], ["<a href='tg://user?id=$from_id'>$first_name</a>", $username, $from_id], $mainValues['new_member_joined'])
                 ,$keys, "html",$admin);
         }
-        sendMessage($startMessage, getMainKeys(), null);
+        sendMessage($startMessageText, getMainKeys(), null);
     }
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -1140,13 +1132,22 @@ if(preg_match('/^editSwitchPairPercent(\d+)_(\d+)$/', $userInfo['step'] ?? '', $
 }
 
 if($data=="adminTextSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $currentWelcomeText = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
-    $previewRaw = function_exists('mb_strlen') && mb_strlen($currentWelcomeText, 'UTF-8') > 2500 ? mb_substr($currentWelcomeText, 0, 2500, 'UTF-8') . "\n..." : $currentWelcomeText;
+    $currentWelcome = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
+    $previewRaw = trim((string)$currentWelcome);
+    if(function_exists('mb_strlen') && mb_strlen($previewRaw, 'UTF-8') > 1200) $previewRaw = mb_substr($previewRaw, 0, 1200, 'UTF-8') . "\n...";
     $preview = htmlspecialchars($previewRaw, ENT_QUOTES, 'UTF-8');
+
+    $currentPurchaseRules = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('purchase_rules_text', '') : ($mainValues['purchase_rules_text'] ?? '');
+    $rulesPreviewRaw = trim((string)$currentPurchaseRules);
+    if($rulesPreviewRaw === '') $rulesPreviewRaw = 'غیرفعال / متنی ثبت نشده است.';
+    elseif(function_exists('mb_strlen') && mb_strlen($rulesPreviewRaw, 'UTF-8') > 1200) $rulesPreviewRaw = mb_substr($rulesPreviewRaw, 0, 1200, 'UTF-8') . "\n...";
+    $rulesPreview = htmlspecialchars($rulesPreviewRaw, ENT_QUOTES, 'UTF-8');
+
     $msg = "📝 <b>تنظیم متن‌ها</b>\n\n" .
-           "از این بخش می‌توانید متن خوش‌آمدگویی صفحه اصلی ربات را تغییر دهید.\n" .
-           "از این به بعد متن در دیتابیس ذخیره می‌شود تا با کش PHP، OPcache یا دسترسی فایل خراب نشود.\n\n" .
-           "📌 متن فعلی:\n<pre>" . $preview . "</pre>";
+           "اینجا هم متن خوش‌آمدگویی صفحه اصلی و هم متن قوانین/آخرین اخبار قبل از خرید تنظیم می‌شود.\n" .
+           "مسیر: <b>مدیریت ربات ← تنظیمات ربات ← متن‌ها / قوانین خرید</b>\n\n" .
+           "📌 <b>متن خوش‌آمد فعلی:</b>\n<pre>" . $preview . "</pre>\n\n" .
+           "📢 <b>قوانین/آخرین اخبار خرید:</b>\n<pre>" . $rulesPreview . "</pre>";
     editText($message_id, $msg, farid_textSettingsKeyboard(), "HTML");
     exit();
 }
@@ -1171,6 +1172,39 @@ if($userInfo['step'] == "editStartWelcomeText" && $text != $buttonValues['cancel
         sendMessage("📝 تنظیم متن‌ها", farid_textSettingsKeyboard(), "HTML");
     }else{
         sendMessage("❌ ذخیره متن انجام نشد.\n" . htmlspecialchars((string)$saveResult, ENT_QUOTES, 'UTF-8'), $cancelKey, "HTML");
+    }
+    exit();
+}
+if($data=="editPurchaseRulesText" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("📢 متن قوانین یا آخرین اخبار قبل از خرید را ارسال کنید.\n\nاین متن وقتی کاربر روی خرید بزند نمایش داده می‌شود و فقط با دکمه تأیید می‌تواند ادامه خرید را ببیند.\nبرای غیرفعال کردن، از دکمه حذف متن در همین بخش استفاده کنید.", $cancelKey, "HTML");
+    setUser("editPurchaseRulesText");
+    exit();
+}
+if($userInfo['step'] == "editPurchaseRulesText" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $rulesText = trim((string)$text);
+    if($rulesText === ''){
+        sendMessage("⚠️ متن نمی‌تواند خالی باشد. برای غیرفعال کردن این بخش، دکمه حذف متن قوانین/اخبار را بزنید.", $cancelKey, "HTML");
+        exit();
+    }
+    $saveResult = farid_updateMainValueInValuesFile('purchase_rules_text', $rulesText);
+    if($saveResult === true){
+        $mainValues['purchase_rules_text'] = $rulesText;
+        setUser();
+        sendMessage("✅ متن قوانین/آخرین اخبار خرید با موفقیت ذخیره شد.", $removeKeyboard, "HTML");
+        sendMessage("📝 تنظیم متن‌ها", farid_textSettingsKeyboard(), "HTML");
+    }else{
+        sendMessage("❌ ذخیره متن انجام نشد.\n" . htmlspecialchars((string)$saveResult, ENT_QUOTES, 'UTF-8'), $cancelKey, "HTML");
+    }
+    exit();
+}
+if($data=="clearPurchaseRulesText" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $saveResult = function_exists('v2raystore_removeMainText') ? v2raystore_removeMainText('purchase_rules_text') : true;
+    if($saveResult === true){
+        unset($mainValues['purchase_rules_text']);
+        editText($message_id, "✅ متن قوانین/آخرین اخبار خرید حذف شد. از این به بعد کاربر مستقیم وارد خرید می‌شود.", farid_textSettingsKeyboard(), "HTML");
+    }else{
+        alert("حذف متن انجام نشد: " . (string)$saveResult);
     }
     exit();
 }
@@ -2049,6 +2083,28 @@ if($userInfo['step'] == "editLockChannel" && ($from_id == $admin || $userInfo['i
         }
     }
     sendMessage($mainValues['the_bot_in_not_admin']);
+}
+
+$v2raystorePurchaseRulesConfirmed = false;
+if(preg_match('/^confirmPurchaseRules_(agentOneBuy|buySubscription|agentMuchBuy)$/', (string)$data, $purchaseRulesMatch)){
+    $data = $purchaseRulesMatch[1];
+    $v2raystorePurchaseRulesConfirmed = true;
+    if(($botState['sellState'] ?? 'off') != "on" && !($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
+        alert($mainValues['selling_is_off'] ?? 'فروش در حال حاضر بسته است.', true);
+        $startMessageText = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
+        editText($message_id, $startMessageText, getMainKeys(), null);
+        exit();
+    }
+}
+if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy") && !$v2raystorePurchaseRulesConfirmed && !($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true) && function_exists('v2raystore_purchaseRulesIsEnabled') && v2raystore_purchaseRulesIsEnabled()){
+    if(($botState['sellState'] ?? 'off') != "on"){
+        alert($mainValues['selling_is_off'] ?? 'فروش در حال حاضر بسته است.', true);
+        $startMessageText = function_exists('v2raystore_getMainText') ? v2raystore_getMainText('start_message', $mainValues['start_message'] ?? '') : ($mainValues['start_message'] ?? '');
+        editText($message_id, $startMessageText, getMainKeys(), null);
+        exit();
+    }
+    editText($message_id, v2raystore_purchaseRulesMessage(), v2raystore_purchaseRulesKeyboard($data), null);
+    exit();
 }
 if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy") && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true))){
     if($botState['cartToCartState'] == "off" && $botState['walletState'] == "off"){
@@ -13165,7 +13221,13 @@ function farid_textSettingsKeyboard(){
             ['text'=>'✏️ تغییر متن خوش‌آمدگویی', 'callback_data'=>'editStartWelcomeText', 'style'=>'success']
         ],
         [
-            ['text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'managePanel', 'style'=>'primary']
+            ['text'=>'📢 تغییر قوانین/آخرین اخبار خرید', 'callback_data'=>'editPurchaseRulesText', 'style'=>'success']
+        ],
+        [
+            ['text'=>'🗑 حذف متن قوانین/اخبار خرید', 'callback_data'=>'clearPurchaseRulesText', 'style'=>'danger']
+        ],
+        [
+            ['text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'botSettings', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
@@ -13174,100 +13236,29 @@ function farid_valuesFilePath(){
     return __DIR__ . '/settings/values.php';
 }
 
-function farid_updateMainValueInValuesFile($key, $value){
-    // نام تابع برای سازگاری نگه داشته شده؛ منبع اصلی ذخیره متن‌ها از این به بعد دیتابیس است.
-    return farid_updateMainValueInDatabase($key, $value);
-}
-
-function farid_updateMainValueInDatabase($key, $value){
-    global $connection;
-
-    $allowedKeys = ['start_message'];
-    if(!in_array($key, $allowedKeys, true)){
-        return 'کلید متنی مجاز نیست.';
-    }
-    if(!isset($connection) || !($connection instanceof mysqli)){
-        return 'اتصال دیتابیس در دسترس نیست.';
-    }
-
-    $value = trim((string)$value);
-    if($value === '') return 'متن نمی‌تواند خالی باشد.';
-
-    // اگر به هر دلیل جدول setting در دیتابیس قدیمی ناقص بود، اینجا امن‌سازی می‌شود.
-    @$connection->query("CREATE TABLE IF NOT EXISTS `setting` (
-      `id` int(255) NOT NULL AUTO_INCREMENT,
-      `type` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-      `value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-      PRIMARY KEY (`id`)
-    ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
-
-    $current = [];
-    $settingId = 0;
-    $stmt = @$connection->prepare("SELECT `id`, `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' ORDER BY `id` DESC LIMIT 1");
-    if($stmt){
-        $stmt->execute();
-        $res = $stmt->get_result();
-        if($res && $res->num_rows > 0){
-            $row = $res->fetch_assoc();
-            $settingId = intval($row['id'] ?? 0);
-            $decoded = json_decode($row['value'] ?? '', true);
-            if(is_array($decoded)) $current = $decoded;
-        }
-        $stmt->close();
-    }
-
-    $current[$key] = $value;
-    $json = json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if($json === false) return 'ساخت JSON تنظیمات متن ناموفق بود.';
-
-    if($settingId > 0){
-        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `id` = ?");
-        if(!$stmt) return 'آماده‌سازی آپدیت دیتابیس ناموفق بود: ' . $connection->error;
-        $stmt->bind_param('si', $json, $settingId);
-    }else{
-        $type = 'TEXT_SETTINGS';
-        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
-        if(!$stmt) return 'آماده‌سازی ذخیره دیتابیس ناموفق بود: ' . $connection->error;
-        $stmt->bind_param('ss', $type, $json);
-    }
-
-    if(!$stmt->execute()){
-        $err = $stmt->error ?: $connection->error;
-        $stmt->close();
-        return 'ذخیره در دیتابیس ناموفق بود: ' . $err;
-    }
-    $stmt->close();
-
-    // برای سازگاری با نسخه‌های قدیمی، اگر فایل قابل نوشتن باشد آن را هم آپدیت می‌کنیم؛
-    // اما اگر فایل قابل نوشتن نبود، ذخیره اصلی دیتابیس خراب نمی‌شود.
-    farid_tryUpdateMainValueInValuesFile($key, $value);
-
-    if(function_exists('v2raystore_applyTextSettingsFromDb')){
-        v2raystore_applyTextSettingsFromDb();
-    }
-
-    return true;
-}
-
-function farid_tryUpdateMainValueInValuesFile($key, $value){
+function farid_updateValuesFileOnly($key, $value){
     $file = farid_valuesFilePath();
     if(!file_exists($file) || !is_writable($file)) return false;
-
-    $content = @file_get_contents($file);
+    $content = file_get_contents($file);
     if($content === false) return false;
-
     $quotedKey = preg_quote($key, '/');
     $pattern = '/([\'\"]' . $quotedKey . '[\'\"]\s*=>\s*)(?:\"(?:\\\\.|[^\"\\\\])*\"|\'(?:\\\\.|[^\'\\\\])*\')/s';
     $replacement = '$1' . var_export((string)$value, true);
     $newContent = preg_replace($pattern, $replacement, $content, 1, $count);
-
     if($newContent === null || $count < 1) return false;
+    @copy($file, $file . '.bak_' . date('Ymd_His'));
+    return file_put_contents($file, $newContent, LOCK_EX) !== false;
+}
 
-    $backup = $file . '.bak_' . date('Ymd_His');
-    @copy($file, $backup);
-    $ok = @file_put_contents($file, $newContent, LOCK_EX) !== false;
-    if($ok && function_exists('opcache_invalidate')) @opcache_invalidate($file, true);
-    return $ok;
+function farid_updateMainValueInValuesFile($key, $value){
+    if(function_exists('v2raystore_saveMainText')){
+        $saved = v2raystore_saveMainText($key, (string)$value);
+        if($saved !== true) return $saved;
+        // ذخیره در فایل فقط برای سازگاری نسخه‌های قدیمی است؛ منبع اصلی از این به بعد دیتابیس است.
+        if($key === 'start_message') @farid_updateValuesFileOnly($key, (string)$value);
+        return true;
+    }
+    return 'تابع ذخیره دیتابیسی متن در دسترس نیست.';
 }
 
 function getAdminKeysPlus(){
@@ -13353,7 +13344,7 @@ function getAdminKeysPlus(){
     ];
     $keys[] = [
         ['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'userButtonSettings', 'style'=>'primary'],
-        ['text'=>'📝 تنظیم متن خوش‌آمدگویی', 'callback_data'=>'adminTextSettings', 'style'=>'primary']
+        ['text'=>'📝 متن خوش‌آمد / قوانین خرید', 'callback_data'=>'adminTextSettings', 'style'=>'primary']
     ];
     $keys[] = [
         ['text'=>'📚 مدیریت FAQ و آموزش‌ها', 'callback_data'=>'adminHelpMenu', 'style'=>'primary']

@@ -10,60 +10,117 @@ if($connection->connect_error){
 $connection->set_charset("utf8mb4");
 
 
-if(!function_exists('v2raystore_textSettingsAllowedKeys')){
-    function v2raystore_textSettingsAllowedKeys(){
-        return ['start_message'];
+function v2raystore_textSettingsAllowedKeys(){
+    return ['start_message', 'purchase_rules_text'];
+}
+
+function v2raystore_getTextSettings(){
+    global $connection;
+    if(!isset($connection) || !($connection instanceof mysqli)) return [];
+    $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' LIMIT 1");
+    if(!$stmt) return [];
+    if(!$stmt->execute()){
+        $stmt->close();
+        return [];
+    }
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row || !isset($row['value']) || trim((string)$row['value']) === '') return [];
+    $data = json_decode((string)$row['value'], true);
+    return is_array($data) ? $data : [];
+}
+
+function v2raystore_saveTextSettings($settings){
+    global $connection;
+    if(!isset($connection) || !($connection instanceof mysqli)) return 'اتصال دیتابیس در دسترس نیست.';
+    if(!is_array($settings)) $settings = [];
+    $allowed = v2raystore_textSettingsAllowedKeys();
+    $clean = [];
+    foreach($allowed as $key){
+        if(array_key_exists($key, $settings)) $clean[$key] = (string)$settings[$key];
+    }
+    $value = json_encode($clean, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if($value === false) return 'ساخت JSON تنظیمات متن ناموفق بود.';
+
+    $stmt = @$connection->prepare("SELECT `type` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' LIMIT 1");
+    if(!$stmt) return 'آماده‌سازی خواندن تنظیمات متن ناموفق بود: ' . $connection->error;
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+
+    if($exists){
+        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = 'TEXT_SETTINGS'");
+        if(!$stmt) return 'آماده‌سازی ذخیره تنظیمات متن ناموفق بود: ' . $connection->error;
+        $stmt->bind_param('s', $value);
+    }else{
+        $type = 'TEXT_SETTINGS';
+        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        if(!$stmt) return 'آماده‌سازی ساخت تنظیمات متن ناموفق بود: ' . $connection->error;
+        $stmt->bind_param('ss', $type, $value);
+    }
+    $ok = $stmt->execute();
+    $err = $stmt->error;
+    $stmt->close();
+    return $ok ? true : ('ذخیره تنظیمات متن ناموفق بود: ' . $err);
+}
+
+function v2raystore_saveMainText($key, $value){
+    global $mainValues;
+    if(!in_array($key, v2raystore_textSettingsAllowedKeys(), true)) return 'کلید متن معتبر نیست.';
+    $settings = v2raystore_getTextSettings();
+    $settings[$key] = (string)$value;
+    $res = v2raystore_saveTextSettings($settings);
+    if($res === true) $mainValues[$key] = (string)$value;
+    return $res;
+}
+
+function v2raystore_removeMainText($key){
+    global $mainValues;
+    if(!in_array($key, v2raystore_textSettingsAllowedKeys(), true)) return 'کلید متن معتبر نیست.';
+    $settings = v2raystore_getTextSettings();
+    unset($settings[$key]);
+    $res = v2raystore_saveTextSettings($settings);
+    if($res === true && $key === 'purchase_rules_text') unset($mainValues[$key]);
+    return $res;
+}
+
+function v2raystore_getMainText($key, $default = ''){
+    global $mainValues;
+    $settings = v2raystore_getTextSettings();
+    if(array_key_exists($key, $settings)) return (string)$settings[$key];
+    if(isset($mainValues[$key])) return (string)$mainValues[$key];
+    return (string)$default;
+}
+
+function v2raystore_applyTextSettings(){
+    global $mainValues;
+    $settings = v2raystore_getTextSettings();
+    foreach(v2raystore_textSettingsAllowedKeys() as $key){
+        if(array_key_exists($key, $settings)) $mainValues[$key] = (string)$settings[$key];
     }
 }
 
-if(!function_exists('v2raystore_loadTextSettingsFromDb')){
-    function v2raystore_loadTextSettingsFromDb(){
-        global $connection;
-        if(!isset($connection) || !($connection instanceof mysqli)) return [];
-
-        $res = @$connection->query("SELECT `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' ORDER BY `id` DESC LIMIT 1");
-        if(!$res || $res->num_rows < 1) return [];
-
-        $row = $res->fetch_assoc();
-        $settings = json_decode($row['value'] ?? '', true);
-        return is_array($settings) ? $settings : [];
-    }
+function v2raystore_purchaseRulesText(){
+    return trim((string)v2raystore_getMainText('purchase_rules_text', ''));
 }
 
-if(!function_exists('v2raystore_getMainText')){
-    function v2raystore_getMainText($key, $fallback = ''){
-        global $mainValues;
-        $key = (string)$key;
-        if(!in_array($key, v2raystore_textSettingsAllowedKeys(), true)){
-            return (string)$fallback;
-        }
-
-        $settings = v2raystore_loadTextSettingsFromDb();
-        if(array_key_exists($key, $settings) && trim((string)$settings[$key]) !== ''){
-            return (string)$settings[$key];
-        }
-
-        if(isset($mainValues[$key]) && trim((string)$mainValues[$key]) !== ''){
-            return (string)$mainValues[$key];
-        }
-
-        return (string)$fallback;
-    }
+function v2raystore_purchaseRulesIsEnabled(){
+    return v2raystore_purchaseRulesText() !== '';
 }
 
-if(!function_exists('v2raystore_applyTextSettingsFromDb')){
-    function v2raystore_applyTextSettingsFromDb(){
-        global $mainValues;
-        if(!isset($mainValues) || !is_array($mainValues)) return;
-
-        $settings = v2raystore_loadTextSettingsFromDb();
-        foreach(v2raystore_textSettingsAllowedKeys() as $key){
-            if(array_key_exists($key, $settings) && trim((string)$settings[$key]) !== ''){
-                $mainValues[$key] = (string)$settings[$key];
-            }
-        }
-    }
+function v2raystore_purchaseRulesKeyboard($target){
+    $allowed = ['agentOneBuy', 'buySubscription', 'agentMuchBuy'];
+    if(!in_array($target, $allowed, true)) $target = 'buySubscription';
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ تأیید و ادامه خرید', 'callback_data'=>'confirmPurchaseRules_' . $target]],
+    ]], JSON_UNESCAPED_UNICODE);
 }
+
+function v2raystore_purchaseRulesMessage(){
+    $text = v2raystore_purchaseRulesText();
+    return $text !== '' ? $text : 'لطفاً قوانین خرید را تأیید کنید.';
+}
+
 
 
 function v2raystore_ensureOrderNoteColumn(){
@@ -74,6 +131,7 @@ function v2raystore_ensureOrderNoteColumn(){
     }
 }
 v2raystore_ensureOrderNoteColumn();
+v2raystore_applyTextSettings();
 
 function v2raystore_safeConfigNoteText($note){
     $note = trim((string)$note);
@@ -4268,8 +4326,6 @@ if(!is_null($botState)) $botState = json_decode($botState,true);
 else $botState = array();
 $stmt->close();
 
-v2raystore_applyTextSettingsFromDb();
-
 // اعمال تنظیمات جداگانه فروش و کیف پول برای نماینده‌ها بدون تغییر رفتار کاربران عادی.
 $botState = v2raystore_applyRoleSpecificStates($botState, $userInfo);
 
@@ -5320,6 +5376,10 @@ function getBotSettingKeys(){
         [
             ['text'=>$sellState,'callback_data'=>"changeBotsellState"],
             ['text'=>"فروش کاربران",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>'📝 متن‌ها / قوانین خرید','callback_data'=>'adminTextSettings', 'style'=>'primary'],
+            ['text'=>'قوانین قبل خرید','callback_data'=>'v2raystore']
         ],
         [
             ['text'=>$agentSellState,'callback_data'=>"changeBotagentSellState"],
@@ -6737,6 +6797,7 @@ function editInboundRemark($server_id, $uuid, $newRemark){
     $panel_url = $server_info['panel_url'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
+
     $response = getJson($server_id);
     if(!$response) return null;
     $response = $response->obj;
@@ -6839,9 +6900,6 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
     $panel_url = $server_info['panel_url'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
-    $exactEdit = is_array($editType) ? $editType : [];
-    $exactTotalBytes = array_key_exists('total_bytes', $exactEdit) ? intval($exactEdit['total_bytes']) : null;
-    $exactExpireMs = array_key_exists('expire_ms', $exactEdit) ? intval($exactEdit['expire_ms']) : null;
 
     $response = getJson($server_id);
     if(!$response) return null;
@@ -6862,19 +6920,14 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
             break;
         }
     }
-    if($exactExpireMs !== null){
-        $expire_microdate = $exactExpireMs;
-    }elseif($days != 0) {
+    if($days != 0) {
         $now_microdate = floor(microtime(true) * 1000);
         $extend_date = (864000 * $days * 100);
         if($editType == "renew") $expire_microdate = $now_microdate + $extend_date;
         else $expire_microdate = ($now_microdate > $expiryTime) ? $now_microdate + $extend_date : $expiryTime + $extend_date;
     }
 
-    if($exactTotalBytes !== null){
-        $total = $exactTotalBytes;
-        $volume = $exactTotalBytes;
-    }elseif($volume != 0){
+    if($volume != 0){
         $leftGB = $total - $up - $down;
         $extend_volume = floor($volume * 1073741824);
         if($editType == "renew"){
@@ -6888,20 +6941,8 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
         else $total = ($leftGB > 0) ? $total + $extend_volume : $extend_volume;
     }
 
-    $renewSettings = $row->settings;
-    if($editType == "renew"){
-        $settingsArr = json_decode($renewSettings, true);
-        if(is_array($settingsArr) && isset($settingsArr['clients'][0]) && is_array($settingsArr['clients'][0])){
-            $settingsArr['clients'][0]['enable'] = true;
-            if(!isset($settingsArr['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
-                $settingsArr['clients'][0]['subId'] = RandomString(16);
-            }
-            $renewSettings = json_encode($settingsArr, 488);
-        }
-    }
-
     $dataArr = array('up' => $up,'down' => $down,'total' => is_null($total) ? $row->total : $total,'remark' => $row->remark,'enable' => 'true',
-        'expiryTime' => is_null($expire_microdate) ? $row->expiryTime : $expire_microdate, 'listen' => '','port' => $row->port,'protocol' => $row->protocol,'settings' => $renewSettings,
+        'expiryTime' => is_null($expire_microdate) ? $row->expiryTime : $expire_microdate, 'listen' => '','port' => $row->port,'protocol' => $row->protocol,'settings' => $row->settings,
         'streamSettings' => $row->streamSettings, 'sniffing' => $row->sniffing);
 
 
@@ -7705,9 +7746,6 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     $panel_url = $server_info['panel_url'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
-    $exactEdit = is_array($editType) ? $editType : [];
-    $exactTotalBytes = array_key_exists('total_bytes', $exactEdit) ? intval($exactEdit['total_bytes']) : null;
-    $exactExpireMs = array_key_exists('expire_ms', $exactEdit) ? intval($exactEdit['expire_ms']) : null;
 
     $response = getJson($server_id);
     if(!$response) return null;
@@ -7735,11 +7773,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
             }
         }
     }
-    if($exactTotalBytes !== null){
-        $settings['clients'][$client_key]['totalGB'] = $exactTotalBytes;
-        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
-        if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
-    }elseif($volume != 0){
+    if($volume != 0){
         $client_total = $settings['clients'][$client_key]['totalGB'];// - $up - $down;
         $extend_volume = floor($volume * 1073741824);
         $volume = ($client_total > 0) ? $client_total + $extend_volume : $extend_volume;
@@ -7753,11 +7787,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
     }
     
-    if($exactExpireMs !== null){
-        $settings['clients'][$client_key]['expiryTime'] = $exactExpireMs;
-        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
-        if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
-    }elseif($days != 0){
+    if($days != 0){
         $expiryTime = $settings['clients'][$client_key]['expiryTime'];
         $now_microdate = floor(microtime(true) * 1000);
         $extend_date = (864000 * $days * 100);
@@ -7766,12 +7796,6 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         $settings['clients'][$client_key]['expiryTime'] = $expire_microdate;
         if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
         if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
-    }
-    if($editType == "renew" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
-        $settings['clients'][$client_key]['enable'] = true;
-        if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
-            $settings['clients'][$client_key]['subId'] = RandomString(16);
-        }
     }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -9846,20 +9870,13 @@ function editMarzbanConfig($server_id,$info){
     $volume = $configInfo->data_limit;
     $configState = $configInfo->status;
 
-    if(array_key_exists('expire', $info)){
-        $expireTime = intval($info['expire']);
-        if($expireTime > time()) $configState = "active";
-    }elseif(isset($info['plus_day'])){
-        $expireTime += (86400 * $info['plus_day']);
-        if($expireTime > time()) $configState = "active";
-    }
+    if(isset($info['plus_day'])) $expireTime += (86400 * $info['plus_day']);
     elseif(isset($info['days'])){
         $expireTime = time() + (86400 * $info['days']);
         $configState = "active";
     }
     
-    if(array_key_exists('data_limit', $info)) $volume = intval($info['data_limit']);
-    elseif(isset($info['plus_volume'])) $volume += $info['plus_volume'] * 1073741824;
+    if(isset($info['plus_volume'])) $volume += $info['plus_volume'] * 1073741824;
     elseif(isset($info['volume'])){
         $volume = $info['volume'] * 1073741824;
         $response = resetMarzbanTraffic($server_id, $remark, $token);
@@ -12163,10 +12180,7 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
     $lines[] = 'username : ' . v2raystore_h($username);
 
     $body = implode("\n", $lines);
-    $keyboard = (($payType === 'RENEW_ACCOUNT') || (($result['type'] ?? '') === 'RENEW_ACCOUNT'))
-        ? v2raystore_renewCompletedReportKeyboard($hashId, $uid)
-        : v2raystore_reportPrivateKeyboard($uid);
-    $res = v2raystore_reportEvent('#سفارش_جدید', $body, $keyboard, 'payment_approved');
+    $res = v2raystore_reportEvent('#سفارش_جدید', $body, v2raystore_reportPrivateKeyboard($uid), 'payment_approved');
     return is_object($res) && !empty($res->ok);
 }
 
@@ -13478,147 +13492,6 @@ function v2raystore_restorePayApprovalStateTo($hashId, $state){
     return $ok;
 }
 
-function v2raystore_renewSnapshotFromOrder($order){
-    global $connection;
-    if(!is_array($order)) return [];
-    $fileid = intval($order['fileid'] ?? 0);
-    $plan = null;
-    if($fileid > 0){
-        $stmt = $connection->prepare("SELECT `id`, `volume`, `days`, `limitip`, `title` FROM `server_plans` WHERE `id` = ? LIMIT 1");
-        if($stmt){
-            $stmt->bind_param('i', $fileid);
-            $stmt->execute();
-            $plan = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-        }
-    }
-    $volumeGb = floatval($plan['volume'] ?? 0);
-    return [
-        'order_id' => intval($order['id'] ?? 0),
-        'fileid' => $fileid,
-        'expire_date' => intval($order['expire_date'] ?? 0),
-        'server_id' => intval($order['server_id'] ?? 0),
-        'inbound_id' => intval($order['inbound_id'] ?? 0),
-        'uuid' => (string)($order['uuid'] ?? ''),
-        'remark' => (string)($order['remark'] ?? ''),
-        'link' => (string)($order['link'] ?? ''),
-        'amount' => intval($order['amount'] ?? 0),
-        'volume_gb' => $volumeGb,
-        'volume_bytes' => (int)floor($volumeGb * 1073741824),
-        'plan_days' => intval($plan['days'] ?? 0),
-        'created_at' => time()
-    ];
-}
-
-function v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order){
-    global $connection;
-    $hashId = trim((string)$hashId);
-    if($hashId === '') return [];
-    $meta = v2raystore_renewMetaFromPay($payInfo);
-    if(empty($meta['renew_snapshot']) || !is_array($meta['renew_snapshot'])){
-        $meta['renew_snapshot'] = v2raystore_renewSnapshotFromOrder($order);
-        $encoded = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $stmt = $connection->prepare("UPDATE `pays` SET `description` = ? WHERE `hash_id` = ? LIMIT 1");
-        if($stmt){
-            $stmt->bind_param('ss', $encoded, $hashId);
-            $stmt->execute();
-            $stmt->close();
-        }
-    }
-    return $meta['renew_snapshot'];
-}
-
-function v2raystore_restorePanelServiceExact($snapshot){
-    if(!is_array($snapshot)) return ['ok'=>false, 'message'=>'اطلاعات قبلی سرویس برای برگشت پیدا نشد.'];
-    $serverId = intval($snapshot['server_id'] ?? 0);
-    $inboundId = intval($snapshot['inbound_id'] ?? 0);
-    $uuid = (string)($snapshot['uuid'] ?? '');
-    $remark = (string)($snapshot['remark'] ?? '');
-    $expireMs = max(0, intval($snapshot['expire_date'] ?? 0)) * 1000;
-    $totalBytes = max(0, intval($snapshot['volume_bytes'] ?? 0));
-    if($serverId <= 0 || $uuid === '') return ['ok'=>false, 'message'=>'اطلاعات سرور/شناسه سرویس برای برگشت کامل نیست.'];
-
-    $serverType = '';
-    global $connection;
-    $stmt = $connection->prepare("SELECT `type` FROM `server_config` WHERE `id` = ? LIMIT 1");
-    if($stmt){
-        $stmt->bind_param('i', $serverId);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        $serverType = (string)($row['type'] ?? '');
-    }
-
-    if($serverType === 'marzban'){
-        $response = editMarzbanConfig($serverId, [
-            'remark' => $remark,
-            'expire' => intval($snapshot['expire_date'] ?? 0),
-            'data_limit' => $totalBytes
-        ]);
-    }else{
-        $exact = ['total_bytes'=>$totalBytes, 'expire_ms'=>$expireMs];
-        $response = ($inboundId > 0)
-            ? editClientTraffic($serverId, $inboundId, $uuid, 0, 0, $exact)
-            : editInboundTraffic($serverId, $uuid, 0, 0, $exact);
-    }
-
-    if(is_null($response)) return ['ok'=>false, 'message'=>'اتصال به پنل برای برگشت سرویس برقرار نشد.'];
-    if(is_object($response) && isset($response->success) && empty($response->success)){
-        $err = $response->msg ?? 'نامشخص';
-        if(function_exists('v2raystore_translateTechnicalError')) $err = v2raystore_translateTechnicalError($err);
-        return ['ok'=>false, 'message'=>'خطای پنل در برگشت سرویس: ' . $err];
-    }
-    if(is_array($response) && isset($response['success']) && empty($response['success'])){
-        return ['ok'=>false, 'message'=>'خطای پنل در برگشت سرویس: ' . ($response['msg'] ?? 'نامشخص')];
-    }
-    return ['ok'=>true, 'message'=>'اطلاعات پنل برگشت داده شد.'];
-}
-
-function v2raystore_renewCompletedReportKeyboard($hashId, $userId){
-    $rows = [];
-    // برای تمدید، دکمه برگشت سرویس باید همیشه روی گزارش نهایی باشد؛ مستقل از تنظیمات عمومی دکمه لغو سفارش.
-    $rows[] = [[ 'text'=>'↩️ لغو تمدید و برگشت سرویس', 'callback_data'=>'autoCancelOrder' . $hashId, 'style'=>'danger' ]];
-    return v2raystore_reportPrivateKeyboard($userId, $rows);
-}
-
-function v2raystore_cancelApprovedRenewPay($pay, $reason){
-    global $connection;
-    if(!is_array($pay)) return ['ok'=>false, 'message'=>'پرداخت تمدید پیدا نشد.'];
-    $hashId = trim((string)($pay['hash_id'] ?? ''));
-    if($hashId === '') return ['ok'=>false, 'message'=>'کد پرداخت تمدید نامعتبر است.'];
-    if((string)($pay['state'] ?? '') !== 'approved') return ['ok'=>false, 'message'=>'این تمدید هنوز تأیید نشده یا قبلاً لغو شده است.'];
-    $meta = v2raystore_renewMetaFromPay($pay);
-    $snapshot = $meta['renew_snapshot'] ?? null;
-    if(!is_array($snapshot) || intval($snapshot['order_id'] ?? 0) <= 0){
-        return ['ok'=>false, 'message'=>'نسخه قبل از تمدید برای این پرداخت ذخیره نشده است؛ برگشت امن ممکن نیست.'];
-    }
-    $orderId = intval($snapshot['order_id']);
-
-    $restore = v2raystore_restorePanelServiceExact($snapshot);
-    if(empty($restore['ok'])) return $restore;
-
-    $fileid = intval($snapshot['fileid'] ?? 0);
-    $expire = intval($snapshot['expire_date'] ?? 0);
-    $link = (string)($snapshot['link'] ?? '');
-    $amount = intval($snapshot['amount'] ?? 0);
-    $stmt = $connection->prepare("UPDATE `orders_list` SET `fileid` = ?, `expire_date` = ?, `link` = ?, `amount` = ?, `notif` = 0 WHERE `id` = ? LIMIT 1");
-    if(!$stmt) return ['ok'=>false, 'message'=>'برگشت اطلاعات سفارش در دیتابیس ناموفق بود.'];
-    $stmt->bind_param('iisii', $fileid, $expire, $link, $amount, $orderId);
-    $ok = $stmt->execute();
-    $stmt->close();
-    if(!$ok) return ['ok'=>false, 'message'=>'برگشت اطلاعات سفارش در دیتابیس ناموفق بود.'];
-
-    $reason = trim((string)$reason);
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ? WHERE `hash_id` = ? LIMIT 1");
-    if($stmt){ $stmt->bind_param('ss', $reason, $hashId); $stmt->execute(); $stmt->close(); }
-
-    $uid = intval($pay['user_id'] ?? 0);
-    if($uid > 0){
-        sendMessage("↩️ تمدید سرویس شما توسط مدیریت لغو شد و سرویس به وضعیت قبل از تمدید برگشت.\n\n📝 دلیل:\n" . $reason, null, 'HTML', $uid);
-    }
-    return ['ok'=>true, 'message'=>'تمدید لغو شد و تاریخ و حجم سرویس به قبل از تمدید برگشت.', 'type'=>'RENEW_ACCOUNT', 'user_id'=>$uid, 'order_id'=>$orderId];
-}
-
 function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     global $connection, $botState, $mainValues;
     $hashId = trim((string)$hashId);
@@ -13734,8 +13607,6 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     $stmt->close();
     if(!$serverInfo) return $fail('تنظیمات سرور پیدا نشد.');
     $serverType = $serverInfo['type'] ?? '';
-
-    $renewSnapshot = v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order);
 
     $renewSettings = v2raystore_getRenewSettings();
     $resetMode = ($renewSettings['mode'] === 'reset');
@@ -14534,9 +14405,6 @@ function v2raystore_cancelAutoApprovedPay($hashId, $reason){
     $pay = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if(!$pay) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد.'];
-    if(in_array((string)($pay['type'] ?? ''), ['RENEW_ACCOUNT','RENEW_SCONFIG'], true)){
-        return v2raystore_cancelApprovedRenewPay($pay, $reason);
-    }
     $orders = json_decode((string)($pay['auto_approved_orders'] ?? '[]'), true);
     if(!is_array($orders)) $orders = [];
     if(count($orders) == 0){
