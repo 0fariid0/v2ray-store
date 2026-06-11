@@ -448,7 +448,12 @@ if(preg_match('/^autoCancelOrder\|(.+)\|(-?\d+)\|(\d+)$/', $userInfo['step'] ?? 
     setUser();
     sendMessage(($result['ok'] ? '✅ ' : '❌ ') . $result['message'], $removeKeyboard, 'HTML');
     if($result['ok']){
-        editText($reportMsgId, "❌ سفارش خودکار لغو و حذف شد.\n\n🔖 کد پرداخت: <code>" . htmlspecialchars($hashId, ENT_QUOTES, 'UTF-8') . "</code>\n📝 دلیل:\n" . htmlspecialchars($text, ENT_QUOTES, 'UTF-8'), null, 'HTML', $reportChatId);
+        $cancelTitle = (($result['type'] ?? '') === 'RENEW_ACCOUNT') ? '↩️ تمدید لغو شد و سرویس به قبل از تمدید برگشت.' : '❌ سفارش خودکار لغو و حذف شد.';
+        editText($reportMsgId, $cancelTitle . "
+
+🔖 کد پرداخت: <code>" . htmlspecialchars($hashId, ENT_QUOTES, 'UTF-8') . "</code>
+📝 دلیل:
+" . htmlspecialchars($text, ENT_QUOTES, 'UTF-8'), null, 'HTML', $reportChatId);
     }
     exit();
 }
