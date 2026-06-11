@@ -762,9 +762,9 @@ if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'
     setUser();
     setUser("", "temp"); 
     if(isset($data) and $data == "mainMenu"){
-        $res = editText($message_id, $mainValues['start_message'], getMainKeys(), null);
+        $res = editText($message_id, $mainValues['start_message'], getMainKeys());
         if(!$res->ok){
-            sendMessage($mainValues['start_message'], getMainKeys(), null);
+            sendMessage($mainValues['start_message'], getMainKeys());
         }
     }else{
         if($from_id != $admin && empty($userInfo['first_start'])){
@@ -776,7 +776,7 @@ if(preg_match('/^\/([Ss]tart)/', $text) or $text == $buttonValues['back_to_main'
             sendMessage(str_replace(["FULLNAME", "USERNAME", "USERID"], ["<a href='tg://user?id=$from_id'>$first_name</a>", $username, $from_id], $mainValues['new_member_joined'])
                 ,$keys, "html",$admin);
         }
-        sendMessage($mainValues['start_message'], getMainKeys(), null);
+        sendMessage($mainValues['start_message'],getMainKeys());
     }
 }
 if(preg_match('/^sendMessageToUser(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
@@ -997,6 +997,16 @@ if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($f
 }
 
 
+if($data == "renewSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_getRenewSettingsMenuText(), v2raystore_getRenewSettingsMenuKeys(), "HTML");
+    exit();
+}
+if(preg_match('/^setRenewExtendMode_(reset|add)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setSettings('renewExtendMode', $match[1]);
+    editText($message_id, v2raystore_getRenewSettingsMenuText(), v2raystore_getRenewSettingsMenuKeys(), "HTML");
+    exit();
+}
+
 if($data == "switchLocationSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, v2raystore_getSwitchSettingsMenuText(), v2raystore_getSwitchSettingsMenuKeys(), "HTML");
     exit();
@@ -1124,7 +1134,7 @@ if($data=="adminTextSettings" && ($from_id == $admin || $userInfo['isAdmin'] == 
     $preview = htmlspecialchars($mainValues['start_message'] ?? '', ENT_QUOTES, 'UTF-8');
     $msg = "📝 <b>تنظیم متن‌ها</b>\n\n" .
            "از این بخش می‌توانید متن خوش‌آمدگویی صفحه اصلی ربات را تغییر دهید.\n" .
-           "این متن در دیتابیس و کلید <code>start_message</code> ذخیره می‌شود تا با کش PHP یا دسترسی فایل خراب نشود.\n\n" .
+           "این متن در فایل <code>settings/values.php</code> و کلید <code>start_message</code> ذخیره می‌شود.\n\n" .
            "📌 متن فعلی:\n<pre>" . $preview . "</pre>";
     editText($message_id, $msg, farid_textSettingsKeyboard(), "HTML");
     exit();
@@ -1851,47 +1861,21 @@ if(preg_match('/increaseWalletWithCartToCart(.*)/',$userInfo['step'], $match) an
     }
 }
 if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $hashId = $match[1];
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
-    $stmt->bind_param("s", $hashId);
-    $stmt->execute();
-    $payInfo = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    if(!$payInfo){
-        alert('پرداخت پیدا نشد.', true);
+    $hashId = trim($match[1]);
+    $result = function_exists('v2raystore_approveIncreaseWalletPayByHash') ? v2raystore_approveIncreaseWalletPayByHash($hashId, false) : ['ok'=>false, 'message'=>'تابع تأیید شارژ کیف پول در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
         exit();
     }
-    $price = intval($payInfo['price']);
-    $userId = intval($payInfo['user_id']);
-
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved' WHERE `hash_id` = ? AND `state` = 'sent'");
-    $stmt->bind_param("s", $hashId);
-    $stmt->execute();
-    $changed = $stmt->affected_rows;
-    $stmt->close();
-    if($changed <= 0){
-        alert('این درخواست قبلاً تأیید/رد شده یا در حال پردازش است.', true);
-        if(($payInfo['state'] ?? '') == 'approved' && function_exists('v2raystore_orderStatusKeyboard')){
-            editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
-        }
-        exit();
-    }
-
-    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
-    $stmt->bind_param("ii", $price, $userId);
-    $stmt->execute();
-    $stmt->close();
-
-    sendMessage("افزایش حساب شما با موفقیت تأیید شد\n✅ مبلغ " . number_format($price). " تومان به حساب شما اضافه شد",null,null,$userId);
-    
-    if(function_exists('v2raystore_orderStatusKeyboard')){
-        editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success'));
-    }else{
-        editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
-    }
+    $userId = intval($result['user_id'] ?? 0);
+    $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
+    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success', $copyText));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
+    exit();
 }
+
 if(preg_match('/^decPayment(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT `user_id`, `state` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
     $decUserId = 0;
     if($stmt){
         $stmt->bind_param("s", $match[1]);
@@ -2897,70 +2881,19 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     sendMessage($msg,$keys,"html", $admin);
 }
 elseif($payType == "RENEW_ACCOUNT"){
-    $oid = $payInfo['plan_id'];
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $oid);
-    $stmt->execute();
-    $order = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $fid = $order['fileid'];
-    $remark = $order['remark'];
-    $uuid = $order['uuid']??"0";
-    $server_id = $order['server_id'];
-    $inbound_id = $order['inbound_id'];
-    $expire_date = $order['expire_date'];
-    $expire_date = ($expire_date > $time) ? $expire_date : $time;
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ? AND `active` = 1");
-    $stmt->bind_param("i", $fid);
-    $stmt->execute();
-    $respd = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $name = $respd['title'];
-    $days = $respd['days'];
-    $volume = $respd['volume'];
-    $price = $payInfo['price'];
-    
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $serverType = $server_info['type'];
-
-    if($serverType == "marzban"){
-        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume' => $volume]);
-    }else{
-        if($inbound_id > 0)
-            $response = editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, "renew");
-        else
-            $response = editInboundTraffic($server_id, $uuid, $volume, $days, "renew");
+    $result = function_exists('v2raystore_approveRenewAccountPayByHash') ? v2raystore_approveRenewAccountPayByHash($payInfo['hash_id'], false) : ['ok'=>false, 'message'=>'تابع تمدید در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit;
     }
-    
-    if(is_null($response)){
-    	alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
-    	exit;
-    }
-    $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-    $newExpire = $time + $days * 86400;
-    $stmt->bind_param("ii", $newExpire, $oid);
-    $stmt->execute();
-    $stmt->close();
-    $stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
-    $stmt->bind_param("iiisii", $uid, $server_id, $inbound_id, $remark, $price, $time);
-    $stmt->execute();
-    $stmt->close();
-
-sendMessage("✅سرویس $remark با موفقیت تمدید شد",getMainKeys());
-$keys = json_encode(['inline_keyboard'=>[
-    [
-        ['text'=>"به به تمدید 😍",'callback_data'=>"v2raystore"]
+    sendMessage("✅سرویس " . ($result['renew_remark'] ?? '') . " با موفقیت تمدید شد", getMainKeys());
+    $keys = json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>"به به تمدید 😍",'callback_data'=>"v2raystore"]
         ],
-    ]]);
-
-    $msg = str_replace(['TYPE', "USER-ID", "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],['کیف پول', $from_id, $username, $first_name, $price, $remark, $volume, $days], $mainValues['renew_account_request_message']);
-
-sendMessage($msg, $keys,"html", $admin);
+    ]], JSON_UNESCAPED_UNICODE);
+    $msg = str_replace(['TYPE', "USER-ID", "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],['کیف پول/درگاه', $from_id, $username, $first_name, ($result['price'] ?? 0), ($result['renew_remark'] ?? ''), ($result['renew_volume'] ?? ''), ($result['renew_days'] ?? '')], $mainValues['renew_account_request_message']);
+    sendMessage($msg, $keys,"html", $admin);
 }
 elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType, $increaseInfo)){
     $orderId = $increaseInfo[1];
@@ -4436,7 +4369,33 @@ if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code))?$/', $userI
     exit();
 }
 if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true)) ) {
-    $sid = $match['serverId'];
+    $sid = intval($match['serverId']);
+
+    if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewServerMatch)){
+        $renewOrderId = intval($renewServerMatch[1]);
+        $stmt = $connection->prepare("SELECT `server_id`, `userid`, `status` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $renewOrderId);
+        $stmt->execute();
+        $renewOrderForServer = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$renewOrderForServer || intval($renewOrderForServer['status'] ?? 0) != 1 || (intval($renewOrderForServer['userid']) != intval($from_id) && $from_id != $admin && ($userInfo['isAdmin'] ?? false) != true)){
+            alert($mainValues['config_not_found'] ?? 'کانفیگ پیدا نشد.', true);
+            exit();
+        }
+        if(intval($renewOrderForServer['server_id'] ?? 0) !== $sid){
+            alert('برای تمدید فقط پلن‌های همان سرور فعلی سرویس قابل انتخاب است. اگر می‌خواهی سرور را عوض کنی، اول تغییر لوکیشن بده.', true);
+            exit();
+        }
+        $stmt = $connection->prepare("SELECT `ucount`, `active`, `state` FROM `server_info` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $sid);
+        $stmt->execute();
+        $renewServerInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$renewServerInfo || intval($renewServerInfo['active'] ?? 0) != 1 || intval($renewServerInfo['state'] ?? 0) != 1 || intval($renewServerInfo['ucount'] ?? 0) <= 0){
+            alert('سرور فعلی ظرفیت ندارد. اول تغییر لوکیشن بده، بعد تمدید کن.', true);
+            exit();
+        }
+    }
         
     $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `parent`=0 order by `id` asc");
     $stmt->execute();
@@ -4462,16 +4421,44 @@ if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) &&
         }
         alert($mainValues['receive_categories']);
 
-        $keyboard[] = ['text' => $buttonValues['back_to_main'], 'callback_data' => 
-        ($match['buyType'] == "one"?"agentOneBuy":($match['buyType'] == "much"?"agentMuchBuy":"buySubscription"))];
+        $backCallback = ($match['buyType'] == "one"?"agentOneBuy":($match['buyType'] == "much"?"agentMuchBuy":"buySubscription"));
+        if(preg_match('/^renew\d+$/', $match['buyType'])) $backCallback = 'mySubscriptions';
+        $keyboard[] = ['text' => $buttonValues['back_to_main'], 'callback_data' => $backCallback];
         $keyboard = array_chunk($keyboard,1);
         editText($message_id,$mainValues['buy_sub_select_category'], json_encode(['inline_keyboard'=>$keyboard]));
     }
 
 }
 if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+)/',$data,$match) && ($botState['sellState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)) {
-    $call_id = $match['categoryId'];
-    $sid = $match['serverId'];
+    $call_id = intval($match['categoryId']);
+    $sid = intval($match['serverId']);
+
+    if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewCategoryMatch)){
+        $renewOrderId = intval($renewCategoryMatch[1]);
+        $stmt = $connection->prepare("SELECT `server_id`, `userid`, `status` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $renewOrderId);
+        $stmt->execute();
+        $renewOrderForCategory = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$renewOrderForCategory || intval($renewOrderForCategory['status'] ?? 0) != 1 || (intval($renewOrderForCategory['userid']) != intval($from_id) && $from_id != $admin && ($userInfo['isAdmin'] ?? false) != true)){
+            alert($mainValues['config_not_found'] ?? 'کانفیگ پیدا نشد.', true);
+            exit();
+        }
+        if(intval($renewOrderForCategory['server_id'] ?? 0) !== $sid){
+            alert('برای تمدید فقط پلن‌های همان سرور فعلی سرویس قابل انتخاب است. اگر می‌خواهی سرور را عوض کنی، اول تغییر لوکیشن بده.', true);
+            exit();
+        }
+        $stmt = $connection->prepare("SELECT `ucount`, `active`, `state` FROM `server_info` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $sid);
+        $stmt->execute();
+        $renewServerInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$renewServerInfo || intval($renewServerInfo['active'] ?? 0) != 1 || intval($renewServerInfo['state'] ?? 0) != 1 || intval($renewServerInfo['ucount'] ?? 0) <= 0){
+            alert('سرور فعلی ظرفیت ندارد. اول تغییر لوکیشن بده، بعد تمدید کن.', true);
+            exit();
+        }
+    }
+
     $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and `catid`=? and `active`=1 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
@@ -4873,7 +4860,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     }elseif(isset($data)) delMessage();
 
 
-    if($botState['remark'] ==  "manual" && preg_match('/^selectPlan/',$data) && $match['buyType'] != "much"){
+    if($botState['remark'] ==  "manual" && preg_match('/^selectPlan/',$data) && $match['buyType'] != "much" && !preg_match('/^renew\d+$/', $match['buyType'])){
         sendMessage($mainValues['customer_custome_plan_name'], $cancelKey);
         setUser('enterAccountName' . $match[1] . "_" . $match[2] . "_" . $match['buyType']);
         exit();
@@ -4939,6 +4926,67 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
 
         $agentBought = true;
     }
+    if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewBuyMatch)){
+        $renewOrderId = intval($renewBuyMatch[1]);
+        $stmt = $connection->prepare("SELECT `id`, `userid`, `remark`, `status`, `server_id` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $renewOrderId);
+        $stmt->execute();
+        $renewOrder = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$renewOrder || intval($renewOrder['status'] ?? 0) != 1 || (intval($renewOrder['userid']) != intval($from_id) && $from_id != $admin && ($userInfo['isAdmin'] ?? false) != true)){
+            alert($mainValues['config_not_found'] ?? 'کانفیگ پیدا نشد.', true);
+            exit();
+        }
+        if(intval($renewOrder['server_id'] ?? 0) !== intval($sid)){
+            alert('برای تمدید فقط پلن‌های همان سرور فعلی سرویس قابل انتخاب است. اگر می‌خواهی سرور را عوض کنی، اول تغییر لوکیشن بده.', true);
+            exit();
+        }
+        $stmt = $connection->prepare("SELECT `ucount`, `active`, `state` FROM `server_info` WHERE `id` = ? LIMIT 1");
+        $stmt->bind_param("i", $sid);
+        $stmt->execute();
+        $renewServerInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$renewServerInfo || intval($renewServerInfo['active'] ?? 0) != 1 || intval($renewServerInfo['state'] ?? 0) != 1 || intval($renewServerInfo['ucount'] ?? 0) <= 0){
+            alert('سرور فعلی ظرفیت ندارد. اول تغییر لوکیشن بده، بعد تمدید کن.', true);
+            exit();
+        }
+        $hash_id = RandomString();
+        $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'RENEW_ACCOUNT' AND `state` = 'pending'");
+        $stmt->bind_param("i", $from_id);
+        $stmt->execute();
+        $stmt->close();
+        $time = time();
+        $renewDesc = json_encode(['order_id'=>$renewOrderId, 'renew_plan_id'=>intval($id)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `description`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`) VALUES (?, ?, ?, 'RENEW_ACCOUNT', ?, '0', '0', ?, ?, 'pending')");
+        $stmt->bind_param("ssiiii", $hash_id, $renewDesc, $from_id, $renewOrderId, $price, $time);
+        $stmt->execute();
+        $stmt->close();
+        if(function_exists('v2raystore_notifyPurchaseStarted')) v2raystore_notifyPurchaseStarted($hash_id, 'انتخاب پلن تمدید');
+
+        $renewKeyboard = [];
+        $priceText = ($price == 0) ? 'رایگان' : number_format($price) . ' تومان';
+        if($price == 0){
+            $renewKeyboard[] = [['text'=>'📥 تمدید رایگان', 'callback_data'=>'freeRenew' . $hash_id]];
+        }else{
+            if($botState['cartToCartState'] == "on") $renewKeyboard[] = [['text' => "💳 کارت به کارت مبلغ $priceText",  'callback_data' => "payRenewWithCartToCart$hash_id"]];
+            if($botState['nowPaymentOther'] == "on") $renewKeyboard[] = [['text' => $buttonValues['now_payment_gateway'],  'url' => $botUrl . "pay/?nowpayment&hash_id=" . $hash_id]];
+            if($botState['zarinpal'] == "on") $renewKeyboard[] = [['text' => $buttonValues['zarinpal_gateway'],  'url' => $botUrl . "pay/?zarinpal&hash_id=" . $hash_id]];
+            if($botState['nextpay'] == "on") $renewKeyboard[] = [['text' => $buttonValues['nextpay_gateway'],  'url' => $botUrl . "pay/?nextpay&hash_id=" . $hash_id]];
+            if($botState['walletState'] == "on") $renewKeyboard[] = [['text' => "پرداخت با موجودی مبلغ $priceText",  'callback_data' => "payRenewWithWallet$hash_id"]];
+        }
+        $renewKeyboard[] = [['text' => $buttonValues['back_to_main'], 'callback_data' => "selectCategory{$call_id}_{$sid}_{$match['buyType']}"]];
+        $renewSettings = function_exists('v2raystore_getRenewSettings') ? v2raystore_getRenewSettings() : ['mode'=>'reset','max_days'=>45];
+        $renewModeText = ($renewSettings['mode'] ?? 'reset') === 'add' ? 'افزایشی؛ حجم اضافه می‌شود و تاریخ نهایتاً تا ۴۵ روز جلو می‌رود.' : 'ریست کامل؛ حجم و تاریخ مثل تمدید قبلی ریست می‌شود.';
+        $msg = "🔄 <b>تمدید سرویس</b>\n\n" .
+               "سرویس: <code>" . htmlspecialchars($renewOrder['remark'], ENT_QUOTES, 'UTF-8') . "</code>\n" .
+               "پلن انتخابی: <b>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+               "قیمت: <b>$priceText</b>\n\n" .
+               "حالت تمدید: <b>" . htmlspecialchars($renewModeText, ENT_QUOTES, 'UTF-8') . "</b>\n\n" .
+               "یکی از روش‌های پرداخت را انتخاب کن:";
+        sendMessage($msg, json_encode(['inline_keyboard'=>$renewKeyboard], JSON_UNESCAPED_UNICODE), "HTML");
+        exit();
+    }
+
     if($price == 0 or ($from_id == $admin)){
         $keyboard[] = [['text' => '📥 دریافت رایگان', 'callback_data' => "freeTrial{$id}_{$match['buyType']}"]];
         setUser($remark, 'temp');
@@ -4991,6 +5039,34 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     sendMessage($msg, json_encode(['inline_keyboard'=>$keyboard]), "HTML");
 }
 if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
+    if(function_exists('v2raystore_approveSentOrderByHash')){
+        setUser();
+        $hashId = trim($match[1]);
+        $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        $stmt->bind_param("s", $hashId);
+        $stmt->execute();
+        $payInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$payInfo){ alert('پرداخت پیدا نشد.', true); exit(); }
+        if(($payInfo['state'] ?? '') == 'approved'){ alert('این سفارش قبلاً تأیید شده است.', true); exit(); }
+        $price = intval($payInfo['price'] ?? 0);
+        $userwallet = intval($userInfo['wallet'] ?? 0);
+        if($userwallet < $price){
+            $needamount = $price - $userwallet;
+            alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
+            exit();
+        }
+        $result = v2raystore_approveSentOrderByHash($hashId, false);
+        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if($price > 0){
+            $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
+            $stmt->bind_param("ii", $price, $from_id);
+            $stmt->execute();
+            $stmt->close();
+        }
+        editText($message_id, "✅ سرویس شما با موفقیت فعال شد", getMainKeys());
+        exit();
+    }
     setUser();
     
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
@@ -5703,6 +5779,34 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
     
 }
 if(preg_match('/payWithWallet(.*)/',$data, $match)){
+    if(function_exists('v2raystore_approveSentOrderByHash')){
+        setUser();
+        $hashId = trim($match[1]);
+        $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        $stmt->bind_param("s", $hashId);
+        $stmt->execute();
+        $payInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$payInfo){ alert('پرداخت پیدا نشد.', true); exit(); }
+        if(($payInfo['state'] ?? '') == 'approved'){ alert('این سفارش قبلاً تأیید شده است.', true); exit(); }
+        $price = intval($payInfo['price'] ?? 0);
+        $userwallet = intval($userInfo['wallet'] ?? 0);
+        if($userwallet < $price){
+            $needamount = $price - $userwallet;
+            alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
+            exit();
+        }
+        $result = v2raystore_approveSentOrderByHash($hashId, false);
+        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if($price > 0){
+            $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
+            $stmt->bind_param("ii", $price, $from_id);
+            $stmt->execute();
+            $stmt->close();
+        }
+        editText($message_id, "✅ سرویس شما با موفقیت فعال شد", getMainKeys());
+        exit();
+    }
     setUser();
 
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
@@ -6586,7 +6690,7 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 }
 if(preg_match('/^declineOrder(.+)/',$data, $match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $hashId = trim($match[1]);
-    $stmt = $connection->prepare("SELECT `user_id`, `state` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
     $decPay = null;
     if($stmt){
         $stmt->bind_param('s', $hashId);
@@ -6599,13 +6703,12 @@ if(preg_match('/^declineOrder(.+)/',$data, $match) and ($from_id == $admin || $u
         exit();
     }
     if(($decPay['state'] ?? '') == 'approved'){
-        alert('این سفارش قبلاً تأیید شده و قابل رد کردن نیست.', true);
-        if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', intval($decPay['user_id'] ?? 0), 'success'));
-        exit();
-    }
-    if(in_array(($decPay['state'] ?? ''), ['processing','auto_processing'], true)){
-        alert('این سفارش در حال پردازش است و فعلاً قابل رد کردن نیست.', true);
-        exit();
+        $canDeclineApproved = function_exists('v2raystore_payHasLinkedApprovedOrder') ? !v2raystore_payHasLinkedApprovedOrder($decPay) : false;
+        if(!$canDeclineApproved){
+            alert('این سفارش قبلاً تأیید شده و قابل رد کردن نیست.', true);
+            if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', intval($decPay['user_id'] ?? 0), 'success'));
+            exit();
+        }
     }
     if(in_array(($decPay['state'] ?? ''), ['declined','auto_cancelled'], true)){
         alert('این سفارش قبلاً رد یا لغو شده است.', true);
@@ -6622,16 +6725,9 @@ if(preg_match('/^declineOrder\|(.+)\|(\d+)\|(\d+)$/',$userInfo['step'] ?? '', $m
     $targetMsgId = intval($match[2]);
     $uid = intval($match[3]);
 
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined' WHERE `hash_id` = ? AND `state` = 'sent'");
-    $changed = 0;
-    if($stmt){
-        $stmt->bind_param('s', $hashId);
-        $stmt->execute();
-        $changed = $stmt->affected_rows;
-        $stmt->close();
-    }
-    if($changed <= 0){
-        sendMessage('❌ این سفارش دیگر در وضعیت قابل رد کردن نیست؛ احتمالاً قبلاً تأیید/رد شده است.', $removeKeyboard, 'HTML');
+    $declineResult = function_exists('v2raystore_declinePayByHash') ? v2raystore_declinePayByHash($hashId, $text) : ['ok'=>false, 'message'=>'تابع رد سفارش در دسترس نیست.'];
+    if(!$declineResult['ok']){
+        sendMessage('❌ ' . $declineResult['message'], $removeKeyboard, 'HTML');
         exit();
     }
 
@@ -10290,6 +10386,90 @@ if(preg_match('/changeAccProtocol(\d+)_(\d+)_(.*)/', $data,$match)){
     if($keys != null) $keys['keyboard'] = farid_attachUpdateConfigButton($keys['keyboard'], $oid);
     editText($message_id, $keys['msg'], $keys['keyboard'],"HTML");
 }
+if(preg_match('/^renewGoSwitchLocation(\d+)$/', $data, $match)){
+    // از پیام تمدیدِ سرور پر، کاربر را مستقیم وارد مسیر تغییر لوکیشن همان سرویس می‌کنیم.
+    $data = 'switchLocation' . intval($match[1]);
+}
+
+if(preg_match('/^renewAccount(\d+)$/',$data,$match) && $text != $buttonValues['cancel']){
+    if(($botState['renewAccountState'] ?? 'off') != "on"){
+        alert('تمدید سرویس در حال حاضر غیرفعال است.', true);
+        exit();
+    }
+    if(($botState['sellState'] ?? 'on') != "on" && $from_id != $admin && ($userInfo['isAdmin'] ?? false) != true){
+        alert($mainValues['selling_is_off'] ?? 'فروش غیرفعال است.', true);
+        exit();
+    }
+    $renewOrderId = intval($match[1]);
+    $stmt = $connection->prepare("SELECT `id`, `userid`, `status`, `remark`, `server_id` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+    $stmt->bind_param("i", $renewOrderId);
+    $stmt->execute();
+    $renewOrder = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$renewOrder || intval($renewOrder['status'] ?? 0) != 1 || (intval($renewOrder['userid']) != intval($from_id) && $from_id != $admin && ($userInfo['isAdmin'] ?? false) != true)){
+        alert($mainValues['config_not_found'] ?? 'کانفیگ پیدا نشد.', true);
+        exit();
+    }
+
+    $currentServerId = intval($renewOrder['server_id'] ?? 0);
+    $stmt = $connection->prepare("SELECT `id`, `title`, `flag`, `active`, `state`, `ucount` FROM `server_info` WHERE `id` = ? LIMIT 1");
+    $stmt->bind_param("i", $currentServerId);
+    $stmt->execute();
+    $currentServer = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $showSwitchLocationNotice = function($serverTitle = '') use ($message_id, $buttonValues, $renewOrder, $renewOrderId){
+        $safeRemark = htmlspecialchars((string)($renewOrder['remark'] ?? ''), ENT_QUOTES, 'UTF-8');
+        $safeServer = htmlspecialchars((string)$serverTitle, ENT_QUOTES, 'UTF-8');
+        $serverLine = $safeServer !== '' ? "📍 سرور فعلی: <b>{$safeServer}</b>\n" : '';
+        $msg = "⚠️ <b>تمدید از روی سرور فعلی ممکن نیست</b>\n\n" .
+               "سرویس: <code>{$safeRemark}</code>\n" .
+               $serverLine .
+               "ظرفیت سرور فعلی پر است یا پلن تمدید فعالی برای همین سرور وجود ندارد.\n\n" .
+               "برای تمدید، اول لوکیشن سرویس را به یک سرور دارای ظرفیت تغییر بده؛ بعد دوباره تمدید را بزن.\n\n" .
+               "می‌خواهی الان وارد بخش تغییر لوکیشن شوی؟";
+        $keyboard = json_encode(['inline_keyboard'=>[
+            [['text'=>'✅ بله، تغییر لوکیشن', 'callback_data'=>'renewGoSwitchLocation' . $renewOrderId]],
+            [['text'=>'❌ نه، بازگشت', 'callback_data'=>'orderDetails' . $renewOrderId]],
+        ]], JSON_UNESCAPED_UNICODE);
+        editText($message_id, $msg, $keyboard, 'HTML');
+    };
+
+    if(!$currentServer || intval($currentServer['active'] ?? 0) != 1 || intval($currentServer['state'] ?? 0) != 1 || intval($currentServer['ucount'] ?? 0) <= 0){
+        $showSwitchLocationNotice($currentServer['title'] ?? '');
+        exit();
+    }
+
+    $stmt = $connection->prepare("SELECT `id`, `title` FROM `server_categories` WHERE `parent` = 0 ORDER BY `id` ASC");
+    $stmt->execute();
+    $cats = $stmt->get_result();
+    $stmt->close();
+
+    $keyboard = [];
+    while($cat = $cats->fetch_assoc()){
+        $catId = intval($cat['id']);
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `server_plans` WHERE `server_id` = ? AND `catid` = ? AND `active` = 1 AND `price` != 0");
+        $stmt->bind_param("ii", $currentServerId, $catId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(intval($row['cnt'] ?? 0) > 0){
+            $keyboard[] = ['text' => $cat['title'], 'callback_data' => "selectCategory{$catId}_{$currentServerId}_renew{$renewOrderId}"];
+        }
+    }
+
+    if(empty($keyboard)){
+        $showSwitchLocationNotice($currentServer['title'] ?? '');
+        exit();
+    }
+
+    $keyboard = array_chunk($keyboard, 1);
+    $keyboard[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>"mySubscriptions"]];
+    $serverTitle = trim((string)(($currentServer['flag'] ?? '') . ' ' . ($currentServer['title'] ?? '')));
+    editText($message_id, "🔄 <b>تمدید سرویس</b>\n\nسرویس انتخابی: <code>" . htmlspecialchars($renewOrder['remark'], ENT_QUOTES, 'UTF-8') . "</code>\n📍 سرور فعلی: <b>" . htmlspecialchars($serverTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nبرای تمدید فقط پلن‌های همین سرور نمایش داده می‌شود. دسته موردنظر را انتخاب کن:", json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+
 if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_match('/renewAccount(\d+)/',$data,$match) && $text != $buttonValues['cancel']){
     if(preg_match('/^discountRenew/', $userInfo['step'])){
         $rowId = $match[2];
@@ -10470,7 +10650,7 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
         $stmt->execute();
         $order = $stmt->get_result()->fetch_assoc();
         $stmt->close();
-        $fid = $order['fileid'];
+        $fid = function_exists('v2raystore_getRenewPlanIdFromPay') ? v2raystore_getRenewPlanIdFromPay($payInfo, $order) : $order['fileid'];
         $remark = $order['remark'];
         $uid = $order['userid'];
         $userName = $userInfo['username'];
@@ -10513,228 +10693,92 @@ if(preg_match('/payRenewWithCartToCart(.*)/',$userInfo['step'],$match) and $text
     }
 }
 if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result()->fetch_assoc();
-    $hash_id = $payInfo['hash_id'];
-    $stmt->close();
-    
-    if($payInfo['state'] == "approved") exit();
-
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved' WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $stmt->close();
-
-    
-    $uid = $payInfo['user_id'];
-    $oid = $payInfo['plan_id'];
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $oid);
-    $stmt->execute();
-    $order = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $fid = $order['fileid'];
-    $remark = $order['remark'];
-    $uuid = $order['uuid']??"0";
-    $server_id = $order['server_id'];
-    $inbound_id = $order['inbound_id'];
-    $expire_date = $order['expire_date'];
-    $expire_date = ($expire_date > $time) ? $expire_date : $time;
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ? AND `active` = 1");
-    $stmt->bind_param("i", $fid);
-    $stmt->execute();
-    $respd = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $name = $respd['title'];
-    $days = $respd['days'];
-    $volume = $respd['volume'];
-    $price = $payInfo['price'];
-
-
-    unset($markup[count($markup)-1]);
-    $markup[] = [['text'=>"✅",'callback_data'=>"v2raystore"]];
-    $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
-
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $serverType = $server_info['type'];
-
-
-    editKeys($keys);
-
-    if($serverType == "marzban"){
-        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume' => $volume]);
-    }else{
-        if($inbound_id > 0)
-            $response = editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, "renew");
-        else
-            $response = editInboundTraffic($server_id, $uuid, $volume, $days, "renew");
+    $result = function_exists('v2raystore_approveRenewAccountPayByHash') ? v2raystore_approveRenewAccountPayByHash($match[1], false) : ['ok'=>false, 'message'=>'تابع تمدید در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit();
     }
-    
-	if(is_null($response)){
-		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
-		exit;
-	}
-	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + $days * 86400;
-	$stmt->bind_param("ii", $newExpire, $oid);
-	$stmt->execute();
-	$stmt->close();
-	$stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
-	$stmt->bind_param("iiisii", $uid, $server_id, $inbound_id, $remark, $price, $time);
-	$stmt->execute();
-	$stmt->close();
-    sendMessage(str_replace(["REMARK", "VOLUME", "DAYS"],[$remark, $volume, $days], $mainValues['renewed_config_to_user']), getMainKeys(),null,null);
-    sendMessage("✅سرویس $remark با موفقیت تمدید شد",null,null,$uid);
+    $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
+    $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
+    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE));
+    sendMessage("✅سرویس " . ($result['renew_remark'] ?? '') . " با موفقیت تمدید شد", null, null, intval($result['user_id'] ?? 0));
     exit;
 }
 if(preg_match('/decRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result()->fetch_assoc();
-    $hash_id = $payInfo['hash_id'];
-    $stmt->close();
-    
-    $uid = $payInfo['user_id'];
-    $oid = $payInfo['plan_id'];
-    
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $oid);
-    $stmt->execute();
-    $order = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $fid = $order['fileid'];
-    $remark = $order['remark'];
-    $server_id = $order['server_id'];
-    $inbound_id = $order['inbound_id'];
-    $expire_date = $order['expire_date'];
-    $expire_date = ($expire_date > $time) ? $expire_date : $time;
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ? AND `active` = 1");
-    $stmt->bind_param("i", $fid);
-    $stmt->execute();
-    $respd = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $name = $respd['title'];
-    $days = $respd['days'];
-    $volume = $respd['volume'];
-    $price = $respd['price'];
-
-
-    unset($markup[count($markup)-1]);
-    $markup[] = [['text' => '❌', 'callback_data' => "dontsendanymore"]];
-    $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
-
-    editKeys($keys);
-    sendMessage("😖|تمدید سرویس $remark لغو شد",null,null,$uid);
+    $hashId = trim($match[1]);
+    $declineResult = function_exists('v2raystore_declinePayByHash') ? v2raystore_declinePayByHash($hashId, 'رد شده توسط ادمین') : ['ok'=>false, 'message'=>'تابع رد سفارش در دسترس نیست.'];
+    if(!$declineResult['ok']){
+        alert($declineResult['message'], true);
+        exit();
+    }
+    $uid = intval($declineResult['user_id'] ?? 0);
+    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', $uid, 'danger'));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
+    if($uid > 0) sendMessage("😖|تمدید سرویس شما لغو شد", null, null, $uid);
     exit;
 }
 if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
     $stmt->bind_param("s", $match[1]);
     $stmt->execute();
     $payInfo = $stmt->get_result()->fetch_assoc();
-    $hash_id = $payInfo['hash_id'];
     $stmt->close();
-    
-    if($payInfo['state'] == "paid_with_wallet") exit();
-
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'paid_with_wallet' WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $stmt->close();
-
-    $oid = $payInfo['plan_id'];
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $oid);
-    $stmt->execute();
-    $order = $stmt->get_result();
-    $stmt->close();
-
-    if($order->num_rows == 0){
-        delMessage();
-        sendMessage($mainValues['config_not_found'], getMainKeys());
+    if(!$payInfo){
+        alert('پرداخت پیدا نشد.', true);
         exit();
     }
-    $order = $order->fetch_assoc();
-    
-    $fid = $order['fileid'];
-    $remark = $order['remark'];
-    $uuid = $order['uuid']??"0";
-    $server_id = $order['server_id'];
-    $inbound_id = $order['inbound_id'];
-    $expire_date = $order['expire_date'];
-    $expire_date = ($expire_date > $time) ? $expire_date : $time;
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ? AND `active` = 1");
-    $stmt->bind_param("i", $fid);
-    $stmt->execute();
-    $respd = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $name = $respd['title'];
-    $days = $respd['days'];
-    $volume = $respd['volume'];
-    $price = $payInfo['price'];
-
-    $userwallet = $userInfo['wallet'];
-
+    if(($payInfo['state'] ?? '') == "approved"){
+        alert('این تمدید قبلاً انجام شده است.', true);
+        exit();
+    }
+    $price = intval($payInfo['price'] ?? 0);
+    $userwallet = intval($userInfo['wallet'] ?? 0);
     if($userwallet < $price) {
         $needamount = $price - $userwallet;
         alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ",true);
         exit;
     }
 
-
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $serverType = $server_info['type'];
-
-    if($serverType == "marzban"){
-        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume' => $volume]);
-    }else{
-        if($inbound_id > 0)
-            $response = editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, "renew");
-        else
-            $response = editInboundTraffic($server_id, $uuid, $volume, $days, "renew");
+    $result = function_exists('v2raystore_approveRenewAccountPayByHash') ? v2raystore_approveRenewAccountPayByHash($match[1], false) : ['ok'=>false, 'message'=>'تابع تمدید در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit();
     }
 
-	if(is_null($response)){
-		alert('🔻مشکل فنی در اتصال به سرور. لطفاً به مدیریت اطلاع بدید',true);
-		exit;
-	}
-	$stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
-	$newExpire = $time + $days * 86400;
-	$stmt->bind_param("ii", $newExpire, $oid);
-	$stmt->execute();
-	$stmt->close();
-	$stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
-	$stmt->bind_param("iiisii", $from_id, $server_id, $inbound_id, $remark, $price, $time);
-	$stmt->execute();
-	$stmt->close();
-	
-	$stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` - ? WHERE `userid` = ?");
-	$stmt->bind_param("ii", $price, $from_id);
-	$stmt->execute();
-	$stmt->close();
-    editText($message_id, "✅سرویس $remark با موفقیت تمدید شد",getMainKeys());
+    if($price > 0){
+        $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` - ? WHERE `userid` = ?");
+        $stmt->bind_param("ii", $price, $from_id);
+        $stmt->execute();
+        $stmt->close();
+    }
+    editText($message_id, "✅سرویس " . ($result['renew_remark'] ?? '') . " با موفقیت تمدید شد", getMainKeys());
     $keys = json_encode(['inline_keyboard'=>[
         [
             ['text'=>"به به تمدید 😍",'callback_data'=>"v2raystore"]
-            ],
-        ]]);
-    $msg = str_replace(['TYPE', "USER-ID", "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],['کیف پول', $from_id, $username, $first_name, $price, $remark, $volume, $days], $mainValues['renew_account_request_message']);
-
+        ],
+    ]], JSON_UNESCAPED_UNICODE);
+    $msg = str_replace(['TYPE', "USER-ID", "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],['کیف پول', $from_id, $username, $first_name, $price, ($result['renew_remark'] ?? ''), ($result['renew_volume'] ?? ''), ($result['renew_days'] ?? '')], $mainValues['renew_account_request_message']);
     sendMessage($msg, $keys,"html", $admin);
+    exit;
+}
+
+if(preg_match('/freeRenew(.*)/', $data,$match)){
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $stmt->bind_param("s", $match[1]);
+    $stmt->execute();
+    $payInfo = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$payInfo || intval($payInfo['price'] ?? 0) != 0 || intval($payInfo['user_id'] ?? 0) != intval($from_id)){
+        alert('تمدید رایگان نامعتبر است.', true);
+        exit();
+    }
+    $result = function_exists('v2raystore_approveRenewAccountPayByHash') ? v2raystore_approveRenewAccountPayByHash($match[1], false) : ['ok'=>false, 'message'=>'تابع تمدید در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit();
+    }
+    editText($message_id, "✅سرویس " . ($result['renew_remark'] ?? '') . " با موفقیت تمدید شد", getMainKeys());
     exit;
 }
 
@@ -11597,89 +11641,46 @@ if(preg_match('/payIncreaseDayWithCartToCart(.*)/',$userInfo['step'], $match) an
 
 }
 if(preg_match('/approveIncreaseDay(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result();
-    $stmt->close();
-    
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved' WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $stmt->close();
-    
-    $payParam = $payInfo->fetch_assoc();
-    $payType = $payParam['type'];
-
-
-    preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType,$increaseInfo);
-    $orderId = $increaseInfo[1];
-    
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $orderId);
-    $stmt->execute();
-    $orderInfo = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $server_id = $orderInfo['server_id'];
-    $inbound_id = $orderInfo['inbound_id'];
-    $remark = $orderInfo['remark'];
-    $uuid = $orderInfo['uuid']??"0";
-    
-    $planid = $increaseInfo[2];
-
-    
-    $uid = $payParam['user_id'];
-    
-    $stmt = $connection->prepare("SELECT * FROM `increase_day` WHERE `id` = ?");
-    $stmt->bind_param("i", $planid);
-    $stmt->execute();
-    $res = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $price = $res['price'];
-    $volume = $res['volume'];
-
-    $acctxt = '';
-    
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $serverType = $server_info['type'];
-    
-    unset($markup[count($markup)-1]);
-
-    if($serverType == "marzban"){
-        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$volume]);
-    }else{
-        if($inbound_id > 0) $response = editClientTraffic($server_id, $inbound_id, $uuid, 0, $volume);
-        else $response = editInboundTraffic($server_id, $uuid, 0, $volume);
+    $hashId = trim($match[1]);
+    $result = function_exists('v2raystore_approveIncreaseDayPayByHash') ? v2raystore_approveIncreaseDayPayByHash($hashId, false) : ['ok'=>false, 'message'=>'تابع تأیید افزایش زمان در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit();
     }
-    
-    if($response->success){
-        $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = `expire_date` + ?, `notif` = 0 WHERE `uuid` = ?");
-        $newVolume = $volume * 86400;
-        $stmt->bind_param("is", $newVolume, $uuid);
-        $stmt->execute();
-        $stmt->close();
-        
-        $stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
-        $newVolume = $volume * 86400;
-        $stmt->bind_param("iiisii", $uid, $server_id, $inbound_id, $remark, $price, $time);
-        $stmt->execute();
-        $stmt->close();
-        $markup[] = [['text' => '✅', 'callback_data' => "dontsendanymore"]];
-        $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
-    
-        editKeys($keys);
-        sendMessage("✅$volume روز به مدت زمان سرویس شما اضافه شد",null,null,$uid);
-    }else {
-        alert("مشکل فنی در ارتباط با سرور. لطفاً سلامت سرور را بررسی کنید",true);
-        exit;
-    }
+    $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : '✅ تأیید شد';
+    $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
+    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
+    exit();
 }
+
 if(preg_match('/payIncraseDayWithWallet(.*)/', $data,$match)){
+    if(function_exists('v2raystore_approveIncreaseDayPayByHash')){
+        $hashId = trim($match[1]);
+        $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        $stmt->bind_param("s", $hashId);
+        $stmt->execute();
+        $payInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$payInfo){ alert('پرداخت پیدا نشد.', true); exit(); }
+        $price = intval($payInfo['price'] ?? 0);
+        $userwallet = intval($userInfo['wallet'] ?? 0);
+        if($userwallet < $price){
+            $needamount = $price - $userwallet;
+            alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
+            exit();
+        }
+        $result = v2raystore_approveIncreaseDayPayByHash($hashId, false);
+        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if($price > 0){
+            $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
+            $stmt->bind_param("ii", $price, $from_id);
+            $stmt->execute();
+            $stmt->close();
+        }
+        editText($message_id, "✅ افزایش زمان سرویس با موفقیت انجام شد", getMainKeys());
+        exit();
+    }
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
     $stmt->bind_param("s", $match[1]);
     $stmt->execute();
@@ -11956,77 +11957,19 @@ if(preg_match('/payIncreaseWithCartToCart(.*)/',$userInfo['step'],$match) and $t
     }
 }
 if(preg_match('/approveIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result();
-    $stmt->close();
-    
-    $payParam = $payInfo->fetch_assoc();
-    $payType = $payParam['type'];
-
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved' WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $stmt->close();
-
-
-    preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType, $increaseInfo);
-    $orderId = $increaseInfo[1];
-    
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $orderId);
-    $stmt->execute();
-    $orderInfo = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $server_id = $orderInfo['server_id'];
-    $inbound_id = $orderInfo['inbound_id'];
-    $remark = $orderInfo['remark'];
-    $uuid = $orderInfo['uuid']??"0";
-    $planid = $increaseInfo[2];
-
-    $uid = $payParam['user_id'];
-    $stmt = $connection->prepare("SELECT * FROM `increase_plan` WHERE `id` = ?");
-    $stmt->bind_param("i",$planid);
-    $stmt->execute();
-    $res = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $price = $res['price'];
-    $volume = $res['volume'];
-
-    $acctxt = '';
-    
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $serverType = $server_info['type'];
-
-    if($serverType == "marzban"){
-        $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_volume'=>$volume]);
-    }else{
-        if($inbound_id > 0) $response = editClientTraffic($server_id, $inbound_id, $uuid, $volume, 0);
-        else $response = editInboundTraffic($server_id, $uuid, $volume, 0);
+    $hashId = trim($match[1]);
+    $result = function_exists('v2raystore_approveIncreaseVolumePayByHash') ? v2raystore_approveIncreaseVolumePayByHash($hashId, false) : ['ok'=>false, 'message'=>'تابع تأیید افزایش حجم در دسترس نیست.'];
+    if(!$result['ok']){
+        alert($result['message'], true);
+        exit();
     }
-    
-    if($response->success){
-        $stmt = $connection->prepare("UPDATE `orders_list` SET `notif` = 0 WHERE `uuid` = ?");
-        $stmt->bind_param("s", $uuid);
-        $stmt->execute();
-        $stmt->close();
-        unset($markup[count($markup)-1]);
-        $markup[] = [['text' => '✅', 'callback_data' => "dontsendanymore"]];
-        $keys = json_encode(['inline_keyboard'=>array_values($markup)],488);
-    
-        editKeys($keys);
-        sendMessage("✅$volume گیگ به حجم سرویس شما اضافه شد",null,null,$uid);
-    }else {
-        alert("مشکل فنی در ارتباط با سرور. لطفاً سلامت سرور را بررسی کنید",true);
-        exit;
-    }
+    $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : '✅ تأیید شد';
+    $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
+    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
+    exit();
 }
+
 if(preg_match('/decIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
     $stmt->bind_param("s", $match[1]);
@@ -12114,6 +12057,32 @@ if(preg_match('/decIncreaseDay(.*)/',$data,$match) && ($from_id == $admin || $us
     sendMessage("افزایش زمان $volume روز اشتراک $remark لغو شد",null,null,$uid);
 }
 if(preg_match('/payIncraseWithWallet(.*)/', $data,$match)){
+    if(function_exists('v2raystore_approveIncreaseVolumePayByHash')){
+        $hashId = trim($match[1]);
+        $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        $stmt->bind_param("s", $hashId);
+        $stmt->execute();
+        $payInfo = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$payInfo){ alert('پرداخت پیدا نشد.', true); exit(); }
+        $price = intval($payInfo['price'] ?? 0);
+        $userwallet = intval($userInfo['wallet'] ?? 0);
+        if($userwallet < $price){
+            $needamount = $price - $userwallet;
+            alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
+            exit();
+        }
+        $result = v2raystore_approveIncreaseVolumePayByHash($hashId, false);
+        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if($price > 0){
+            $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
+            $stmt->bind_param("ii", $price, $from_id);
+            $stmt->execute();
+            $stmt->close();
+        }
+        editText($message_id, "✅ افزایش حجم سرویس با موفقیت انجام شد", getMainKeys());
+        exit();
+    }
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
     $stmt->bind_param("s", $match[1]);
     $stmt->execute();
@@ -13195,87 +13164,41 @@ function farid_valuesFilePath(){
 }
 
 function farid_updateMainValueInValuesFile($key, $value){
-    // نام تابع برای سازگاری نگه داشته شده؛ از این به بعد متن‌ها در دیتابیس ذخیره می‌شوند.
-    return farid_updateMainValueInDatabase($key, $value);
-}
-
-function farid_updateMainValueInDatabase($key, $value){
-    global $connection;
-
-    $allowedKeys = ['start_message'];
-    if(!in_array($key, $allowedKeys, true)){
-        return 'کلید متنی مجاز نیست.';
-    }
-    if(!isset($connection) || !($connection instanceof mysqli)){
-        return 'اتصال دیتابیس در دسترس نیست.';
-    }
-
-    $value = trim((string)$value);
-    if($value === '') return 'متن نمی‌تواند خالی باشد.';
-
-    $current = [];
-    $settingId = 0;
-    $stmt = @$connection->prepare("SELECT `id`, `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' ORDER BY `id` DESC LIMIT 1");
-    if($stmt){
-        $stmt->execute();
-        $res = $stmt->get_result();
-        if($res && $res->num_rows > 0){
-            $row = $res->fetch_assoc();
-            $settingId = intval($row['id'] ?? 0);
-            $decoded = json_decode($row['value'] ?? '', true);
-            if(is_array($decoded)) $current = $decoded;
-        }
-        $stmt->close();
-    }
-
-    $current[$key] = $value;
-    $json = json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if($json === false) return 'ساخت JSON تنظیمات متن ناموفق بود.';
-
-    if($settingId > 0){
-        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `id` = ?");
-        if(!$stmt) return 'آماده‌سازی آپدیت دیتابیس ناموفق بود: ' . $connection->error;
-        $stmt->bind_param('si', $json, $settingId);
-    }else{
-        $type = 'TEXT_SETTINGS';
-        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
-        if(!$stmt) return 'آماده‌سازی ذخیره دیتابیس ناموفق بود: ' . $connection->error;
-        $stmt->bind_param('ss', $type, $json);
-    }
-
-    if(!$stmt->execute()){
-        $err = $stmt->error ?: $connection->error;
-        $stmt->close();
-        return 'ذخیره در دیتابیس ناموفق بود: ' . $err;
-    }
-    $stmt->close();
-
-    // برای سازگاری با نسخه‌های قدیمی، اگر فایل قابل نوشتن باشد مقدار پیش‌فرض فایل هم به‌روزرسانی می‌شود؛
-    // اما منبع اصلی از این به بعد دیتابیس است.
-    farid_tryUpdateMainValueInValuesFile($key, $value);
-
-    return true;
-}
-
-function farid_tryUpdateMainValueInValuesFile($key, $value){
     $file = farid_valuesFilePath();
-    if(!file_exists($file) || !is_writable($file)) return false;
+    if(!file_exists($file)) return 'فایل settings/values.php پیدا نشد.';
+    if(!is_writable($file)) return 'فایل settings/values.php قابل نوشتن نیست. دسترسی فایل را بررسی کنید.';
 
-    $content = @file_get_contents($file);
-    if($content === false) return false;
+    $content = file_get_contents($file);
+    if($content === false) return 'خواندن فایل settings/values.php ناموفق بود.';
 
     $quotedKey = preg_quote($key, '/');
     $pattern = '/([\'\"]' . $quotedKey . '[\'\"]\s*=>\s*)(?:\"(?:\\\\.|[^\"\\\\])*\"|\'(?:\\\\.|[^\'\\\\])*\')/s';
     $replacement = '$1' . var_export((string)$value, true);
     $newContent = preg_replace($pattern, $replacement, $content, 1, $count);
 
-    if($newContent === null || $count < 1) return false;
+    if($newContent === null) return 'خطا هنگام پردازش فایل values.php رخ داد.';
+    if($count < 1) return 'کلید start_message داخل values.php پیدا نشد.';
 
     $backup = $file . '.bak_' . date('Ymd_His');
     @copy($file, $backup);
-    $ok = @file_put_contents($file, $newContent, LOCK_EX) !== false;
-    if($ok && function_exists('opcache_invalidate')) @opcache_invalidate($file, true);
-    return $ok;
+
+    if(file_put_contents($file, $newContent, LOCK_EX) === false){
+        return 'نوشتن فایل settings/values.php ناموفق بود.';
+    }
+
+    // بررسی سریع سینتکس فایل بعد از ذخیره، در صورتی که exec فعال باشد.
+    if(function_exists('exec')){
+        $cmd = 'php -l ' . escapeshellarg($file) . ' 2>&1';
+        $out = [];
+        $code = 0;
+        @exec($cmd, $out, $code);
+        if($code !== 0){
+            if(file_exists($backup)) @copy($backup, $file);
+            return 'متن ذخیره نشد چون فایل values.php بعد از تغییر خطای سینتکس داشت: ' . implode("\n", $out);
+        }
+    }
+
+    return true;
 }
 
 function getAdminKeysPlus(){
