@@ -227,8 +227,14 @@ EOF2
     fi
 }
 
-root_db_user() { grep '\$user' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
-root_db_pass() { grep '\$pass' "$CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1; }
+read_config_value() {
+    local file="$1" var_name="$2"
+    [ -f "$file" ] || return 0
+    sed -nE "s/.*\\\$${var_name}[[:space:]]*=[[:space:]]*['\"]?([^'\";]+).*/\1/p" "$file" | head -n1
+}
+
+root_db_user() { read_config_value "$CONFIG_FILE" user; }
+root_db_pass() { read_config_value "$CONFIG_FILE" pass; }
 
 
 ini_set_value() {
@@ -692,8 +698,7 @@ legacy_baseinfo_exists() {
 
 read_legacy_config_value() {
     local var_name="$1"
-    [ -f "$LEGACY_CONFIG_FILE" ] || return 0
-    grep "\$${var_name}" "$LEGACY_CONFIG_FILE" 2>/dev/null | cut -d"'" -f2 | head -n1
+    read_config_value "$LEGACY_CONFIG_FILE" "$var_name"
 }
 
 write_config_from_values() {
@@ -972,39 +977,39 @@ change_panel_password() {
 SET @new_user = CONVERT(FROM_BASE64('${user_b64}') USING utf8mb4);
 SET @new_pass = CONVERT(FROM_BASE64('${pass_b64}') USING utf8mb4);
 
-CREATE TABLE IF NOT EXISTS `admins` (
-  `id` int(10) NOT NULL AUTO_INCREMENT,
-  `username` varchar(200) NOT NULL DEFAULT '',
-  `password` varchar(200) NOT NULL DEFAULT '',
-  `backupchannel` varchar(200) CHARACTER SET utf8 NOT NULL DEFAULT '',
-  `lang` varchar(10) CHARACTER SET utf8 NOT NULL DEFAULT 'fa',
-  PRIMARY KEY (`id`)
+CREATE TABLE IF NOT EXISTS admins (
+  id int(10) NOT NULL AUTO_INCREMENT,
+  username varchar(200) NOT NULL DEFAULT '',
+  password varchar(200) NOT NULL DEFAULT '',
+  backupchannel varchar(200) CHARACTER SET utf8 NOT NULL DEFAULT '',
+  lang varchar(10) CHARACTER SET utf8 NOT NULL DEFAULT 'fa',
+  PRIMARY KEY (id)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4;
 
 SET @missing_id = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'id');
-SET @sql = IF(@missing_id, 'ALTER TABLE `admins` ADD COLUMN `id` int(10) NOT NULL DEFAULT 1 FIRST', 'SELECT 1');
+SET @sql = IF(@missing_id, 'ALTER TABLE admins ADD COLUMN id int(10) NOT NULL DEFAULT 1 FIRST', 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @missing_username = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'username');
-SET @sql = IF(@missing_username, CONCAT('ALTER TABLE `admins` ADD COLUMN `username` varchar(200) NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
+SET @sql = IF(@missing_username, CONCAT('ALTER TABLE admins ADD COLUMN username varchar(200) NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @missing_password = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'password');
-SET @sql = IF(@missing_password, CONCAT('ALTER TABLE `admins` ADD COLUMN `password` varchar(200) NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
+SET @sql = IF(@missing_password, CONCAT('ALTER TABLE admins ADD COLUMN password varchar(200) NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @missing_backupchannel = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'backupchannel');
-SET @sql = IF(@missing_backupchannel, CONCAT('ALTER TABLE `admins` ADD COLUMN `backupchannel` varchar(200) CHARACTER SET utf8 NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
+SET @sql = IF(@missing_backupchannel, CONCAT('ALTER TABLE admins ADD COLUMN backupchannel varchar(200) CHARACTER SET utf8 NOT NULL DEFAULT ', CHAR(39), CHAR(39)), 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SET @missing_lang = (SELECT COUNT(*) = 0 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'admins' AND COLUMN_NAME = 'lang');
-SET @sql = IF(@missing_lang, CONCAT('ALTER TABLE `admins` ADD COLUMN `lang` varchar(10) CHARACTER SET utf8 NOT NULL DEFAULT ', CHAR(39), 'fa', CHAR(39)), 'SELECT 1');
+SET @sql = IF(@missing_lang, CONCAT('ALTER TABLE admins ADD COLUMN lang varchar(10) CHARACTER SET utf8 NOT NULL DEFAULT ', CHAR(39), 'fa', CHAR(39)), 'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
-UPDATE `admins` SET `username` = @new_user, `password` = @new_pass WHERE `id` = 1;
-INSERT INTO `admins` (`id`, `username`, `password`, `backupchannel`, `lang`)
+UPDATE admins SET username = @new_user, password = @new_pass WHERE id = 1;
+INSERT INTO admins (id, username, password, backupchannel, lang)
 SELECT 1, @new_user, @new_pass, '', 'fa'
-WHERE NOT EXISTS (SELECT 1 FROM `admins` WHERE `id` = 1);
+WHERE NOT EXISTS (SELECT 1 FROM admins WHERE id = 1);
 SQL
 
     root_user=$(root_db_user)
