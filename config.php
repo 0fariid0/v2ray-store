@@ -6950,7 +6950,8 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
     }
 
     $renewSettings = $row->settings;
-    if($editType == "renew"){
+    $forceEnableAfterRenew = ($editType == "renew") || (is_array($editType) && !empty($editType['force_enable']));
+    if($forceEnableAfterRenew){
         $settingsArr = json_decode($renewSettings, true);
         if(is_array($settingsArr) && isset($settingsArr['clients'][0]) && is_array($settingsArr['clients'][0])){
             $settingsArr['clients'][0]['enable'] = true;
@@ -7828,7 +7829,8 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
         if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
     }
-    if($editType == "renew" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    $forceEnableAfterRenew = ($editType == "renew") || (is_array($editType) && !empty($editType['force_enable']));
+    if($forceEnableAfterRenew && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         $settings['clients'][$client_key]['enable'] = true;
         if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
             $settings['clients'][$client_key]['subId'] = RandomString(16);
@@ -9912,6 +9914,7 @@ function editMarzbanConfig($server_id,$info){
         $expireTime = time() + (86400 * $info['days']);
         $configState = "active";
     }
+    if(!empty($info['force_active'])) $configState = "active";
     
     if(isset($info['plus_volume'])) $volume += $info['plus_volume'] * 1073741824;
     elseif(isset($info['volume'])){
@@ -13812,10 +13815,10 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     }
 
     if($serverType == 'marzban'){
-        if($resetMode) $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume'=>$volume]);
-        else $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$appliedDays, 'plus_volume'=>$volume]);
+        if($resetMode) $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume'=>$volume, 'force_active'=>true]);
+        else $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$appliedDays, 'plus_volume'=>$volume, 'force_active'=>true]);
     }else{
-        $editType = $resetMode ? 'renew' : null;
+        $editType = $resetMode ? 'renew' : ['force_enable'=>true];
         $response = ($inbound_id > 0) ? editClientTraffic($server_id, $inbound_id, $uuid, $volume, $appliedDays, $editType) : editInboundTraffic($server_id, $uuid, $volume, $appliedDays, $editType);
     }
 
