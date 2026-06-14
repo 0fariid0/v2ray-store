@@ -581,6 +581,60 @@ if($data == "testAccountLimitList" && ($from_id == $admin || $userInfo['isAdmin'
     ]], JSON_UNESCAPED_UNICODE), "HTML");
     exit();
 }
+if($data == "setTestAccountRemarkPrefix" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    $currentPrefix = function_exists('v2raystore_getTestRemarkPrefix') ? v2raystore_getTestRemarkPrefix() : 'test';
+    $currentPreview = $currentPrefix === '' ? 'بدون پیشوند' : htmlspecialchars($currentPrefix, ENT_QUOTES, 'UTF-8');
+    sendMessage("🏷 <b>تنظیم ریمارک اکانت تست</b>
+
+پیشوند فعلی: <code>{$currentPreview}</code>
+
+متن جدید را ارسال کنید. این متن ابتدای نام کانفیگ تست قرار می‌گیرد.
+مثال: <code>test</code> → <code>test-Germany-12345</code>
+
+برای برگشت به پیش‌فرض: <code>/default</code>
+برای حذف پیشوند: <code>/empty</code>", $cancelKey, "HTML");
+    setUser("setTestAccountRemarkPrefix");
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'setTestAccountRemarkPrefix' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $rawPrefix = trim((string)$text);
+    if($rawPrefix === '/default'){
+        $prefix = 'test';
+    }elseif($rawPrefix === '/empty' || $rawPrefix === '/none'){
+        $prefix = '__empty__';
+    }else{
+        $prefix = function_exists('v2raystore_cleanTestRemarkPrefix') ? v2raystore_cleanTestRemarkPrefix($rawPrefix) : trim($rawPrefix);
+        if($prefix === ''){
+            sendMessage("❌ ریمارک واردشده معتبر نیست. فقط حروف، عدد، خط تیره، آندرلاین و نقطه مجاز است.
+برای پیش‌فرض <code>/default</code> را بفرست.", $cancelKey, "HTML");
+            exit();
+        }
+    }
+    if(function_exists('farid_setSettingValue')) farid_setSettingValue('TEST_ACCOUNT_REMARK_PREFIX', $prefix);
+    else{
+        $stmt = $connection->prepare("SELECT COUNT(*) AS `cnt` FROM `setting` WHERE `type` = 'TEST_ACCOUNT_REMARK_PREFIX' LIMIT 1");
+        $stmt->execute();
+        $cnt = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+        $stmt->close();
+        if($cnt > 0){
+            $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = 'TEST_ACCOUNT_REMARK_PREFIX'");
+            $stmt->bind_param("s", $prefix);
+        }else{
+            $type = 'TEST_ACCOUNT_REMARK_PREFIX';
+            $stmt = $connection->prepare("INSERT INTO `setting` (`value`, `type`) VALUES (?, ?)");
+            $stmt->bind_param("ss", $prefix, $type);
+        }
+        $stmt->execute();
+        $stmt->close();
+    }
+    setUser();
+    $savedPreviewValue = ($prefix === '__empty__') ? '' : $prefix;
+    $savedPreview = $savedPreviewValue === '' ? 'بدون پیشوند' : htmlspecialchars($savedPreviewValue, ENT_QUOTES, 'UTF-8');
+    sendMessage("✅ ریمارک اکانت تست تنظیم شد: <code>{$savedPreview}</code>", $removeKeyboard, "HTML");
+    sendMessage("🧪 مدیریت اکانت تست", v2raystore_getTestAccountManageKeys(), "HTML");
+    exit();
+}
 if(($userInfo['step'] ?? '') == 'setTestAccountLimitValue' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $limitText = trim((string)$text);
     if(!preg_match('/^\d+$/', $limitText)){
@@ -3558,44 +3612,69 @@ if($userInfo['step'] == "updateConfigsByDomain" && ($from_id == $admin || $userI
     exit();
 }
 
-// به‌روزرسانی و ارسال یک کانفیگ مشخص (Order ID یا remark)
+// به‌روزرسانی و ارسال یک کانفیگ مشخص (User ID / Order ID / Remark)
 if($data == "updateConfigsOne" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $job = farid_getUpdateConfigsJob();
     if(intval($job['state'] ?? 0) == 1){
         alert("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.");
         exit();
     }
-    sendMessage("🧩 لطفاً شناسه سفارش (OrderID) یا بخشی از Remark کانفیگ را ارسال کنید.\n(در صورت ارسال متن، حداکثر ۲۰ نتیجه نمایش داده می‌شود):", $cancelKey);
+    sendMessage("🧩 برای پیدا کردن کانفیگ جهت آپدیت، یکی از این موارد را بفرستید:\n\n👤 آیدی عددی مشتری: همه کانفیگ‌های همان کاربر نمایش داده می‌شود.\n🔑 بخشی از نام/Remark کانفیگ\n#️⃣ شناسه دقیق سفارش با # مثل: #123\n\nدر نتیجه‌ها روی کانفیگ موردنظر بزنید.", $cancelKey);
     setUser("updateConfigsOne");
     exit();
 }
 if($userInfo['step'] == "updateConfigsOne" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    // اگر عدد بود => Order ID
-    if(is_numeric($text)){
-        $oid = intval($text);
+    $q = trim((string)$text);
+
+    // اگر با # ارسال شد => Order ID دقیق، برای حفظ قابلیت قبلی
+    if(preg_match('/^#\s*(\d+)$/', $q, $m)){
+        $oid = intval($m[1]);
         $done = farid_updateAndSendOneOrder($oid, $from_id);
         if($done) sendMessage("✅ انجام شد.", json_encode(['inline_keyboard'=>[
             [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
         ]], JSON_UNESCAPED_UNICODE));
-        else sendMessage("⛔️ سفارشی با این مشخصات پیدا نشد یا خطا در به‌روزرسانی.", json_encode(['inline_keyboard'=>[
+        else sendMessage("⛔️ سفارشی با این شناسه پیدا نشد یا خطا در به‌روزرسانی.", json_encode(['inline_keyboard'=>[
             [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
         ]], JSON_UNESCAPED_UNICODE));
         setUser();
         exit();
     }
 
-    // اگر متن بود => جستجو بر اساس remark
-    $q = trim($text);
     if(strlen($q) < 2){
-        sendMessage("حداقل ۲ کاراکتر وارد کن.");
+        sendMessage("حداقل ۲ کاراکتر وارد کن. برای OrderID دقیق از # استفاده کن، مثل #123");
         exit();
     }
 
-    $stmt = $connection->prepare("SELECT `id`,`remark`,`userid` FROM `orders_list` WHERE `status` = 1 AND `remark` LIKE CONCAT('%', ?, '%') ORDER BY `id` DESC LIMIT 20");
-    $stmt->bind_param("s", $q);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $stmt->close();
+    // عدد خالی یعنی User ID مشتری؛ همه کانفیگ‌های فعال همان کاربر نمایش داده می‌شود.
+    // اگر برای آن User ID چیزی نبود، برای سازگاری با نسخه قبلی همان عدد به عنوان Order ID بررسی می‌شود.
+    if(preg_match('/^\d+$/', $q)){
+        $uidSearch = intval($q);
+        $stmt = $connection->prepare("SELECT `id`,`remark`,`userid` FROM `orders_list` WHERE `status` = 1 AND `userid` = ? ORDER BY `id` DESC LIMIT 50");
+        $stmt->bind_param("i", $uidSearch);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+
+        if($res->num_rows == 0){
+            $oid = $uidSearch;
+            $done = farid_updateAndSendOneOrder($oid, $from_id);
+            if($done) sendMessage("✅ انجام شد.", json_encode(['inline_keyboard'=>[
+                [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+            ]], JSON_UNESCAPED_UNICODE));
+            else sendMessage("⛔️ برای این آیدی مشتری کانفیگی پیدا نشد. اگر منظورت OrderID است، آن را با # بفرست؛ مثل #$oid", json_encode(['inline_keyboard'=>[
+                [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+            ]], JSON_UNESCAPED_UNICODE));
+            setUser();
+            exit();
+        }
+    }else{
+        // متن => جستجو بر اساس Remark، حتی اگر بخشی از اسم کانفیگ باشد
+        $stmt = $connection->prepare("SELECT `id`,`remark`,`userid` FROM `orders_list` WHERE `status` = 1 AND `remark` LIKE CONCAT('%', ?, '%') ORDER BY `id` DESC LIMIT 50");
+        $stmt->bind_param("s", $q);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+    }
 
     if($res->num_rows == 0){
         sendMessage("موردی پیدا نشد.", json_encode(['inline_keyboard'=>[
@@ -3608,14 +3687,17 @@ if($userInfo['step'] == "updateConfigsOne" && ($from_id == $admin || $userInfo['
     $keys = [];
     while($row = $res->fetch_assoc()){
         $oid = intval($row['id']);
-        $r   = $row['remark'];
+        $r   = trim((string)$row['remark']);
         $uid = intval($row['userid']);
-        $keys[] = [['text'=>"$r | $uid | #$oid",'callback_data'=>"updateConfigsOneSelect$oid"]];
+        if($r === '') $r = 'بدون نام';
+        $shortRemark = function_exists('mb_substr') ? mb_substr($r, 0, 32, 'UTF-8') : substr($r, 0, 32);
+        if((function_exists('mb_strlen') ? mb_strlen($r, 'UTF-8') : strlen($r)) > 32) $shortRemark .= '…';
+        $keys[] = [['text'=>"$shortRemark | $uid | #$oid",'callback_data'=>"updateConfigsOneSelect$oid"]];
     }
     $keys[] = [['text'=>$buttonValues['cancel'],'callback_data'=>"updateConfigsMenu"]];
     $keyboard = json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 
-    sendMessage("یکی رو انتخاب کن:", $keyboard);
+    sendMessage("یکی از کانفیگ‌های پیدا شده را انتخاب کن:", $keyboard);
     // step رو نگه میداریم تا بعد از انتخاب، با cancel برگرده
     exit();
 }
@@ -8112,6 +8194,11 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
             $rnd = rand(1111,99999);
             $remark = "{$srv_remark}-{$from_id}-{$rnd}";
         }
+    }
+    if(function_exists('v2raystore_applyTestRemarkPrefix')){
+        $remark = v2raystore_applyTestRemarkPrefix($remark);
+    }else{
+        $remark = 'test-' . $remark;
     }
     
     if($portType == "auto"){

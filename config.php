@@ -16,18 +16,32 @@ function v2raystore_textSettingsAllowedKeys(){
 
 function v2raystore_getTextSettings(){
     global $connection;
-    if(!isset($connection) || !($connection instanceof mysqli)) return [];
+    if(array_key_exists('v2raystore_text_settings_cache', $GLOBALS) && is_array($GLOBALS['v2raystore_text_settings_cache'])){
+        return $GLOBALS['v2raystore_text_settings_cache'];
+    }
+    if(!isset($connection) || !($connection instanceof mysqli)){
+        $GLOBALS['v2raystore_text_settings_cache'] = [];
+        return [];
+    }
     $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = 'TEXT_SETTINGS' LIMIT 1");
-    if(!$stmt) return [];
+    if(!$stmt){
+        $GLOBALS['v2raystore_text_settings_cache'] = [];
+        return [];
+    }
     if(!$stmt->execute()){
         $stmt->close();
+        $GLOBALS['v2raystore_text_settings_cache'] = [];
         return [];
     }
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    if(!$row || !isset($row['value']) || trim((string)$row['value']) === '') return [];
+    if(!$row || !isset($row['value']) || trim((string)$row['value']) === ''){
+        $GLOBALS['v2raystore_text_settings_cache'] = [];
+        return [];
+    }
     $data = json_decode((string)$row['value'], true);
-    return is_array($data) ? $data : [];
+    $GLOBALS['v2raystore_text_settings_cache'] = is_array($data) ? $data : [];
+    return $GLOBALS['v2raystore_text_settings_cache'];
 }
 
 function v2raystore_saveTextSettings($settings){
@@ -61,6 +75,7 @@ function v2raystore_saveTextSettings($settings){
     $ok = $stmt->execute();
     $err = $stmt->error;
     $stmt->close();
+    if($ok) $GLOBALS['v2raystore_text_settings_cache'] = $clean;
     return $ok ? true : ('ذخیره تنظیمات متن ناموفق بود: ' . $err);
 }
 
@@ -125,10 +140,12 @@ function v2raystore_purchaseRulesMessage(){
 
 function v2raystore_ensureOrderNoteColumn(){
     global $connection;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('ORDER_CONFIG_NOTE_V1')) return;
     $exists = @($connection->query("SHOW COLUMNS FROM `orders_list` LIKE 'config_note'"));
     if($exists && $exists->num_rows == 0){
         @($connection->query("ALTER TABLE `orders_list` ADD `config_note` text CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `remark`"));
     }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('ORDER_CONFIG_NOTE_V1');
 }
 v2raystore_ensureOrderNoteColumn();
 v2raystore_applyTextSettings();
@@ -409,19 +426,32 @@ function v2raystore_extractWsSettings($streamSettings, $fallbackHost = ''){
 
 function v2raystore_schemaPatchDone($key){
     global $connection;
+    $key = (string)$key;
+    if(!isset($GLOBALS['v2raystore_schema_patch_cache']) || !is_array($GLOBALS['v2raystore_schema_patch_cache'])){
+        $GLOBALS['v2raystore_schema_patch_cache'] = [];
+    }
+    if(array_key_exists($key, $GLOBALS['v2raystore_schema_patch_cache'])){
+        return $GLOBALS['v2raystore_schema_patch_cache'][$key];
+    }
     $type = 'SCHEMA_PATCH_' . $key;
     $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
-    if(!$stmt) return false;
+    if(!$stmt){
+        $GLOBALS['v2raystore_schema_patch_cache'][$key] = false;
+        return false;
+    }
     $stmt->bind_param('s', $type);
     $stmt->execute();
     $res = $stmt->get_result();
     $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
     $stmt->close();
-    return $row && (($row['value'] ?? '') === 'done');
+    $done = $row && (($row['value'] ?? '') === 'done');
+    $GLOBALS['v2raystore_schema_patch_cache'][$key] = $done;
+    return $done;
 }
 
 function v2raystore_markSchemaPatchDone($key){
     global $connection;
+    $key = (string)$key;
     $type = 'SCHEMA_PATCH_' . $key;
     $value = 'done';
     $stmt = @$connection->prepare("SELECT `id` FROM `setting` WHERE `type` = ? LIMIT 1");
@@ -443,8 +473,23 @@ function v2raystore_markSchemaPatchDone($key){
     }
     $ok = $stmt->execute();
     $stmt->close();
+    if($ok){
+        if(!isset($GLOBALS['v2raystore_schema_patch_cache']) || !is_array($GLOBALS['v2raystore_schema_patch_cache'])) $GLOBALS['v2raystore_schema_patch_cache'] = [];
+        $GLOBALS['v2raystore_schema_patch_cache'][$key] = true;
+    }
     return $ok;
 }
+
+function v2raystore_ensureFastSettingIndexes(){
+    global $connection;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('FAST_SETTING_INDEX_V1')) return;
+    $idx = @($connection->query("SHOW INDEX FROM `setting` WHERE `Key_name` = 'idx_setting_type'"));
+    if($idx && $idx->num_rows == 0){
+        @($connection->query("ALTER TABLE `setting` ADD INDEX `idx_setting_type` (`type`(100))"));
+    }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('FAST_SETTING_INDEX_V1');
+}
+v2raystore_ensureFastSettingIndexes();
 
 function v2raystore_ensurePlanCustomDomainColumn(){
     global $connection;
@@ -530,9 +575,9 @@ v2raystore_ensureBroadcastTargetColumn();
 
 function v2raystore_ensureBroadcastQueueColumns(){
     global $connection;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('SEND_LIST_QUEUE_V2')) return;
 
     // ستون‌های جدید برای ارسال همگانی مرحله‌ای و بدون فشار روی CPU اضافه می‌شوند.
-    // از schema patch استفاده نمی‌کنیم تا اگر یک ستون به هر دلیل قبلاً اضافه نشده بود، در اجرای بعدی هم بررسی شود.
     $columns = [
         'last_user_id' => "ALTER TABLE `send_list` ADD `last_user_id` int(11) NOT NULL DEFAULT 0 AFTER `offset`",
         'total_count' => "ALTER TABLE `send_list` ADD `total_count` int(11) NOT NULL DEFAULT 0 AFTER `target_type`",
@@ -556,6 +601,7 @@ function v2raystore_ensureBroadcastQueueColumns(){
     if($idx && $idx->num_rows == 0){
         @($connection->query("ALTER TABLE `send_list` ADD INDEX `idx_broadcast_state` (`state`, `type`)"));
     }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('SEND_LIST_QUEUE_V2');
 }
 v2raystore_ensureBroadcastQueueColumns();
 
@@ -4079,11 +4125,13 @@ function bot($method, $datas = []){
 
     $sendRequest = function($payload) use ($url){
         $ch = curl_init();
-        $timeout = isset($payload['_timeout']) ? max(3, intval($payload['_timeout'])) : 20;
+        $timeout = isset($payload['_timeout']) ? max(3, intval($payload['_timeout'])) : 8;
         unset($payload['_timeout']);
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 2);
+        curl_setopt($ch, CURLOPT_DNS_CACHE_TIMEOUT, 300);
+        if(defined('CURL_IPRESOLVE_V4')) curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
         curl_setopt($ch, CURLOPT_NOSIGNAL, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($payload));
@@ -4099,7 +4147,6 @@ function bot($method, $datas = []){
 
     [$res, $err] = $sendRequest($datas);
     if($err){
-        var_dump($err);
         return null;
     }
 
@@ -4311,6 +4358,25 @@ $stmt->execute();
 $uinfo = $stmt->get_result();
 $userInfo = $uinfo->fetch_assoc();
 $stmt->close();
+
+function v2raystore_getJoinedStateSafe($channelLock, $userId){
+    $channelLock = trim((string)$channelLock);
+    $userId = intval($userId);
+    if($channelLock === '' || strtolower($channelLock) === 'off' || $channelLock === '0' || $userId <= 0){
+        return 'member';
+    }
+    $res = bot('getChatMember', [
+        'chat_id' => $channelLock,
+        'user_id' => $userId,
+        '_timeout' => 4,
+    ]);
+    if(is_object($res) && !empty($res->ok) && isset($res->result->status)){
+        return (string)$res->result->status;
+    }
+    // اگر تلگرام یا شبکه لحظه‌ای خطا داد، کاربر را اشتباهی غیرعضو حساب نکن.
+    return 'member';
+}
+
  
 $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
 $stmt->execute();
@@ -4330,7 +4396,7 @@ $stmt->close();
 $botState = v2raystore_applyRoleSpecificStates($botState, $userInfo);
 
 $channelLock = $botState['lockChannel'];
-$joniedState= bot('getChatMember', ['chat_id' => $channelLock,'user_id' => $from_id])->result->status;
+$joniedState = v2raystore_getJoinedStateSafe($channelLock, $from_id);
 
 if ($update->message->document->file_id) {
     $filetype = 'document';
@@ -4582,11 +4648,58 @@ function v2raystore_markTestAccountUsed($userId){
     return $ok;
 }
 
+
+function v2raystore_cleanTestRemarkPrefix($prefix){
+    $prefix = trim((string)$prefix);
+    if($prefix === '') return '';
+    $prefix = preg_replace('/\s+/u', '-', $prefix);
+    // برای جلوگیری از خطای پنل‌ها، فقط حروف، عدد، خط تیره، آندرلاین و نقطه نگه داشته می‌شود.
+    $prefix = preg_replace('/[^\p{L}\p{N}_\-.]/u', '', $prefix);
+    $prefix = trim($prefix, "-_ .");
+    if(function_exists('mb_substr')) $prefix = mb_substr($prefix, 0, 32, 'UTF-8');
+    else $prefix = substr($prefix, 0, 32);
+    return $prefix;
+}
+
+function v2raystore_getTestRemarkPrefix(){
+    global $connection;
+    $prefix = null;
+    if(isset($connection)){
+        $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = 'TEST_ACCOUNT_REMARK_PREFIX' LIMIT 1");
+        if($stmt){
+            $stmt->execute();
+            $res = $stmt->get_result();
+            if($res && $res->num_rows > 0) $prefix = $res->fetch_assoc()['value'];
+            $stmt->close();
+        }
+    }
+    if($prefix === '__empty__') return '';
+    if($prefix === null || $prefix === '') $prefix = 'test';
+    return v2raystore_cleanTestRemarkPrefix($prefix) ?: 'test';
+}
+
+function v2raystore_applyTestRemarkPrefix($remark, $prefix = null){
+    $remark = trim((string)$remark);
+    $prefix = ($prefix === null) ? v2raystore_getTestRemarkPrefix() : v2raystore_cleanTestRemarkPrefix($prefix);
+    if($remark === '') $remark = 'account';
+    if($prefix === '') return $remark;
+
+    $prefixWithDash = $prefix . '-';
+    if(function_exists('mb_stripos')){
+        if(mb_stripos($remark, $prefixWithDash, 0, 'UTF-8') === 0 || mb_strtolower($remark, 'UTF-8') === mb_strtolower($prefix, 'UTF-8')) return $remark;
+    }else{
+        if(stripos($remark, $prefixWithDash) === 0 || strtolower($remark) === strtolower($prefix)) return $remark;
+    }
+    return $prefixWithDash . $remark;
+}
+
 function v2raystore_getTestAccountManageKeys(){
     global $connection, $buttonValues;
     $totalUsers = 0;
     $usedUsers = 0;
     $customUsers = 0;
+    $testRemarkPrefix = function_exists('v2raystore_getTestRemarkPrefix') ? v2raystore_getTestRemarkPrefix() : 'test';
+    $testRemarkPrefixTitle = ($testRemarkPrefix === '') ? 'بدون پیشوند' : $testRemarkPrefix;
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users`"));
     if($res) $totalUsers = intval(($res->fetch_assoc())['c'] ?? 0);
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `freetrial` IS NOT NULL OR COALESCE(`test_account_count`,0) > 0"));
@@ -4601,6 +4714,12 @@ function v2raystore_getTestAccountManageKeys(){
         ],
         [
             ['text'=>'⚙️ سقف اختصاصی: ' . $customUsers, 'callback_data'=>'v2raystore', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🏷 ریمارک تست: ' . $testRemarkPrefixTitle, 'callback_data'=>'v2raystore', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'✏️ تغییر ریمارک تست', 'callback_data'=>'setTestAccountRemarkPrefix', 'style'=>'success']
         ],
         [
             ['text'=>'♻️ ریست تست یک کاربر', 'callback_data'=>'resetOneTestAccount', 'style'=>'primary'],
@@ -4905,7 +5024,7 @@ function NOWPayments($method, $endpoint, $datas = []){
 
     $res = curl_exec($ch);
     
-    if(curl_error($ch)) var_dump(curl_error($ch));
+    if(curl_error($ch)) return null;
     else return json_decode($res);
 }
 function getServerConfigKeys($serverId,$offset = 0){
@@ -6714,15 +6833,29 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
             curl_close($curl);
             return $loginResponse;
         }
-        
+
         if($serverType == "sanaei_new"){
-            $url = "$panel_url/panel/api/clients/del/" . rawurlencode($email);
-            v2raystore_sanaeiNewJsonPost($curl, $url, $session, null);
-            $response = curl_exec($curl);
+            $deleteUrls = [];
+            $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
+            if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($email);
+            if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/clients/del/" . rawurlencode($email);
+            $lastDecoded = null;
+            foreach(array_values(array_unique($deleteUrls)) as $deleteUrl){
+                v2raystore_sanaeiNewJsonPost($curl, $deleteUrl, $session, null);
+                $rawDelete = curl_exec($curl);
+                $decodedDelete = json_decode((string)$rawDelete);
+                $lastDecoded = $decodedDelete ?: (object)['success'=>false, 'msg'=>(string)$rawDelete];
+                if(is_object($lastDecoded) && (!isset($lastDecoded->success) || !empty($lastDecoded->success))){
+                    curl_close($curl);
+                    if(!empty($email)) resetIpLog($server_id, $email);
+                    return $lastDecoded;
+                }
+            }
             curl_close($curl);
-            return json_decode($response);
+            return $lastDecoded ?: (object)['success'=>false, 'msg'=>'حذف کلاینت در Sanaei New ناموفق بود.'];
         }
-        if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
+        
+        if($serverType == "sanaei" || $serverType == "alireza"){
             if($serverType == "sanaei_new") $url = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
             elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
             elseif($serverType == "alireza") $url = "$panel_url/xui/inbound/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
@@ -6751,7 +6884,8 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
                 )
             ));
     if($serverType == "sanaei_new"){
-        v2raystore_sanaeiNewJsonPost($curl, $url, $session, v2raystore_sanaeiNewDecodePayloadJsonFields($dataArr));
+        // 3x-ui/Sanaei New برای حذف کلاینت بدنه نمی‌خواهد؛ ارسال بدنه باعث حذف‌نشدن در بعضی نسخه‌ها می‌شود.
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, null);
     }
         }else{
             curl_setopt_array($curl, array(
@@ -11207,13 +11341,50 @@ function v2raystore_reportSendMessage($title, $body, $keyboard = null, $eventKey
         'text' => $title . "\n\n" . $body,
         'reply_markup' => $keyboard,
         'parse_mode' => 'HTML',
-        '_timeout' => 20,
+        '_timeout' => 8,
     ];
+    $threadId = 0;
     if($eventKey !== null){
         $threadId = v2raystore_reportEnsureTopic($eventKey);
         if($threadId > 0) $payload['message_thread_id'] = $threadId;
     }
+
     $res = bot('sendMessage', $payload);
+    if(is_object($res) && !empty($res->ok)) return $res;
+
+    $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
+    // اگر تاپیک حذف/خراب شده باشد، گزارش نباید از بین برود؛ بدون تاپیک به خود گروه ارسال می‌شود.
+    if($threadId > 0 && preg_match('/thread|topic|message thread|not found|invalid/i', $desc)){
+        $topics = v2raystore_reportTopicStore();
+        $topicKey = v2raystore_reportTopicKeyForEvent($eventKey);
+        if(isset($topics[$topicKey])){
+            unset($topics[$topicKey]);
+            v2raystore_saveReportTopicStore($topics);
+        }
+        $fallback = $payload;
+        unset($fallback['message_thread_id']);
+        $res2 = bot('sendMessage', $fallback);
+        if(is_object($res2) && !empty($res2->ok)) return $res2;
+        $res = $res2;
+        $desc = is_object($res) && isset($res->description) ? (string)$res->description : $desc;
+    }
+
+    // اگر HTML تلگرام به‌خاطر لینک/کاراکتر خاص خطا داد، نسخه بدون ParseMode ارسال شود تا گزارش قطع نشود.
+    if(preg_match('/parse|entity|can\'t parse/i', $desc)){
+        $fallback = $payload;
+        unset($fallback['parse_mode']);
+        $fallback['text'] = str_replace(['<b>','</b>','<code>','</code>','<i>','</i>'], '', $fallback['text']);
+        $res2 = bot('sendMessage', $fallback);
+        if(is_object($res2) && !empty($res2->ok)) return $res2;
+        if(isset($fallback['message_thread_id'])){
+            unset($fallback['message_thread_id']);
+            $res3 = bot('sendMessage', $fallback);
+            if(is_object($res3) && !empty($res3->ok)) return $res3;
+            return $res3;
+        }
+        return $res2;
+    }
+
     return $res;
 }
 
@@ -11251,7 +11422,21 @@ function v2raystore_reportSendLocalDocument($filePath, $caption = '', $eventKey 
     $chat = v2raystore_getIncomeReportChatId();
     if($chat === null || trim((string)$chat) === '') return null;
     $threadId = v2raystore_reportEnsureTopic($eventKey);
-    return v2raystore_telegramSendLocalDocument($chat, $filePath, $caption, 'HTML', $threadId);
+    $res = v2raystore_telegramSendLocalDocument($chat, $filePath, $caption, 'HTML', $threadId);
+    if(is_object($res) && !empty($res->ok)) return $res;
+    $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
+    if($threadId > 0 && preg_match('/thread|topic|message thread|not found|invalid/i', $desc)){
+        $topics = v2raystore_reportTopicStore();
+        $topicKey = v2raystore_reportTopicKeyForEvent($eventKey);
+        if(isset($topics[$topicKey])){
+            unset($topics[$topicKey]);
+            v2raystore_saveReportTopicStore($topics);
+        }
+        $res2 = v2raystore_telegramSendLocalDocument($chat, $filePath, $caption, 'HTML', 0);
+        if(is_object($res2) && !empty($res2->ok)) return $res2;
+        return $res2;
+    }
+    return $res;
 }
 
 function v2raystore_backupBotDbEnabled(){
@@ -11403,31 +11588,78 @@ function v2raystore_createBotDatabaseBackupFile(){
 function v2raystore_panelLoginSessionForBackup($server){
     $panel = rtrim((string)($server['panel_url'] ?? ''), '/');
     if($panel === '') return ['ok'=>false, 'message'=>'آدرس پنل خالی است.'];
-    $loginUrl = $panel . '/login';
-    $post = ['username'=>$server['username'] ?? '', 'password'=>$server['password'] ?? ''];
-    $header = [];
-    $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $loginUrl,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => http_build_query($post),
-        CURLOPT_HEADER => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => false,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT => 30,
-        CURLOPT_HTTPHEADER => function_exists('v2raystore_panelLoginHeaders') ? v2raystore_panelLoginHeaders($ch, $loginUrl) : [],
-    ]);
-    $response = curl_exec($ch);
-    $err = curl_error($ch);
-    curl_close($ch);
-    if($err) return ['ok'=>false, 'message'=>$err];
-    $headerText = substr((string)$response, 0, strpos((string)$response, "\r\n\r\n") ?: 0);
-    $session = function_exists('v2raystore_sanaeiCollectCookiesFromHeader') ? v2raystore_sanaeiCollectCookiesFromHeader($headerText) : '';
-    $body = substr((string)$response, (strpos((string)$response, "\r\n\r\n") ?: -4) + 4);
-    $decoded = json_decode($body, true);
-    if(!$session && is_array($decoded) && empty($decoded['success'])) return ['ok'=>false, 'message'=>($decoded['msg'] ?? 'ورود به پنل ناموفق بود.')];
-    return ['ok'=>true, 'panel'=>$panel, 'session'=>$session];
+
+    $username = (string)($server['username'] ?? '');
+    $password = (string)($server['password'] ?? '');
+    $baseCandidates = [$panel];
+    $parts = @parse_url($panel);
+    if(is_array($parts) && !empty($parts['scheme']) && !empty($parts['host'])){
+        $origin = $parts['scheme'] . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+        if($origin !== $panel) $baseCandidates[] = rtrim($origin, '/');
+    }
+    $baseCandidates = array_values(array_unique(array_filter($baseCandidates)));
+
+    $lastError = '';
+    $foundBases = [];
+    foreach($baseCandidates as $base){
+        $loginUrl = rtrim($base, '/') . '/login';
+        $formHeaders = function_exists('v2raystore_panelLoginHeaders') ? v2raystore_panelLoginHeaders(null, $loginUrl) : [];
+        $jsonHeaders = [];
+        foreach($formHeaders as $h){
+            if(stripos($h, 'Content-Type:') !== 0) $jsonHeaders[] = $h;
+        }
+        $jsonHeaders[] = 'Content-Type: application/json';
+        $attempts = [
+            ['body'=>http_build_query(['username'=>$username, 'password'=>$password]), 'headers'=>$formHeaders],
+            ['body'=>json_encode(['username'=>$username, 'password'=>$password], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'headers'=>$jsonHeaders],
+        ];
+
+        foreach($attempts as $attempt){
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $loginUrl,
+                CURLOPT_POST => true,
+                CURLOPT_POSTFIELDS => $attempt['body'],
+                CURLOPT_HEADER => true,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_MAXREDIRS => 5,
+                CURLOPT_CONNECTTIMEOUT => 8,
+                CURLOPT_TIMEOUT => 20,
+                CURLOPT_SSL_VERIFYHOST => false,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_HTTPHEADER => $attempt['headers'],
+            ]);
+            $response = curl_exec($ch);
+            $err = curl_error($ch);
+            $http = intval(curl_getinfo($ch, CURLINFO_HTTP_CODE));
+            $headerSize = intval(curl_getinfo($ch, CURLINFO_HEADER_SIZE));
+            $effective = (string)curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+            curl_close($ch);
+            if($err){
+                $lastError = $err;
+                continue;
+            }
+            $headerText = substr((string)$response, 0, $headerSize);
+            $body = substr((string)$response, $headerSize);
+            $session = function_exists('v2raystore_sanaeiCollectCookiesFromHeader') ? v2raystore_sanaeiCollectCookiesFromHeader($headerText) : '';
+            $decoded = json_decode($body, true);
+
+            if($effective !== ''){
+                $effBase = preg_replace('~/login/?$~i', '', rtrim($effective, '/'));
+                if($effBase && $effBase !== $effective) $foundBases[] = $effBase;
+            }
+
+            $success = is_array($decoded) && (!empty($decoded['success']) || (!isset($decoded['success']) && $http < 400 && $session !== ''));
+            if($session !== '' && $success){
+                $bases = array_values(array_unique(array_filter(array_merge([$base], $foundBases, $baseCandidates))));
+                return ['ok'=>true, 'panel'=>$base, 'panel_bases'=>$bases, 'session'=>$session];
+            }
+            if(is_array($decoded) && isset($decoded['msg'])) $lastError = (string)$decoded['msg'];
+            elseif($http >= 400) $lastError = 'HTTP ' . $http;
+        }
+    }
+    return ['ok'=>false, 'message'=>$lastError !== '' ? $lastError : 'ورود به پنل ناموفق بود.'];
 }
 
 function v2raystore_panelBackupFileNameFromHeaders($headers, $fallback = 'x-ui.db'){
@@ -11470,10 +11702,20 @@ function v2raystore_downloadPanelDatabaseBackup($server){
 
     $panel = rtrim((string)$login['panel'], '/');
     $session = (string)($login['session'] ?? '');
+    $panelBases = $login['panel_bases'] ?? [$panel];
+    if(!is_array($panelBases)) $panelBases = [$panel];
+    $panelBases[] = $panel;
+    $panelBases = array_values(array_unique(array_filter(array_map(function($v){ return rtrim((string)$v, '/'); }, $panelBases))));
 
-    // 3x-ui/Sanaei uses the panel API path below for downloading x-ui.db.
-    // Keep legacy paths as fallback for older x-ui forks.
-    $endpoints = [
+    // 3x-ui/Sanaei New endpoint رسمی برای دانلود x-ui.db همین مسیر است؛
+    // اگر پنل webBasePath داشته باشد، base URL کشف‌شده از login هم امتحان می‌شود.
+    // مسیرهای قدیمی برای forkهای قدیمی X-UI نگه داشته شده‌اند.
+    $endpoints = ($type === 'sanaei_new') ? [
+        '/panel/api/server/getDb',
+        '/panel/api/server/getDb/',
+        '/server/getDb',
+        '/xui/server/getDb',
+    ] : [
         '/panel/api/server/getDb',
         '/server/getDb',
         '/xui/server/getDb',
@@ -11482,8 +11724,9 @@ function v2raystore_downloadPanelDatabaseBackup($server){
     $dir = v2raystore_makeTempDir('v2raystore_panel_db_');
     $lastError = '';
 
+    foreach($panelBases as $baseUrl){
     foreach($endpoints as $endpoint){
-        $url = $panel . $endpoint;
+        $url = $baseUrl . $endpoint;
         $headers = [];
         if($session !== '') $headers[] = 'Cookie: ' . $session;
         if($type === 'sanaei_new' && function_exists('v2raystore_sanaeiNewCsrfToken')){
@@ -11539,6 +11782,7 @@ function v2raystore_downloadPanelDatabaseBackup($server){
             return ['ok'=>true, 'file'=>$file, 'endpoint'=>$endpoint, 'filename'=>$fileName];
         }
         $lastError = $endpoint . ': ذخیره فایل ناموفق بود.';
+    }
     }
 
     return ['ok'=>false, 'message'=>'هیچکدام از مسیرهای دانلود دیتابیس پنل فایل معتبر برنگرداند. آخرین خطا: ' . ($lastError !== '' ? $lastError : 'نامشخص')];
@@ -11866,7 +12110,7 @@ function v2raystore_sendDailyChannelStats($manual = false){
         'chat_id' => $chat,
         'text' => $text,
         'parse_mode' => 'HTML',
-        '_timeout' => 20,
+        '_timeout' => 8,
     ];
     if($threadId > 0) $payload['message_thread_id'] = $threadId;
     bot('sendMessage', $payload);
@@ -14540,6 +14784,114 @@ function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
     return ['processed'=>$processed, 'messages'=>$messages];
 }
 
+
+function v2raystore_panelDeleteResponseOk($response){
+    if($response === null || $response === false) return false;
+    if(is_object($response)){
+        if(isset($response->success) && empty($response->success)) return false;
+        if(isset($response->detail) || isset($response->error)) return false;
+        return true;
+    }
+    if(is_array($response)){
+        if(isset($response['success']) && empty($response['success'])) return false;
+        if(isset($response['detail']) || isset($response['error'])) return false;
+        return true;
+    }
+    return trim((string)$response) !== '';
+}
+
+function v2raystore_panelDeleteErrorText($response){
+    if(is_object($response)){
+        $msg = $response->msg ?? ($response->detail ?? ($response->error ?? 'خطای نامشخص پنل'));
+        if(is_array($msg) || is_object($msg)) $msg = json_encode($msg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return (string)$msg;
+    }
+    if(is_array($response)){
+        $msg = $response['msg'] ?? ($response['detail'] ?? ($response['error'] ?? 'خطای نامشخص پنل'));
+        if(is_array($msg) || is_object($msg)) $msg = json_encode($msg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        return (string)$msg;
+    }
+    if($response === null || $response === false) return 'اتصال به پنل یا حذف سرویس ناموفق بود.';
+    return (string)$response;
+}
+
+function v2raystore_orderServiceStillExistsOnPanel($order, $serverType = ''){
+    if(!is_array($order)) return false;
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = (string)($order['uuid'] ?? '');
+    $remark = (string)($order['remark'] ?? '');
+    if($serverId <= 0) return false;
+
+    if($serverType === 'marzban'){
+        if($remark === '') return false;
+        $info = getMarzbanUserInfo($serverId, $remark);
+        if(!$info) return false;
+        if(is_object($info) && (isset($info->detail) || (isset($info->success) && empty($info->success)))) return false;
+        if(is_array($info) && (isset($info['detail']) || (isset($info['success']) && empty($info['success'])))) return false;
+        return true;
+    }
+
+    if($uuid === '' || $uuid === '0') return false;
+    $response = getJson($serverId);
+    if(!$response || !isset($response->obj) || !is_array($response->obj)) return null;
+    foreach($response->obj as $row){
+        if($inboundId > 0 && intval($row->id ?? 0) !== $inboundId) continue;
+        $settings = json_decode($row->settings ?? '');
+        $clients = (is_object($settings) && isset($settings->clients) && is_array($settings->clients)) ? $settings->clients : [];
+        foreach($clients as $client){
+            $cid = (string)($client->id ?? '');
+            $cpass = (string)($client->password ?? '');
+            $cemail = (string)($client->email ?? '');
+            if($cid === $uuid || $cpass === $uuid || ($remark !== '' && $cemail === $remark)) return true;
+        }
+        if($inboundId <= 0){
+            $rowRemark = (string)($row->remark ?? '');
+            if($remark !== '' && $rowRemark === $remark) return true;
+        }
+    }
+    return false;
+}
+
+function v2raystore_deleteOrderServiceFromPanel($order){
+    global $connection;
+    if(!is_array($order)) return ['ok'=>false, 'message'=>'اطلاعات سفارش برای حذف از پنل پیدا نشد.'];
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = (string)($order['uuid'] ?? '');
+    $remark = (string)($order['remark'] ?? '');
+    if($serverId <= 0) return ['ok'=>false, 'message'=>'سرور سفارش نامعتبر است.'];
+
+    $serverType = '';
+    $stmt = $connection->prepare("SELECT `type` FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('i', $serverId);
+        $stmt->execute();
+        $server = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $serverType = (string)($server['type'] ?? '');
+    }
+
+    if($serverType === 'marzban'){
+        if($remark === '') return ['ok'=>false, 'message'=>'شناسه مرزبان سفارش برای حذف از پنل خالی است.'];
+        $response = deleteMarzban($serverId, $remark);
+    }else{
+        if($uuid === '' || $uuid === '0') return ['ok'=>false, 'message'=>'UUID سرویس برای حذف از پنل خالی است.'];
+        $response = ($inboundId > 0) ? deleteClient($serverId, $inboundId, $uuid, 1) : deleteInbound($serverId, $uuid, 1);
+    }
+
+    if(!v2raystore_panelDeleteResponseOk($response)){
+        $stillExists = v2raystore_orderServiceStillExistsOnPanel($order, $serverType);
+        if($stillExists === false) return ['ok'=>true, 'message'=>'سرویس از قبل روی پنل وجود نداشت یا حذف شده بود.'];
+        return ['ok'=>false, 'message'=>'حذف سرویس از پنل ناموفق بود: ' . v2raystore_panelDeleteErrorText($response)];
+    }
+
+    $stillExists = v2raystore_orderServiceStillExistsOnPanel($order, $serverType);
+    if($stillExists === true) return ['ok'=>true, 'message'=>'درخواست حذف به پنل ارسال شد؛ سفارش لغو می‌شود. اگر پنل لیست را کش کرده باشد، ممکن است چند لحظه دیرتر حذف را نشان دهد.'];
+    if($stillExists === null) return ['ok'=>true, 'message'=>'درخواست حذف به پنل ارسال شد؛ بررسی نهایی پنل ممکن نبود.'];
+    return ['ok'=>true, 'message'=>'سرویس از پنل حذف شد.'];
+}
+
 function v2raystore_deleteOrderCompletely($orderId, $reason = ''){
     global $connection;
     $orderId = intval($orderId);
@@ -14551,26 +14903,14 @@ function v2raystore_deleteOrderCompletely($orderId, $reason = ''){
     $order = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if(!$order) return ['ok'=>false, 'message'=>'سفارش پیدا نشد.'];
+
+    // اول سرویس از پنل حذف می‌شود. اگر حذف پنل ناموفق باشد، سفارش از دیتابیس حذف نمی‌شود تا کانفیگ یتیم باقی نماند.
+    $panelDelete = v2raystore_deleteOrderServiceFromPanel($order);
+    if(empty($panelDelete['ok'])) return $panelDelete;
+
     $server_id = intval($order['server_id']);
     $inbound_id = intval($order['inbound_id']);
-    $uuid = $order['uuid'] ?? '0';
-    $remark = $order['remark'] ?? '';
     $fileid = intval($order['fileid']);
-
-    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
-    $serverConfig = null;
-    if($stmt){
-        $stmt->bind_param('i', $server_id);
-        $stmt->execute();
-        $serverConfig = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-    }
-    $serverType = $serverConfig['type'] ?? '';
-    if($serverType == 'marzban') @deleteMarzban($server_id, $remark);
-    else{
-        if($inbound_id > 0) @deleteClient($server_id, $inbound_id, $uuid, 1);
-        else @deleteInbound($server_id, $uuid, 1);
-    }
 
     if($inbound_id > 0){
         $stmt = $connection->prepare("UPDATE `server_plans` SET `acount` = `acount` + 1 WHERE `id` = ?");
@@ -14583,8 +14923,12 @@ function v2raystore_deleteOrderCompletely($orderId, $reason = ''){
     $stmt = $connection->prepare("UPDATE `orders_list` SET `cancel_reason` = ? WHERE `id` = ?");
     if($stmt){ $stmt->bind_param('si', $reason, $orderId); $stmt->execute(); $stmt->close(); }
     $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `id` = ?");
-    if($stmt){ $stmt->bind_param('i', $orderId); $stmt->execute(); $stmt->close(); }
-    return ['ok'=>true, 'message'=>'حذف شد.', 'order'=>$order];
+    if(!$stmt) return ['ok'=>false, 'message'=>'حذف سفارش از دیتابیس ناموفق بود؛ اما درخواست حذف پنل انجام شده است.'];
+    $stmt->bind_param('i', $orderId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    if(!$ok) return ['ok'=>false, 'message'=>'حذف سفارش از دیتابیس ناموفق بود؛ اما درخواست حذف پنل انجام شده است.'];
+    return ['ok'=>true, 'message'=>'سفارش و سرویس پنل حذف شدند.', 'order'=>$order, 'panel_message'=>$panelDelete['message'] ?? ''];
 }
 
 function v2raystore_cancelAutoApprovedPay($hashId, $reason){
@@ -14618,7 +14962,10 @@ function v2raystore_cancelAutoApprovedPay($hashId, $reason){
     $deleted = 0;
     foreach($orders as $oid){
         $r = v2raystore_deleteOrderCompletely($oid, $reason);
-        if($r['ok']) $deleted++;
+        if(empty($r['ok'])){
+            return ['ok'=>false, 'message'=>'لغو کامل انجام نشد: ' . ($r['message'] ?? 'خطای نامشخص در حذف سفارش از پنل')];
+        }
+        $deleted++;
     }
     $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ? WHERE `hash_id` = ?");
     if($stmt){ $stmt->bind_param('ss', $reason, $hashId); $stmt->execute(); $stmt->close(); }
