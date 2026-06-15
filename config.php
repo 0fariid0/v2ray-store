@@ -12902,6 +12902,89 @@ function v2raystore_getAutoApproveBlockedUsersKeys(){
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
+
+function v2raystore_autoApproveFunctionAllowed($fn){
+    if(!function_exists($fn)) return false;
+    $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+    return !in_array($fn, $disabled, true);
+}
+
+
+function v2raystore_getAutoApproveExactStartAt(){
+    global $connection;
+    $key = 'AUTO_APPROVE_EXACT_START_AT';
+    if(!isset($connection) || !$connection) return time();
+    $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('s', $key);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $value = intval($row['value'] ?? 0);
+        if($value > 0) return $value;
+    }
+    $now = time();
+    $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = `value`");
+    if($stmt){
+        $nowText = (string)$now;
+        $stmt->bind_param('ss', $key, $nowText);
+        $stmt->execute();
+        $stmt->close();
+    }
+    return $now;
+}
+
+function v2raystore_scheduleAutoApproveWakeup($hashId = ''){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if(!function_exists('v2raystore_getAutoApproveState')) return false;
+    $state = v2raystore_getAutoApproveState();
+    if(empty($state['enabled'])) return false;
+
+    $minutes = max(1, intval($state['minutes'] ?? 1));
+    $sentAt = time();
+    if($hashId !== '' && isset($connection) && $connection){
+        $stmt = @$connection->prepare("SELECT `user_id`, `type`, `state`, COALESCE(NULLIF(`sent_date`,0), `request_date`, ?) AS `sent_at` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        if($stmt){
+            $now = time();
+            $stmt->bind_param('is', $now, $hashId);
+            $stmt->execute();
+            $pay = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if(!$pay || (string)($pay['state'] ?? '') !== 'sent') return false;
+            if(function_exists('v2raystore_isAutoApproveTypeEnabled') && !v2raystore_isAutoApproveTypeEnabled((string)($pay['type'] ?? ''))) return false;
+            if(function_exists('v2raystore_getAutoApproveBlockedUsers')){
+                $blocked = array_map('intval', v2raystore_getAutoApproveBlockedUsers());
+                if(in_array(intval($pay['user_id'] ?? 0), $blocked, true)) return false;
+            }
+            $sentAt = intval($pay['sent_at'] ?? $sentAt);
+            if($sentAt <= 0) $sentAt = time();
+            if(function_exists('v2raystore_getAutoApproveExactStartAt') && $sentAt < v2raystore_getAutoApproveExactStartAt()) return false;
+        }
+    }
+
+    $delay = max(0, ($sentAt + ($minutes * 60)) - time()) + 2;
+    $delay = min($delay, 86400);
+    $script = __DIR__ . '/settings/autoApproveOrders.php';
+    if(!is_file($script)) return false;
+    $php = (defined('PHP_BINARY') && PHP_BINARY) ? PHP_BINARY : 'php';
+    $cmd = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . intval($delay) . ' ' . escapeshellarg($hashId) . ' > /dev/null 2>&1 &';
+
+    if(v2raystore_autoApproveFunctionAllowed('exec')){
+        @exec($cmd);
+        return true;
+    }
+    if(v2raystore_autoApproveFunctionAllowed('shell_exec')){
+        @shell_exec($cmd);
+        return true;
+    }
+    if(v2raystore_autoApproveFunctionAllowed('popen')){
+        $handle = @popen($cmd, 'r');
+        if($handle){ @pclose($handle); return true; }
+    }
+    return false;
+}
+
 function v2raystore_markPayReceiptSent($hashId, $receiptFileId = null){
     global $connection;
     $now = time();
@@ -12917,6 +13000,9 @@ function v2raystore_markPayReceiptSent($hashId, $receiptFileId = null){
     }
     $ok = $stmt->execute();
     $stmt->close();
+    if($ok && function_exists('v2raystore_scheduleAutoApproveWakeup')){
+        v2raystore_scheduleAutoApproveWakeup($hashId);
+    }
     return $ok;
 }
 
@@ -14788,8 +14874,9 @@ function v2raystore_recoverStuckAutoProcessingOrders($olderThanSeconds = 300){
 
 function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
     global $connection, $botState;
-    if(function_exists('v2raystore_recoverStuckAutoProcessingOrders')) v2raystore_recoverStuckAutoProcessingOrders(300);
     $state = v2raystore_getAutoApproveState();
+    $minutesForRecover = max(1, intval($state['minutes'] ?? 1));
+    if(function_exists('v2raystore_recoverStuckAutoProcessingOrders')) v2raystore_recoverStuckAutoProcessingOrders(max(90, min(300, ($minutesForRecover * 60) + 30)));
     if(!$force && !$state['enabled']) return ['processed'=>0, 'messages'=>[]];
     $minutes = intval($state['minutes']);
     if($minutes < 1) $minutes = 1;
@@ -14801,9 +14888,14 @@ function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
         $blockedUsers = array_map('intval', $blockedUsers);
         $blockedSql = " AND `user_id` NOT IN (" . implode(',', $blockedUsers) . ")";
     }
+    $newOnlySql = '';
+    if(!$force && function_exists('v2raystore_getAutoApproveExactStartAt')){
+        $autoApproveStartAt = intval(v2raystore_getAutoApproveExactStartAt());
+        if($autoApproveStartAt > 0) $newOnlySql = " AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) >= " . $autoApproveStartAt;
+    }
     $typeSql = function_exists('v2raystore_getAutoApproveEnabledSqlCondition') ? v2raystore_getAutoApproveEnabledSqlCondition() : "(`type` IN ('BUY_SUB','RENEW_SCONFIG') OR `type` LIKE 'INCREASE_VOLUME_%')";
     if(trim((string)$typeSql) === '') return ['processed'=>0, 'messages'=>['هیچ موردی برای تأیید خودکار روشن نیست.']];
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND {$typeSql}{$blockedSql} AND COALESCE(`sent_date`,0) > 0 AND `sent_date` <= ? ORDER BY `sent_date` ASC LIMIT $limit");
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND {$typeSql}{$blockedSql}{$newOnlySql} AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) > 0 AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) <= ? ORDER BY COALESCE(NULLIF(`sent_date`,0), `request_date`) ASC LIMIT $limit");
     if(!$stmt) return ['processed'=>0, 'messages'=>['خطا در دریافت سفارش‌های در انتظار.']];
     $stmt->bind_param('i', $cutoff);
     $stmt->execute();
