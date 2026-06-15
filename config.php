@@ -4640,7 +4640,53 @@ function v2raystore_markTestAccountUsed($userId){
     global $connection;
     $userId = intval($userId);
     if($userId <= 0) return false;
+
+    // اگر قبل از ساخت تست، رزرو انجام شده باشد، شمارنده همان موقع زیاد شده؛ اینجا فقط وضعیت را نهایی می‌کنیم.
+    $stmt = $connection->prepare("UPDATE `users` SET `freetrial` = 'used' WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+    if($stmt){
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $changed = intval($stmt->affected_rows);
+        $stmt->close();
+        if($changed > 0) return true;
+    }
+
     $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $userId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_reserveTestAccountCreation($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+
+    $staleBefore = time() - 600;
+    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
+    if($stmt){
+        $stmt->bind_param('ii', $userId, $staleBefore);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    $lockValue = 'processing:' . time();
+    $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = COALESCE(`test_account_count`,0) + 1, `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` NOT LIKE 'processing:%') AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $lockValue, $userId);
+    $stmt->execute();
+    $changed = intval($stmt->affected_rows);
+    $stmt->close();
+    return $changed > 0;
+}
+
+function v2raystore_releaseTestAccountCreation($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0) - 1, 0), `freetrial` = IF(GREATEST(COALESCE(`test_account_count`,0) - 1, 0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
     if(!$stmt) return false;
     $stmt->bind_param('i', $userId);
     $ok = $stmt->execute();
@@ -5905,8 +5951,13 @@ function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subL
         $backText = $buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی';
         $keyboard = json_encode(['inline_keyboard'=>[[['text'=>$backText,'callback_data'=>'mainMenu']]]]);
     }
-    sendMessage($msg, $keyboard, 'HTML', $chatId);
-    return true;
+    $sendRes = sendMessage($msg, $keyboard, 'HTML', $chatId);
+    if(function_exists('v2raystore_telegramResponseOk') && v2raystore_telegramResponseOk($sendRes)) return true;
+
+    // اگر HTML یا شبکه تلگرام خطا داد، یک بار متن ساده ارسال می‌شود تا کانفیگ به کاربر برسد.
+    $plain = function_exists('v2raystore_plainTextFromHtml') ? v2raystore_plainTextFromHtml($msg) : strip_tags($msg);
+    $sendRes = sendMessage($plain, $keyboard, null, $chatId);
+    return function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
 }
 }
 
@@ -12289,7 +12340,19 @@ function v2raystore_notifyTestAccountTaken($orderId, $userId, $planTitle = '', $
         $lines[] = "⏰ مدت: <b>" . v2raystore_h($days) . " روز</b>";
     }
     $body = implode("\n", $lines) . v2raystore_reportTimeLine();
-    v2raystore_reportEvent('🧪 گزارش اکانت تست', $body, v2raystore_reportPrivateKeyboard($userId), 'test_account');
+    $keyboard = v2raystore_reportPrivateKeyboard($userId);
+    $res = v2raystore_reportEvent('🧪 گزارش اکانت تست', $body, $keyboard, 'test_account');
+    if(!(is_object($res) && !empty($res->ok))){
+        // گزارش اکانت تست نباید به خاطر تاپیک خراب/ParseMode/کیبورد از بین برود.
+        if(function_exists('v2raystore_reportSendMessage')){
+            $res = v2raystore_reportSendMessage('🧪 گزارش اکانت تست', $body, $keyboard, 'test_account');
+            if(!(is_object($res) && !empty($res->ok)) && function_exists('v2raystore_stripPrivateUserButtons')){
+                $removed = false;
+                $safeKeyboard = v2raystore_stripPrivateUserButtons($keyboard, $removed);
+                v2raystore_reportSendMessage('🧪 گزارش اکانت تست', $body, $safeKeyboard, 'test_account');
+            }
+        }
+    }
 }
 
 
@@ -13556,6 +13619,25 @@ function v2raystore_resendMissingAdminOrderMessages($limit = 3){
     return ['ok'=>true, 'sent'=>$sent];
 }
 
+function v2raystore_telegramResponseOk($res){
+    if(is_object($res)){
+        if(isset($res->ok)) return !empty($res->ok);
+        return true;
+    }
+    if(is_array($res)){
+        if(isset($res['ok'])) return !empty($res['ok']);
+        return true;
+    }
+    return false;
+}
+
+function v2raystore_plainTextFromHtml($text){
+    $text = (string)$text;
+    $text = str_ireplace(['<br>', '<br/>', '<br />'], "\n", $text);
+    $text = strip_tags($text);
+    return html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+}
+
 function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType){
     global $botUrl, $buttonValues, $botState;
     if(!is_array($links)) $links = [$links];
@@ -13570,6 +13652,7 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
     if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH', 540);
     if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT', 540);
 
+    $sentAny = false;
     foreach($links as $link){
         $link = (string)$link;
         if(trim($link) === '') continue;
@@ -13577,6 +13660,7 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
             (($botState['configLinkState'] ?? 'on') != 'off' && $serverType != 'marzban' ? "\n💝 config : <code>$link</code>" : '');
         if(($botState['subLinkState'] ?? 'off') == 'on' && $subLink != '') $acc_text .= "\n\n🌐 subscription : <code>$subLink</code>";
 
+        $sendOk = false;
         if(class_exists('QRcode')){
             $file = RandomString() . '.png';
             QRcode::png($link, $file, 'L', 11, 0);
@@ -13592,13 +13676,24 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
                     imagedestroy($qrImage);
                 }
             }
-            sendPhoto($botUrl . $file, $acc_text, $keyboard, 'HTML', $uid);
+            $res = sendPhoto($botUrl . $file, $acc_text, $keyboard, 'HTML', $uid);
+            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
             @unlink($file);
-        }else{
-            sendMessage($acc_text, $keyboard, 'HTML', $uid);
         }
+
+        // اگر ارسال عکس/QR به هر دلیل خطا داد، لینک در متن ساده ارسال می‌شود تا کاربر بدون کانفیگ نماند.
+        if(!$sendOk){
+            $res = sendMessage($acc_text, $keyboard, 'HTML', $uid);
+            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+        }
+        if(!$sendOk){
+            $plain = function_exists('v2raystore_plainTextFromHtml') ? v2raystore_plainTextFromHtml($acc_text) : strip_tags($acc_text);
+            $res = sendMessage($plain, $keyboard, null, $uid);
+            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+        }
+        if($sendOk) $sentAny = true;
     }
-    return true;
+    return $sentAny;
 }
 
 function v2raystore_lockPayForApproval($hashId, $auto = false){
@@ -14249,6 +14344,8 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
     $expire_date = $now + (86400 * $days);
     $agentBought = intval($payInfo['agent_bought'] ?? 0);
+    $deliveryFailed = false;
+    $deliveryFailedRemarks = [];
 
     for($i=1; $i <= $accountCount; $i++){
         $uniqid = generateRandomString(42, $protocol);
@@ -14307,7 +14404,15 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
-        v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType);
+        $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType);
+        if(!$sendOk){
+            @usleep(300000);
+            $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType);
+        }
+        if(!$sendOk){
+            $deliveryFailed = true;
+            $deliveryFailedRemarks[] = $remark;
+        }
 
         $status = 1;
         $notif = 0;
@@ -14357,8 +14462,19 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         }
     }
 
+    if($deliveryFailed){
+        $failedNames = implode(', ', array_map('strval', $deliveryFailedRemarks));
+        $deliveryMsg = 'سرویس ساخته و ثبت شد اما ارسال پیام کانفیگ به کاربر از سمت تلگرام/شبکه ناموفق بود. کاربر می‌تواند از «کانفیگ‌های من» دریافت کند. ریمارک‌ها: ' . $failedNames;
+        if(function_exists('v2raystore_setPayApprovalError')) v2raystore_setPayApprovalError($hashId, $deliveryMsg);
+        if(function_exists('v2raystore_reportEvent')){
+            v2raystore_reportEvent('⚠️ خطای ارسال کانفیگ به کاربر', "🆔 کاربر: <code>{$uid}</code>
+🧾 پرداخت: <code>" . v2raystore_h($hashId) . "</code>
+📝 " . v2raystore_h($deliveryMsg), v2raystore_reportPrivateKeyboard($uid), 'approval_failed');
+        }
+    }
+
     // پیام خلاصه «کانفیگ برای کاربر ارسال شد» حذف شد؛ کانفیگ اصلی قبلاً برای کاربر ارسال می‌شود.
-    $result = ['ok'=>true, 'message'=>'سفارش با موفقیت تأیید شد.', 'order_ids'=>$orderIds, 'remarks'=>$remarks, 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid, 'type'=>($payInfo['type'] ?? 'BUY_SUB'), 'pay_hash'=>$hashId, 'pay_state_before'=>($payInfo['state'] ?? '')];
+    $result = ['ok'=>true, 'message'=>($deliveryFailed ? 'سفارش تأیید شد اما ارسال کانفیگ به کاربر نیاز به بررسی دارد.' : 'سفارش با موفقیت تأیید شد.'), 'order_ids'=>$orderIds, 'remarks'=>$remarks, 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid, 'type'=>($payInfo['type'] ?? 'BUY_SUB'), 'pay_hash'=>$hashId, 'pay_state_before'=>($payInfo['state'] ?? ''), 'delivery_failed'=>$deliveryFailed];
     if(function_exists('v2raystore_notifyPaymentCompletedFullReport')) $result['report_sent'] = v2raystore_notifyPaymentCompletedFullReport($hashId, $result, $auto);
     return $result;
 }
@@ -14656,8 +14772,23 @@ function v2raystore_approveIncreaseDayPayByHash($hashId, $auto = false){
     return $result;
 }
 
+function v2raystore_recoverStuckAutoProcessingOrders($olderThanSeconds = 300){
+    global $connection;
+    $olderThanSeconds = max(120, intval($olderThanSeconds));
+    $recentProcessingCutoff = time() - $olderThanSeconds;
+    $legacyStuckCutoff = time() - max(900, $olderThanSeconds * 3);
+    $stmt = @$connection->prepare("UPDATE `pays` SET `state` = 'sent', `approval_error` = NULL, `approval_error_date` = 0 WHERE `state` = 'auto_processing' AND COALESCE(`auto_approved`,0) = 0 AND ((COALESCE(`approval_error_date`,0) > 0 AND `approval_error_date` <= ?) OR (COALESCE(`approval_error_date`,0) = 0 AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) <= ?))");
+    if(!$stmt) return 0;
+    $stmt->bind_param('ii', $recentProcessingCutoff, $legacyStuckCutoff);
+    $stmt->execute();
+    $changed = intval($stmt->affected_rows);
+    $stmt->close();
+    return max(0, $changed);
+}
+
 function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
     global $connection, $botState;
+    if(function_exists('v2raystore_recoverStuckAutoProcessingOrders')) v2raystore_recoverStuckAutoProcessingOrders(300);
     $state = v2raystore_getAutoApproveState();
     if(!$force && !$state['enabled']) return ['processed'=>0, 'messages'=>[]];
     $minutes = intval($state['minutes']);
@@ -14683,9 +14814,10 @@ function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
     $messages = [];
     while($pay = $rows->fetch_assoc()){
         $hash = $pay['hash_id'];
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_processing' WHERE `hash_id` = ? AND `state` = 'sent'");
+        $processingStartedAt = time();
+        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_processing', `approval_error` = NULL, `approval_error_date` = ? WHERE `hash_id` = ? AND `state` = 'sent'");
         if(!$stmt) continue;
-        $stmt->bind_param('s', $hash);
+        $stmt->bind_param('is', $processingStartedAt, $hash);
         $stmt->execute();
         $changed = $stmt->affected_rows;
         $stmt->close();

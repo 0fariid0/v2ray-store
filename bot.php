@@ -8160,6 +8160,22 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }
     }
     
+    $__v2raystoreTestReserved = false;
+    $__v2raystoreReleaseTestReservation = function() use (&$__v2raystoreTestReserved, $from_id){
+        if($__v2raystoreTestReserved && function_exists('v2raystore_releaseTestAccountCreation')){
+            v2raystore_releaseTestAccountCreation($from_id);
+            $__v2raystoreTestReserved = false;
+        }
+    };
+    $__v2raystoreIsAdminTest = ($from_id == $admin || (($userInfo['isAdmin'] ?? false) == true));
+    if(!$__v2raystoreIsAdminTest && function_exists('v2raystore_reserveTestAccountCreation')){
+        if(!v2raystore_reserveTestAccountCreation($from_id)){
+            alert("⏳ درخواست اکانت تست قبلی شما در حال پردازش است یا سقف مجاز تست پر شده است. لطفاً چند لحظه صبر کنید.");
+            exit;
+        }
+        $__v2raystoreTestReserved = true;
+    }
+
     $uniqid = generateRandomString(42,$protocol); 
 
     $savedinfo = file_get_contents('settings/temp.txt');
@@ -8233,14 +8249,17 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }
     }
     if(is_null($response)){
+        if(isset($__v2raystoreReleaseTestReservation) && is_callable($__v2raystoreReleaseTestReservation)) $__v2raystoreReleaseTestReservation();
         alert('❌ | 🥺 گلم ، اتصال به سرور برقرار نیست لطفاً مدیر رو در جریان بزار ...');
         exit;
     }
 	if($response == "inbound not Found"){
+        if(isset($__v2raystoreReleaseTestReservation) && is_callable($__v2raystoreReleaseTestReservation)) $__v2raystoreReleaseTestReservation();
         alert("❌ | 🥺 سطر (inbound) با آیدی $inbound_id تو این سرور وجود نداره ، مدیر رو در جریان بزار ...");
 		exit;
 	}
 	if(!$response->success){
+        if(isset($__v2raystoreReleaseTestReservation) && is_callable($__v2raystoreReleaseTestReservation)) $__v2raystoreReleaseTestReservation();
         alert('❌ | 😮 وای خطا داد لطفاً سریع به مدیر بگو ...');
         sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . ($response->msg), null, null, $admin);
         exit;
@@ -8271,7 +8290,9 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 ⏰ مدت اعتبار تست: <b>{$days} روز</b>
 ℹ️ این اکانت تست است و {$volume} گیگ حجم دارد." : '';
         $__v2raystoreLoopLinks = $vraylink;
+        $__v2raystoreTestSendOk = false;
         if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, $__v2raystoreTestHeading, $__v2raystoreTestExtra)){
+            $__v2raystoreTestSendOk = true;
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -8315,8 +8336,25 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
         imagedestroy($backgroundImage);
         imagedestroy($qrImage);
 
-        sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML");
+        $sendRes = sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $__v2raystoreTargetUid);
+        $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
+        if(!$sendOk){
+            $sendRes = sendMessage($acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), "HTML", $__v2raystoreTargetUid);
+            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
+        }
+        if(!$sendOk){
+            $plainText = function_exists('v2raystore_plainTextFromHtml') ? v2raystore_plainTextFromHtml($acc_text) : strip_tags($acc_text);
+            $sendRes = sendMessage($plainText, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), null, $__v2raystoreTargetUid);
+            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
+        }
+        if($sendOk) $__v2raystoreTestSendOk = true;
         unlink($file);
+    }
+    if(!$__v2raystoreTestSendOk && function_exists('v2raystore_reportSendMessage')){
+        $safeRemark = function_exists('v2raystore_h') ? v2raystore_h($remark) : htmlspecialchars($remark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        v2raystore_reportSendMessage('⚠️ خطای ارسال اکانت تست به کاربر', "🆔 کاربر: <code>{$from_id}</code>
+🔮 ریمارک: <code>{$safeRemark}</code>
+📝 سرویس روی پنل ساخته شد اما ارسال پیام کانفیگ تست به کاربر ناموفق بود. کاربر می‌تواند از «کانفیگ‌های من» دریافت کند.", v2raystore_reportPrivateKeyboard($from_id), 'test_account');
     }
 	$stmt = $connection->prepare("INSERT INTO `orders_list` 
 	    (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`)
@@ -8342,8 +8380,10 @@ if($botState['subLinkState'] == "on" && $subLink != "") $acc_text .= "
 
     if(function_exists('v2raystore_markTestAccountUsed')){
         v2raystore_markTestAccountUsed($from_id);
+        if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
     }else{
         setUser('used','freetrial');
+        if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
     }    
 }
 if(preg_match('/^showMainButtonAns(\d+)/',$data,$match)){
