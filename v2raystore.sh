@@ -181,7 +181,7 @@ ensure_config_file() {
 \$path = '${PANEL_SLUG}';
 EOF2
         chmod 600 "$CONFIG_FILE"
-        mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '${pass}'; FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
+        mysql -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${pass}'; FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
     fi
 }
 
@@ -416,9 +416,9 @@ create_database_and_baseinfo() {
     read -rp "Database password [${random_pass}]: " dbpass
     dbpass="${dbpass:-$random_pass}"
 
-    mysql -u "$root_user" -p"$root_pass" -e "CREATE DATABASE IF NOT EXISTS \`${dbname}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci;" || return 1
-    mysql -u "$root_user" -p"$root_pass" -e "CREATE USER IF NOT EXISTS '${dbuser}'@'localhost' IDENTIFIED WITH mysql_native_password BY '${dbpass}'; GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${dbuser}'@'localhost'; FLUSH PRIVILEGES;" || return 1
-    mysql -u "$root_user" -p"$root_pass" -e "CREATE USER IF NOT EXISTS '${dbuser}'@'%' IDENTIFIED WITH mysql_native_password BY '${dbpass}'; GRANT ALL PRIVILEGES ON \`${dbname}\`.* TO '${dbuser}'@'%'; FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
+    MYSQL_PWD="$root_pass" mysql -u "$root_user" -e "CREATE DATABASE IF NOT EXISTS `${dbname}` CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci;" || return 1
+    MYSQL_PWD="$root_pass" mysql -u "$root_user" -e "CREATE USER IF NOT EXISTS '${dbuser}'@'localhost' IDENTIFIED BY '${dbpass}'; ALTER USER '${dbuser}'@'localhost' IDENTIFIED BY '${dbpass}'; GRANT ALL PRIVILEGES ON `${dbname}`.* TO '${dbuser}'@'localhost'; FLUSH PRIVILEGES;" || return 1
+    MYSQL_PWD="$root_pass" mysql -u "$root_user" -e "CREATE USER IF NOT EXISTS '${dbuser}'@'%' IDENTIFIED BY '${dbpass}'; ALTER USER '${dbuser}'@'%' IDENTIFIED BY '${dbpass}'; GRANT ALL PRIVILEGES ON `${dbname}`.* TO '${dbuser}'@'%'; FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
 
     bot_url=$(bot_url_for_domain "$domain_clean")
     cat > "$BASE_INFO" <<EOF2
