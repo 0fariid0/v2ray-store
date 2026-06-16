@@ -543,6 +543,17 @@ if($data == "testAccountManagement" && ($from_id == $admin || $userInfo['isAdmin
     editText($message_id, $msg, v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
+if($data == "toggleTestAccountAutoDelete" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $current = function_exists('v2raystore_getTestAccountAutoDeleteState') ? v2raystore_getTestAccountAutoDeleteState() : 'off';
+    $newState = ($current === 'on') ? 'off' : 'on';
+    if(function_exists('v2raystore_setTestAccountAutoDeleteState')) v2raystore_setTestAccountAutoDeleteState($newState);
+    $msg = "🧪 <b>مدیریت اکانت تست</b>
+
+" .
+           "حذف خودکار اکانت تست بعد از پایان: <b>" . ($newState === 'on' ? 'روشن ✅' : 'خاموش ❌') . "</b>";
+    editText($message_id, $msg, v2raystore_getTestAccountManageKeys(), "HTML");
+    exit();
+}
 if($data == "resetAllTestAccountsAsk" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id,
         "⚠️ <b>تایید ریست اکانت تست</b>\n\nبا تایید این گزینه، سابقه استفاده از اکانت تست برای همه کاربران پاک می‌شود و همه می‌توانند دوباره طبق سقف مجازشان از تست استفاده کنند.\n\nآیا مطمئن هستید؟",

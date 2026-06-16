@@ -4739,6 +4739,77 @@ function v2raystore_applyTestRemarkPrefix($remark, $prefix = null){
     return $prefixWithDash . $remark;
 }
 
+
+function v2raystore_getTestAccountAutoDeleteState(){
+    global $botState, $connection;
+    $state = null;
+
+    if(is_array($botState) && array_key_exists('TEST_ACCOUNT_AUTO_DELETE', $botState)){
+        $state = (string)$botState['TEST_ACCOUNT_AUTO_DELETE'];
+    }elseif(function_exists('v2raystore_getBotStatesArray')){
+        $states = v2raystore_getBotStatesArray(true);
+        if(is_array($states) && array_key_exists('TEST_ACCOUNT_AUTO_DELETE', $states)){
+            $state = (string)$states['TEST_ACCOUNT_AUTO_DELETE'];
+        }
+    }
+
+    if($state === null && isset($connection) && $connection){
+        $legacyType = 'TEST_ACCOUNT_AUTO_DELETE';
+        $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('s', $legacyType);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row && isset($row['value'])) $state = (string)$row['value'];
+        }
+    }
+
+    return $state === 'on' ? 'on' : 'off';
+}
+
+function v2raystore_setTestAccountAutoDeleteState($state){
+    global $botState, $connection;
+    $state = ($state === 'on') ? 'on' : 'off';
+
+    if(function_exists('v2raystore_getBotStatesArray') && function_exists('v2raystore_saveBotStatesArray')){
+        $states = v2raystore_getBotStatesArray(true);
+        if(!is_array($states)) $states = [];
+        $states['TEST_ACCOUNT_AUTO_DELETE'] = $state;
+        $ok = v2raystore_saveBotStatesArray($states);
+        $botState = $states;
+        return $ok;
+    }
+
+    if(function_exists('setSettings')){
+        setSettings('TEST_ACCOUNT_AUTO_DELETE', $state);
+        if(is_array($botState)) $botState['TEST_ACCOUNT_AUTO_DELETE'] = $state;
+        return true;
+    }
+
+    if(!isset($connection) || !$connection) return false;
+    $type = 'TEST_ACCOUNT_AUTO_DELETE';
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS cnt FROM `setting` WHERE `type` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $cnt = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+
+    if($cnt > 0){
+        $stmt = @$connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $state, $type);
+    }else{
+        $stmt = @$connection->prepare("INSERT INTO `setting` (`type`, `value`) VALUES (?, ?)");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $type, $state);
+    }
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
 function v2raystore_getTestAccountManageKeys(){
     global $connection, $buttonValues;
     $totalUsers = 0;
@@ -4746,6 +4817,8 @@ function v2raystore_getTestAccountManageKeys(){
     $customUsers = 0;
     $testRemarkPrefix = function_exists('v2raystore_getTestRemarkPrefix') ? v2raystore_getTestRemarkPrefix() : 'test';
     $testRemarkPrefixTitle = ($testRemarkPrefix === '') ? 'بدون پیشوند' : $testRemarkPrefix;
+    $testAutoDeleteState = function_exists('v2raystore_getTestAccountAutoDeleteState') ? v2raystore_getTestAccountAutoDeleteState() : 'off';
+    $testAutoDeleteTitle = ($testAutoDeleteState === 'on') ? 'روشن ✅' : 'خاموش ❌';
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users`"));
     if($res) $totalUsers = intval(($res->fetch_assoc())['c'] ?? 0);
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `freetrial` IS NOT NULL OR COALESCE(`test_account_count`,0) > 0"));
@@ -4766,6 +4839,9 @@ function v2raystore_getTestAccountManageKeys(){
         ],
         [
             ['text'=>'✏️ تغییر ریمارک تست', 'callback_data'=>'setTestAccountRemarkPrefix', 'style'=>'success']
+        ],
+        [
+            ['text'=>'🗑 حذف خودکار تست تمام‌شده: ' . $testAutoDeleteTitle, 'callback_data'=>'toggleTestAccountAutoDelete', 'style'=>($testAutoDeleteState === 'on' ? 'success' : 'warning')]
         ],
         [
             ['text'=>'♻️ ریست تست یک کاربر', 'callback_data'=>'resetOneTestAccount', 'style'=>'primary'],
@@ -6155,6 +6231,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
             }
             $leftgb = round( ($total - $up - $down) / 1073741824, 2) . " GB";
         }
+        $leftDays = function_exists('v2raystore_formatRemainingDaysText') ? v2raystore_formatRemainingDaysText($order['expire_date'] ?? 0) : 'نامشخص';
         $acc_link = v2raystore_normalizeConfigLinksArray($acc_link);
         $configLinks = "";
         
@@ -6223,6 +6300,10 @@ function getUserOrderDetailKeys($id, $offset = 0){
     			    ['text' => " $leftgb", 'callback_data' => "v2raystore"],
                     ['text' => $buttonValues['volume_left'], 'callback_data' => "v2raystore"],
     			],
+                [
+                    ['text' => $leftDays, 'callback_data' => "v2raystore"],
+                    ['text' => '⏳ روزهای باقی‌مانده', 'callback_data' => "v2raystore"],
+                ],
                 [
                     ['text' => $buttonValues['selected_protocol'], 'callback_data' => "v2raystore"],
                 ]);
@@ -6483,6 +6564,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                 $leftgb = round( ($total - $up - $down) / 1073741824, 2) . " GB";
             }else $leftgb = "⚠️";
         }
+        $leftDays = function_exists('v2raystore_formatRemainingDaysText') ? v2raystore_formatRemainingDaysText($order['expire_date'] ?? 0) : 'نامشخص';
         $acc_link = v2raystore_normalizeConfigLinksArray($acc_link);
         $configLinks = "";
         
@@ -6538,6 +6620,10 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
 			    ['text' => $leftgb, 'callback_data' => "v2raystore"],
                 ['text' => $buttonValues['volume_left'], 'callback_data' => "v2raystore"],
 			],
+            [
+                ['text' => $leftDays, 'callback_data' => "v2raystore"],
+                ['text' => '⏳ روزهای باقی‌مانده', 'callback_data' => "v2raystore"],
+            ],
             ($serverType != "marzban"?
 			[
                 ['text' => $buttonValues['selected_protocol'], 'callback_data' => "v2raystore"],
@@ -12376,6 +12462,102 @@ function v2raystore_formatGbForReport($value){
     return $txt . ' گیگ';
 }
 
+
+function v2raystore_formatRemainingDaysNumber($expire){
+    $expire = intval($expire);
+    if($expire <= 0) return 'نامحدود';
+    $seconds = $expire - time();
+    if($seconds <= 0) return '0';
+    return (string)max(1, (int)ceil($seconds / 86400));
+}
+
+function v2raystore_formatRemainingDaysText($expire){
+    $days = v2raystore_formatRemainingDaysNumber($expire);
+    return ($days === 'نامحدود') ? 'نامحدود' : ($days . ' روز');
+}
+
+function v2raystore_formatGbNumberForUser($gb){
+    if(!is_numeric($gb)) return 'نامحدود';
+    $gb = max(0, floatval($gb));
+    return rtrim(rtrim(number_format($gb, 2, '.', ''), '0'), '.');
+}
+
+function v2raystore_getOrderRemainingSummary($order){
+    if(!is_array($order)) return null;
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $remark = trim((string)($order['remark'] ?? ''));
+    if($serverId <= 0) return null;
+
+    $stmt = $GLOBALS['connection']->prepare("SELECT `type` FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $serverConfig = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$serverConfig) return null;
+    $serverType = (string)($serverConfig['type'] ?? '');
+
+    $remainingBytes = null;
+    $expireSeconds = intval($order['expire_date'] ?? 0);
+
+    if($serverType === 'marzban'){
+        $info = getMarzbanUser($serverId, $remark);
+        if($info && isset($info->username)){
+            $total = intval($info->data_limit ?? 0);
+            $used = intval($info->used_traffic ?? 0);
+            $remainingBytes = $total > 0 ? max(0, $total - $used) : null;
+            $expireSeconds = intval($info->expire ?? $expireSeconds);
+        }
+    }else{
+        $json = getJson($serverId);
+        $rows = function_exists('v2raystore_panelListFromGetJson') ? v2raystore_panelListFromGetJson($json) : (($json && isset($json->obj) && is_array($json->obj)) ? $json->obj : []);
+        foreach($rows as $row){
+            $rowId = intval(v2raystore_arrayValue($row, 'id', 0));
+            if($inboundId > 0 && $rowId !== $inboundId) continue;
+            $settings = json_decode((string)v2raystore_arrayValue($row, 'settings', ''));
+            $clients = (is_object($settings) && isset($settings->clients) && is_array($settings->clients)) ? $settings->clients : [];
+            $stats = v2raystore_arrayValue($row, 'clientStats', []);
+            foreach($clients as $client){
+                $cid = function_exists('v2raystore_panelClientIdentity') ? v2raystore_panelClientIdentity($client) : (string)(v2raystore_arrayValue($client, 'id', v2raystore_arrayValue($client, 'password', '')));
+                $email = function_exists('v2raystore_panelClientEmail') ? v2raystore_panelClientEmail($client) : (string)v2raystore_arrayValue($client, 'email', '');
+                if($cid !== $uuid && ($remark === '' || $email !== $remark)) continue;
+
+                if($inboundId > 0){
+                    $stat = function_exists('v2raystore_panelFindClientStat') ? v2raystore_panelFindClientStat($stats, $email) : null;
+                    if($stat){
+                        $total = intval(v2raystore_arrayValue($stat, 'total', 0));
+                        $up = intval(v2raystore_arrayValue($stat, 'up', 0));
+                        $down = intval(v2raystore_arrayValue($stat, 'down', 0));
+                        $remainingBytes = $total > 0 ? max(0, $total - $up - $down) : null;
+                        $exp = v2raystore_arrayValue($stat, 'expiryTime', 0);
+                        if((empty($exp) || intval($exp) == 0)) $exp = v2raystore_arrayValue($client, 'expiryTime', 0);
+                        if(function_exists('v2raystore_panelExpiryToSeconds')) $expireSeconds = v2raystore_panelExpiryToSeconds($exp) ?: $expireSeconds;
+                    }
+                }else{
+                    $total = intval(v2raystore_arrayValue($row, 'total', 0));
+                    $up = intval(v2raystore_arrayValue($row, 'up', 0));
+                    $down = intval(v2raystore_arrayValue($row, 'down', 0));
+                    $remainingBytes = $total > 0 ? max(0, $total - $up - $down) : null;
+                    $exp = v2raystore_arrayValue($row, 'expiryTime', 0);
+                    if(function_exists('v2raystore_panelExpiryToSeconds')) $expireSeconds = v2raystore_panelExpiryToSeconds($exp) ?: $expireSeconds;
+                }
+                break 2;
+            }
+        }
+    }
+
+    $remainingGb = ($remainingBytes === null) ? null : round($remainingBytes / 1073741824, 2);
+    return [
+        'remaining_gb' => $remainingGb,
+        'remaining_gb_text' => ($remainingGb === null ? 'نامحدود' : v2raystore_formatGbNumberForUser($remainingGb)),
+        'remaining_days' => v2raystore_formatRemainingDaysNumber($expireSeconds),
+        'remaining_days_text' => v2raystore_formatRemainingDaysText($expireSeconds),
+        'expire_date' => $expireSeconds,
+    ];
+}
+
 function v2raystore_extractFirstServiceLink($linkRaw){
     $linkRaw = trim((string)$linkRaw);
     if($linkRaw === '') return '';
@@ -14275,7 +14457,13 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
 
     $volumeText = rtrim(rtrim(number_format($volume, 2, '.', ''), '0'), '.');
     $daysText = $resetMode ? $days : $appliedDays;
-    sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $volumeText, $daysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
+    $renewedOrderForLive = $order;
+    $renewedOrderForLive['fileid'] = $renewPlanId;
+    $renewedOrderForLive['expire_date'] = $newExpire;
+    $liveRemain = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($renewedOrderForLive) : null;
+    $finalVolumeText = (is_array($liveRemain) && isset($liveRemain['remaining_gb_text']) && $liveRemain['remaining_gb_text'] !== '') ? $liveRemain['remaining_gb_text'] : $volumeText;
+    $finalDaysText = (is_array($liveRemain) && isset($liveRemain['remaining_days']) && $liveRemain['remaining_days'] !== '') ? $liveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($newExpire);
+    sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $finalVolumeText, $finalDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
 
     $result = [
         'ok'=>true,
@@ -14288,8 +14476,8 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
         'plan_id'=>$renewPlanId,
         'renew_order_id'=>$orderId,
         'renew_mode'=>$renewSettings['mode'],
-        'renew_days'=>$daysText,
-        'renew_volume'=>$volumeText,
+        'renew_days'=>$finalDaysText,
+        'renew_volume'=>$finalVolumeText,
         'type'=>'RENEW_ACCOUNT',
         'pay_hash'=>$hashId,
         'pay_state_before'=>$previousState
@@ -14390,8 +14578,13 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'approved', `auto_approved` = ?, `auto_approved_date` = ?, `auto_approved_orders` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ?");
         if($stmt){ $stmt->bind_param('iiss', $autoFlag, $now, $emptyOrders, $hashId); $stmt->execute(); $stmt->close(); }
         $approvalLocked = false;
-        sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $volume, $days], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
-        $result = ['ok'=>true, 'message'=>'تمدید با موفقیت انجام شد.', 'order_ids'=>[], 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid, 'renew_remark'=>$remark, 'remarks'=>[$remark], 'type'=>'RENEW_SCONFIG', 'pay_hash'=>$hashId, 'pay_state_before'=>($payInfo['state'] ?? '')];
+        $legacyExpire = time() + (intval($days) * 86400);
+        $legacyOrderForLive = ['server_id'=>$server_id, 'inbound_id'=>$renewInbound, 'uuid'=>$uuid, 'remark'=>$remark, 'expire_date'=>$legacyExpire];
+        $legacyLiveRemain = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($legacyOrderForLive) : null;
+        $legacyVolumeText = (is_array($legacyLiveRemain) && isset($legacyLiveRemain['remaining_gb_text']) && $legacyLiveRemain['remaining_gb_text'] !== '') ? $legacyLiveRemain['remaining_gb_text'] : rtrim(rtrim(number_format(floatval($volume), 2, '.', ''), '0'), '.');
+        $legacyDaysText = (is_array($legacyLiveRemain) && isset($legacyLiveRemain['remaining_days']) && $legacyLiveRemain['remaining_days'] !== '') ? $legacyLiveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($legacyExpire);
+        sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $legacyVolumeText, $legacyDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
+        $result = ['ok'=>true, 'message'=>'تمدید با موفقیت انجام شد.', 'order_ids'=>[], 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid, 'renew_remark'=>$remark, 'remarks'=>[$remark], 'renew_days'=>$legacyDaysText, 'renew_volume'=>$legacyVolumeText, 'type'=>'RENEW_SCONFIG', 'pay_hash'=>$hashId, 'pay_state_before'=>($payInfo['state'] ?? '')];
         if(function_exists('v2raystore_notifyPaymentCompletedFullReport')) $result['report_sent'] = v2raystore_notifyPaymentCompletedFullReport($hashId, $result, $auto);
         return $result;
     }
