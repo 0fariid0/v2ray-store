@@ -224,6 +224,11 @@ function v2raystore_warn_setting_value($type, $default = null){
     return $default;
 }
 
+function v2raystore_warn_test_auto_delete_enabled(){
+    if(function_exists('v2raystore_getTestAccountAutoDeleteState')) return v2raystore_getTestAccountAutoDeleteState() === 'on';
+    return v2raystore_warn_setting_value('TEST_ACCOUNT_AUTO_DELETE', 'off') === 'on';
+}
+
 function v2raystore_warn_ensure_notification_columns(){
     global $connection;
     $columns = [
@@ -357,6 +362,7 @@ function v2raystore_warn_remove_orphan_if_checked($order, $state, $notify = true
 }
 
 $autoDeleteConfigs = v2raystore_warn_setting_value('CLEAN_OLD_CONFIGS_AUTO', 'off') === 'on';
+$autoDeleteFinishedTests = v2raystore_warn_test_auto_delete_enabled();
 $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND (`notif` IN (0, -1, -2) OR COALESCE(`notif_kind`, '') != '') ORDER BY `id` ASC LIMIT ? OFFSET ?");
 $stmt->bind_param("ii", $limit, $warnOffset);
 $stmt->execute();
@@ -394,6 +400,12 @@ if($orders){
                     v2raystore_warn_send_or_replace($order, $finishKind, $msg, -2);
                 }else{
                     v2raystore_warn_update_notification_state($orderId, -2, $finishKind, intval($order['notif_msg_id'] ?? 0));
+                }
+
+                if($autoDeleteFinishedTests && v2raystore_warn_is_test_order($order)){
+                    $res = v2raystore_warn_delete_config_from_panel($order, $state);
+                    if(!is_null($res)) v2raystore_warn_delete_order_by_id($orderId);
+                    continue;
                 }
 
                 if($autoDeleteConfigs){
