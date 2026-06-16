@@ -395,6 +395,24 @@ install_or_update_bot_files() {
     chmod -R 755 "$BOT_DIR/" 2>/dev/null || true
 }
 
+valid_mysql_identifier() {
+    [[ "$1" =~ ^[A-Za-z0-9_]+$ ]]
+}
+
+sql_escape_string() {
+    printf "%s" "$1" | sed "s/'/''/g"
+}
+
+mysql_root_run_file() {
+    local sql_file="$1" root_user root_pass
+    root_user=$(root_db_user)
+    root_pass=$(root_db_pass)
+    if [ -n "$root_user" ] && MYSQL_PWD="$root_pass" mysql -u "$root_user" < "$sql_file"; then
+        return 0
+    fi
+    mysql -u root < "$sql_file"
+}
+
 create_database_and_baseinfo() {
     local root_user root_pass dbname dbuser dbpass token admin domain domain_clean bot_url random_user random_pass
     ensure_config_file
@@ -416,9 +434,34 @@ create_database_and_baseinfo() {
     read -rp "Database password [${random_pass}]: " dbpass
     dbpass="${dbpass:-$random_pass}"
 
-    MYSQL_PWD="$root_pass" mysql -u "$root_user" -e "CREATE DATABASE IF NOT EXISTS `${dbname}` CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci;" || return 1
-    MYSQL_PWD="$root_pass" mysql -u "$root_user" -e "CREATE USER IF NOT EXISTS '${dbuser}'@'localhost' IDENTIFIED BY '${dbpass}'; ALTER USER '${dbuser}'@'localhost' IDENTIFIED BY '${dbpass}'; GRANT ALL PRIVILEGES ON `${dbname}`.* TO '${dbuser}'@'localhost'; FLUSH PRIVILEGES;" || return 1
-    MYSQL_PWD="$root_pass" mysql -u "$root_user" -e "CREATE USER IF NOT EXISTS '${dbuser}'@'%' IDENTIFIED BY '${dbpass}'; ALTER USER '${dbuser}'@'%' IDENTIFIED BY '${dbpass}'; GRANT ALL PRIVILEGES ON `${dbname}`.* TO '${dbuser}'@'%'; FLUSH PRIVILEGES;" >/dev/null 2>&1 || true
+    if ! valid_mysql_identifier "$dbname"; then
+        error "Database name can only contain English letters, numbers and underscore."
+        return 1
+    fi
+    if ! valid_mysql_identifier "$dbuser"; then
+        error "Database username can only contain English letters, numbers and underscore."
+        return 1
+    fi
+
+    local dbpass_sql sql_file
+    dbpass_sql=$(sql_escape_string "$dbpass")
+    sql_file=$(mktemp /tmp/v2raystore-db.XXXXXX.sql)
+    cat > "$sql_file" <<SQL
+CREATE DATABASE IF NOT EXISTS ${dbname} CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci;
+CREATE USER IF NOT EXISTS '${dbuser}'@'localhost' IDENTIFIED BY '${dbpass_sql}';
+ALTER USER '${dbuser}'@'localhost' IDENTIFIED BY '${dbpass_sql}';
+GRANT ALL PRIVILEGES ON ${dbname}.* TO '${dbuser}'@'localhost';
+CREATE USER IF NOT EXISTS '${dbuser}'@'%' IDENTIFIED BY '${dbpass_sql}';
+ALTER USER '${dbuser}'@'%' IDENTIFIED BY '${dbpass_sql}';
+GRANT ALL PRIVILEGES ON ${dbname}.* TO '${dbuser}'@'%';
+FLUSH PRIVILEGES;
+SQL
+    if ! mysql_root_run_file "$sql_file"; then
+        rm -f "$sql_file"
+        error "Database setup failed. MySQL is installed, but root access failed or SQL was rejected."
+        return 1
+    fi
+    rm -f "$sql_file"
 
     bot_url=$(bot_url_for_domain "$domain_clean")
     cat > "$BASE_INFO" <<EOF2
