@@ -8186,6 +8186,8 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }
     }
     
+    // ساخت اکانت تست نباید قبل از ساخت واقعی قفل بلندمدت روی کاربر بگذارد؛
+    // محدودیت استفاده بعد از ساخت موفق و با v2raystore_markTestAccountUsed ثبت می‌شود.
     $__v2raystoreTestReserved = false;
     $__v2raystoreReleaseTestReservation = function() use (&$__v2raystoreTestReserved, $from_id){
         if($__v2raystoreTestReserved && function_exists('v2raystore_releaseTestAccountCreation')){
@@ -8193,14 +8195,6 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
             $__v2raystoreTestReserved = false;
         }
     };
-    $__v2raystoreIsAdminTest = ($from_id == $admin || (($userInfo['isAdmin'] ?? false) == true));
-    if(!$__v2raystoreIsAdminTest && function_exists('v2raystore_reserveTestAccountCreation')){
-        if(!v2raystore_reserveTestAccountCreation($from_id)){
-            alert("⏳ درخواست اکانت تست قبلی شما در حال پردازش است یا سقف مجاز تست پر شده است. لطفاً چند لحظه صبر کنید.");
-            exit;
-        }
-        $__v2raystoreTestReserved = true;
-    }
 
     $uniqid = generateRandomString(42,$protocol); 
 

@@ -545,7 +545,7 @@ v2raystore_ensureAccessCodeAuditColumns();
 
 function v2raystore_ensureTestAccountManagementColumns(){
     global $connection;
-    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('USERS_TEST_ACCOUNT_MGMT_V1')) return;
+    // این بخش عمداً همیشه ستون‌ها را چک می‌کند؛ چون در بعضی نصب‌ها فلگ پچ ثبت شده بود ولی ستون‌ها واقعاً ساخته نشده بودند.
     $columns = [
         'test_account_exempt' => "ALTER TABLE `users` ADD `test_account_exempt` tinyint(1) NOT NULL DEFAULT 0 AFTER `freetrial`",
         'test_account_limit' => "ALTER TABLE `users` ADD `test_account_limit` int(11) DEFAULT NULL AFTER `test_account_exempt`",
@@ -4758,6 +4758,10 @@ function v2raystore_reserveTestAccountCreation($userId){
 
     $lockValue = 'processing:' . time();
     $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?)) AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
+    if(!$stmt && function_exists('v2raystore_ensureTestAccountManagementColumns')){
+        v2raystore_ensureTestAccountManagementColumns();
+        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?)) AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
+    }
     if(!$stmt) return false;
     $now = time() - 120;
     $stmt->bind_param('sii', $lockValue, $userId, $now);
