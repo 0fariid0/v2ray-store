@@ -4614,11 +4614,58 @@ function v2raystore_getUserTestAccountLimit($user){
     return 1;
 }
 
+function v2raystore_isTestAccountProcessingState($value){
+    return is_string($value) && strpos($value, 'processing:') === 0;
+}
+
+function v2raystore_testAccountProcessingTimestamp($value){
+    if(!v2raystore_isTestAccountProcessingState($value)) return 0;
+    return intval(substr($value, strrpos($value, ':') + 1));
+}
+
+function v2raystore_countUserCreatedTestAccounts($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0 || !isset($connection) || !$connection) return 0;
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS c FROM `orders_list` WHERE `userid` = ? AND COALESCE(`amount`,0) = 0");
+    if(!$stmt) return 0;
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return max(0, intval($row['c'] ?? 0));
+}
+
+function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0 || !is_array($user)) return false;
+    $trial = (string)($user['freetrial'] ?? '');
+    if(!v2raystore_isTestAccountProcessingState($trial)) return false;
+    $ts = v2raystore_testAccountProcessingTimestamp($trial);
+    if($ts > 0 && $ts >= time() - 120) return false;
+
+    $realCount = v2raystore_countUserCreatedTestAccounts($userId);
+    $newTrial = $realCount > 0 ? 'used' : null;
+    if(isset($connection) && $connection){
+        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ?, `test_account_count` = ? WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+        if($stmt){
+            $stmt->bind_param('sii', $newTrial, $realCount, $userId);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+    $user['freetrial'] = $newTrial;
+    $user['test_account_count'] = $realCount;
+    return true;
+}
+
 function v2raystore_getUserTestAccountUsedCount($user){
     if(empty($user)) return 0;
     $count = 0;
     if(array_key_exists('test_account_count', $user)) $count = max(0, intval($user['test_account_count']));
-    if(!empty($user['freetrial'])) $count = max($count, 1);
+    $trial = (string)($user['freetrial'] ?? '');
+    if($trial !== '' && !v2raystore_isTestAccountProcessingState($trial)) $count = max($count, 1);
     return $count;
 }
 
@@ -4626,6 +4673,11 @@ function v2raystore_canUserGetTestAccount($user, $userId = null){
     global $admin;
     if(!empty($userId) && intval($userId) === intval($admin)) return true;
     if(!empty($user) && !empty($user['isAdmin'])) return true;
+    if(!empty($userId) && is_array($user)){
+        v2raystore_cleanupStaleTestAccountProcessing($userId, $user);
+        $trial = (string)($user['freetrial'] ?? '');
+        if(v2raystore_isTestAccountProcessingState($trial)) return false;
+    }
     $limit = v2raystore_getUserTestAccountLimit($user);
     if($limit === 0) return true;
     return v2raystore_getUserTestAccountUsedCount($user) < $limit;
@@ -4641,8 +4693,8 @@ function v2raystore_markTestAccountUsed($userId){
     $userId = intval($userId);
     if($userId <= 0) return false;
 
-    // اگر قبل از ساخت تست، رزرو انجام شده باشد، شمارنده همان موقع زیاد شده؛ اینجا فقط وضعیت را نهایی می‌کنیم.
-    $stmt = $connection->prepare("UPDATE `users` SET `freetrial` = 'used' WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+    // رزرو فقط قفل می‌گذارد؛ شمارنده فقط بعد از ساخت موفق اکانت تست زیاد می‌شود.
+    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '' AND `freetrial` NOT LIKE 'processing:%', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
     if($stmt){
         $stmt->bind_param('i', $userId);
         $stmt->execute();
@@ -4651,7 +4703,7 @@ function v2raystore_markTestAccountUsed($userId){
         if($changed > 0) return true;
     }
 
-    $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ?");
+    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ?");
     if(!$stmt) return false;
     $stmt->bind_param('i', $userId);
     $ok = $stmt->execute();
@@ -4664,7 +4716,8 @@ function v2raystore_reserveTestAccountCreation($userId){
     $userId = intval($userId);
     if($userId <= 0) return false;
 
-    $staleBefore = time() - 600;
+    // اگر پردازش قبلی گیر کرده باشد، زود آزاد شود تا کاربر به خاطر یک تلاش ناموفق قفل نماند.
+    $staleBefore = time() - 120;
     $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
     if($stmt){
         $stmt->bind_param('ii', $userId, $staleBefore);
@@ -4673,9 +4726,10 @@ function v2raystore_reserveTestAccountCreation($userId){
     }
 
     $lockValue = 'processing:' . time();
-    $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = COALESCE(`test_account_count`,0) + 1, `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` NOT LIKE 'processing:%') AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
+    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?)) AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
     if(!$stmt) return false;
-    $stmt->bind_param('si', $lockValue, $userId);
+    $now = time() - 120;
+    $stmt->bind_param('sii', $lockValue, $userId, $now);
     $stmt->execute();
     $changed = intval($stmt->affected_rows);
     $stmt->close();
@@ -4686,7 +4740,7 @@ function v2raystore_releaseTestAccountCreation($userId){
     global $connection;
     $userId = intval($userId);
     if($userId <= 0) return false;
-    $stmt = $connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0) - 1, 0), `freetrial` = IF(GREATEST(COALESCE(`test_account_count`,0) - 1, 0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
     if(!$stmt) return false;
     $stmt->bind_param('i', $userId);
     $ok = $stmt->execute();
