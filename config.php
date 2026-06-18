@@ -4605,13 +4605,44 @@ function v2raystore_isTestAccountExempt($user){
     return !empty($user) && isset($user['test_account_exempt']) && intval($user['test_account_exempt']) === 1;
 }
 
+function v2raystore_getDefaultTestAccountLimit(){
+    global $botState;
+    $limit = null;
+    if(is_array($botState) && isset($botState['TEST_ACCOUNT_DEFAULT_LIMIT'])) $limit = intval($botState['TEST_ACCOUNT_DEFAULT_LIMIT']);
+    if(($limit === null || $limit <= 0) && function_exists('v2raystore_getBotStatesArray')){
+        $states = v2raystore_getBotStatesArray(true);
+        if(is_array($states) && isset($states['TEST_ACCOUNT_DEFAULT_LIMIT'])) $limit = intval($states['TEST_ACCOUNT_DEFAULT_LIMIT']);
+    }
+    if($limit === null || $limit <= 0) $limit = 1;
+    return max(1, min(100, intval($limit)));
+}
+
+function v2raystore_setDefaultTestAccountLimit($limit){
+    global $botState;
+    $limit = max(1, min(100, intval($limit)));
+    if(function_exists('v2raystore_getBotStatesArray') && function_exists('v2raystore_saveBotStatesArray')){
+        $states = v2raystore_getBotStatesArray(true);
+        if(!is_array($states)) $states = [];
+        $states['TEST_ACCOUNT_DEFAULT_LIMIT'] = $limit;
+        $ok = v2raystore_saveBotStatesArray($states);
+        $botState = $states;
+        return $ok;
+    }
+    if(function_exists('setSettings')){
+        setSettings('TEST_ACCOUNT_DEFAULT_LIMIT', $limit);
+        if(is_array($botState)) $botState['TEST_ACCOUNT_DEFAULT_LIMIT'] = $limit;
+        return true;
+    }
+    return false;
+}
+
 function v2raystore_getUserTestAccountLimit($user){
     if(v2raystore_isTestAccountExempt($user)) return 0;
     if(!empty($user) && array_key_exists('test_account_limit', $user) && $user['test_account_limit'] !== null && $user['test_account_limit'] !== ''){
         $limit = intval($user['test_account_limit']);
         if($limit >= 0) return $limit;
     }
-    return 1;
+    return function_exists('v2raystore_getDefaultTestAccountLimit') ? v2raystore_getDefaultTestAccountLimit() : 1;
 }
 
 function v2raystore_isTestAccountProcessingState($value){
@@ -4871,6 +4902,7 @@ function v2raystore_getTestAccountManageKeys(){
     $customUsers = 0;
     $testRemarkPrefix = function_exists('v2raystore_getTestRemarkPrefix') ? v2raystore_getTestRemarkPrefix() : 'test';
     $testRemarkPrefixTitle = ($testRemarkPrefix === '') ? 'بدون پیشوند' : $testRemarkPrefix;
+    $defaultTestLimit = function_exists('v2raystore_getDefaultTestAccountLimit') ? v2raystore_getDefaultTestAccountLimit() : 1;
     $testAutoDeleteState = function_exists('v2raystore_getTestAccountAutoDeleteState') ? v2raystore_getTestAccountAutoDeleteState() : 'off';
     $testAutoDeleteTitle = ($testAutoDeleteState === 'on') ? 'روشن ✅' : 'خاموش ❌';
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users`"));
@@ -4890,6 +4922,13 @@ function v2raystore_getTestAccountManageKeys(){
         ],
         [
             ['text'=>'🏷 ریمارک تست: ' . $testRemarkPrefixTitle, 'callback_data'=>'v2raystore', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🔢 سقف پیش‌فرض تست: ' . $defaultTestLimit . ' بار', 'callback_data'=>'v2raystore', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'➕ افزودن ۱ تست به همه', 'callback_data'=>'adjustDefaultTestAccountLimit_plus', 'style'=>'success'],
+            ['text'=>'➖ کم‌کردن ۱ تست از همه', 'callback_data'=>'adjustDefaultTestAccountLimit_minus', 'style'=>'warning']
         ],
         [
             ['text'=>'✏️ تغییر ریمارک تست', 'callback_data'=>'setTestAccountRemarkPrefix', 'style'=>'success']

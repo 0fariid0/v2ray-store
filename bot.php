@@ -554,6 +554,21 @@ if($data == "toggleTestAccountAutoDelete" && ($from_id == $admin || $userInfo['i
     editText($message_id, $msg, v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
+
+if(preg_match('/^adjustDefaultTestAccountLimit_(plus|minus)$/', $data, $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $current = function_exists('v2raystore_getDefaultTestAccountLimit') ? v2raystore_getDefaultTestAccountLimit() : 1;
+    $newLimit = ($m[1] === 'plus') ? ($current + 1) : max(1, $current - 1);
+    if(function_exists('v2raystore_setDefaultTestAccountLimit')) v2raystore_setDefaultTestAccountLimit($newLimit);
+    $msg = "🧪 <b>مدیریت اکانت تست</b>
+
+" .
+           "سقف پیش‌فرض اکانت تست برای کاربران روی <b>{$newLimit} بار</b> تنظیم شد.
+
+" .
+           "کاربرانی که سقف اختصاصی دارند، طبق سقف اختصاصی خودشان محاسبه می‌شوند.";
+    editText($message_id, $msg, v2raystore_getTestAccountManageKeys(), "HTML");
+    exit();
+}
 if($data == "resetAllTestAccountsAsk" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id,
         "⚠️ <b>تایید ریست اکانت تست</b>\n\nبا تایید این گزینه، سابقه استفاده از اکانت تست برای همه کاربران پاک می‌شود و همه می‌توانند دوباره طبق سقف مجازشان از تست استفاده کنند.\n\nآیا مطمئن هستید؟",
