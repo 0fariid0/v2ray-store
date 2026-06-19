@@ -324,7 +324,7 @@ function v2raystore_pro_extract_status_from_panel_client($client){
     $client = v2raystore_pro_to_array($client);
     if(empty($client)) return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
     $direct = v2raystore_pro_status_from_value($client);
-    if(($direct['state'] ?? 'unknown') !== 'unknown' || (($direct['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $direct;
+    if(v2raystore_pro_status_is_real($direct)) return $direct;
     $lastKeys = ['lastOnline','last_online','lastOnlineTime','lastSeen','last_seen','lastConnectTime','lastConnected','last_connected','lastActivity','last_activity','lastAccess','last_access','lastUsed','last_used','lastOnlineAt','last_online_at'];
     foreach($lastKeys as $k){
         if(array_key_exists($k, $client) && $client[$k] !== '' && $client[$k] !== null) return v2raystore_pro_status_from_value($client[$k]);
@@ -333,7 +333,7 @@ function v2raystore_pro_extract_status_from_panel_client($client){
         $lk = strtolower((string)$k);
         if(strpos($lk, 'last') !== false && (strpos($lk, 'online') !== false || strpos($lk, 'seen') !== false || strpos($lk, 'connect') !== false || strpos($lk, 'activity') !== false || strpos($lk, 'access') !== false)){
             $st = v2raystore_pro_status_from_value($v);
-            if(($st['state'] ?? 'unknown') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+            if(v2raystore_pro_status_is_real($st)) return $st;
         }
     }
     return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
@@ -350,7 +350,7 @@ function v2raystore_pro_scan_panel_data_for_status($data, $identifiers, $depth =
 
     if(v2raystore_pro_array_has_matching_identifier($data, $identifiers)){
         $st = v2raystore_pro_extract_status_from_panel_client($data);
-        if(($st['state'] ?? 'unknown') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+        if(v2raystore_pro_status_is_real($st)) return $st;
     }
 
     // در خروجی inbounds/list فیلد settings معمولاً JSON string است و clients داخل آن قرار دارد.
@@ -363,7 +363,7 @@ function v2raystore_pro_scan_panel_data_for_status($data, $identifiers, $depth =
             }
             if(is_array($part) || is_object($part)){
                 $st = v2raystore_pro_scan_panel_data_for_status($part, $identifiers, $depth + 1);
-                if(($st['state'] ?? 'unknown') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+                if(v2raystore_pro_status_is_real($st)) return $st;
             }
         }
     }
@@ -379,7 +379,7 @@ function v2raystore_pro_scan_panel_data_for_status($data, $identifiers, $depth =
         }
         if(is_array($v) || is_object($v)){
             $st = v2raystore_pro_scan_panel_data_for_status($v, $identifiers, $depth + 1);
-            if(($st['state'] ?? 'unknown') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+            if(v2raystore_pro_status_is_real($st)) return $st;
         }
     }
     return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
@@ -408,6 +408,39 @@ function v2raystore_pro_parse_last_online_response($decoded, $email){
     return v2raystore_pro_parse_last_online_response_multi($decoded, [$email]);
 }}
 
+if(!function_exists('v2raystore_pro_unsupported_last_online_status')){
+function v2raystore_pro_unsupported_last_online_status(){
+    return ['state'=>'unsupported','at'=>0,'text'=>''];
+}}
+
+if(!function_exists('v2raystore_pro_status_is_real')){
+function v2raystore_pro_status_is_real($status){
+    if(!is_array($status)) return false;
+    $state = trim((string)($status['state'] ?? 'unknown'));
+    if($state !== '' && $state !== 'unknown') return true;
+    if(intval($status['at'] ?? 0) > 0) return true;
+    $text = trim((string)($status['text'] ?? ''));
+    return ($text !== '' && $text !== 'نامشخص / ثبت نشده' && $text !== 'نامشخص');
+}}
+
+if(!function_exists('v2raystore_pro_data_has_last_online_key')){
+function v2raystore_pro_data_has_last_online_key($data, $depth = 0){
+    if($depth > 7) return false;
+    if(is_object($data)) $data = json_decode(json_encode($data), true);
+    if(!is_array($data)) return false;
+    foreach($data as $k=>$v){
+        $lk = strtolower((string)$k);
+        if(strpos($lk, 'lastonline') !== false || strpos($lk, 'last_online') !== false || strpos($lk, 'lastseen') !== false || strpos($lk, 'last_seen') !== false || strpos($lk, 'lastconnect') !== false || strpos($lk, 'last_connect') !== false || strpos($lk, 'lastactivity') !== false || strpos($lk, 'last_activity') !== false) return true;
+        if(is_array($v) || is_object($v)){
+            if(v2raystore_pro_data_has_last_online_key($v, $depth + 1)) return true;
+        }elseif(is_string($v)){
+            $decoded = json_decode($v, true);
+            if(is_array($decoded) && v2raystore_pro_data_has_last_online_key($decoded, $depth + 1)) return true;
+        }
+    }
+    return false;
+}}
+
 if(!function_exists('v2raystore_pro_update_last_online_cache')){
 function v2raystore_pro_update_last_online_cache($orderId, $status){
     global $connection;
@@ -416,9 +449,13 @@ function v2raystore_pro_update_last_online_cache($orderId, $status){
     $state = substr((string)($status['state'] ?? 'unknown'), 0, 20);
     $at = intval($status['at'] ?? 0);
     $text = trim((string)($status['text'] ?? ''));
-    if($text === '' && $state === 'online') $text = 'آنلاین';
-    if($text === '' && $at > 0) $text = v2raystore_pro_format_last_online($at);
-    if($text === '') $text = 'نامشخص / ثبت نشده';
+    if($state === 'unsupported'){
+        $at = 0;
+        $text = '';
+    }else{
+        if($text === '' && $state === 'online') $text = 'آنلاین';
+        if($text === '' && $at > 0) $text = v2raystore_pro_format_last_online($at);
+    }
     $text = function_exists('mb_substr') ? mb_substr($text, 0, 100, 'UTF-8') : substr($text, 0, 100);
     $checked = time();
     $stmt = @$connection->prepare("UPDATE `orders_list` SET `last_online_at`=?, `last_online_state`=?, `last_online_text`=?, `last_online_checked_at`=? WHERE `id`=?");
@@ -431,10 +468,12 @@ function v2raystore_pro_cached_last_online_label_for_order($order){
     $at = intval($order['last_online_at'] ?? 0);
     $checked = intval($order['last_online_checked_at'] ?? 0);
     $txt = trim((string)($order['last_online_text'] ?? ''));
+    if($state === 'unsupported') return '';
     if($state === 'online' && $checked >= time() - 240) return '🟢 آنلاین';
     if($txt !== '' && $txt !== 'نامشخص / ثبت نشده' && $txt !== 'نامشخص') return (($state === 'online') ? '🟢 ' : '🕘 ') . $txt;
     if($at > 0) return '🕘 ' . (function_exists('jdate') ? jdate('m/d H:i', $at) : date('m/d H:i', $at));
-    return '🕘 نامشخص';
+    // برای پنل‌های قدیمی یا وقتی پنل هیچ دیتای آخرین اتصال نداده، مثل قبل چیزی به اسم کانفیگ اضافه نمی‌شود.
+    return '';
 }}
 
 if(!function_exists('v2raystore_pro_status_from_order_cache')){
@@ -442,15 +481,16 @@ function v2raystore_pro_status_from_order_cache($order){
     $state = trim((string)($order['last_online_state'] ?? 'unknown')) ?: 'unknown';
     $at = intval($order['last_online_at'] ?? 0);
     $text = trim((string)($order['last_online_text'] ?? ''));
+    if($state === 'unsupported') return ['state'=>'unsupported', 'at'=>0, 'text'=>''];
     if($text === '' && $state === 'online') $text = 'آنلاین';
     if($text === '' && $at > 0) $text = v2raystore_pro_format_last_online($at);
-    return ['state'=>$state, 'at'=>$at, 'text'=>$text ?: 'نامشخص / ثبت نشده'];
+    return ['state'=>$state, 'at'=>$at, 'text'=>$text ?: ''];
 }}
 
 if(!function_exists('v2raystore_pro_fetch_last_online_from_panel_list')){
 function v2raystore_pro_fetch_last_online_from_panel_list($server, $order, $identifiers){
     $type = (string)($server['type'] ?? '');
-    if($type !== 'sanaei_new') return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
+    if($type !== 'sanaei_new') return v2raystore_pro_unsupported_last_online_status();
     $inboundId = intval($order['inbound_id'] ?? 0);
     $endpoints = [];
     if($inboundId > 0) $endpoints[] = '/panel/api/inbounds/get/' . $inboundId;
@@ -461,11 +501,17 @@ function v2raystore_pro_fetch_last_online_from_panel_list($server, $order, $iden
     $endpoints[] = '/panel/api/inbounds/list';
     $endpoints[] = '/panel/api/inbounds';
 
+    $panelAnswered = false;
+    $hasLastOnlineFields = false;
     if(function_exists('v2raystore_sanaeiRequestJson')){
         foreach(array_unique($endpoints) as $endpoint){
             $decoded = v2raystore_pro_sanaei_request_cached($server, $endpoint, 'GET');
+            if(is_array($decoded)){
+                $panelAnswered = true;
+                if(v2raystore_pro_data_has_last_online_key($decoded)) $hasLastOnlineFields = true;
+            }
             $st = v2raystore_pro_scan_panel_data_for_status($decoded, $identifiers);
-            if(($st['state'] ?? 'unknown') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+            if(v2raystore_pro_status_is_real($st)) return $st;
         }
     }
 
@@ -473,21 +519,24 @@ function v2raystore_pro_fetch_last_online_from_panel_list($server, $order, $iden
     if($serverId > 0 && function_exists('getJson')){
         $json = @getJson($serverId);
         if($json){
+            $panelAnswered = true;
             $arr = json_decode(json_encode($json), true);
+            if(v2raystore_pro_data_has_last_online_key($arr)) $hasLastOnlineFields = true;
             $st = v2raystore_pro_scan_panel_data_for_status($arr, $identifiers);
-            if(($st['state'] ?? 'unknown') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+            if(v2raystore_pro_status_is_real($st)) return $st;
         }
     }
-    return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
+    if($panelAnswered && !$hasLastOnlineFields) return v2raystore_pro_unsupported_last_online_status();
+    return ['state'=>'unknown','at'=>0,'text'=>''];
 }}
 
 if(!function_exists('v2raystore_pro_fetch_last_online_status')){
 function v2raystore_pro_fetch_last_online_status($server, $email, $order = null){
     $type = (string)($server['type'] ?? '');
-    if(!function_exists('v2raystore_sanaeiRequestJson') || $type !== 'sanaei_new') return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
+    if(!function_exists('v2raystore_sanaeiRequestJson') || $type !== 'sanaei_new') return v2raystore_pro_unsupported_last_online_status();
     $identifiers = is_array($order) ? v2raystore_pro_order_identifiers($order, $email) : [$email];
     $identifiers = array_slice(array_values(array_filter($identifiers)), 0, 12);
-    if(empty($identifiers)) return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
+    if(empty($identifiers)) return v2raystore_pro_unsupported_last_online_status();
 
     $onlineRequests = [
         ['/panel/api/inbounds/onlines', 'GET', null],
@@ -509,15 +558,15 @@ function v2raystore_pro_fetch_last_online_status($server, $email, $order = null)
         $decoded = v2raystore_pro_sanaei_request_cached($server, '/panel/api/inbounds/lastOnline', 'POST', $payload);
         if(is_array($decoded)){
             $st = v2raystore_pro_parse_last_online_response_multi($decoded, $identifiers);
-            if(($st['state'] ?? '') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+            if(v2raystore_pro_status_is_real($st)) return $st;
         }
     }
 
     if(is_array($order)){
         $st = v2raystore_pro_fetch_last_online_from_panel_list($server, $order, $identifiers);
-        if(($st['state'] ?? '') !== 'unknown' || (($st['text'] ?? '') !== 'نامشخص / ثبت نشده')) return $st;
+        if(v2raystore_pro_status_is_real($st)) return $st;
     }
-    return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
+    return ['state'=>'unknown','at'=>0,'text'=>''];
 }}
 
 if(!function_exists('v2raystore_pro_get_last_online_status_for_order')){
@@ -525,7 +574,7 @@ function v2raystore_pro_get_last_online_status_for_order($order, $force = false)
     global $connection;
     $checked = intval($order['last_online_checked_at'] ?? 0);
     $cacheState = trim((string)($order['last_online_state'] ?? ''));
-    if(!$force && $checked >= time() - 90 && $cacheState === 'offline') return v2raystore_pro_status_from_order_cache($order);
+    if(!$force && (($checked >= time() - 90 && $cacheState === 'offline') || ($checked >= time() - 3600 && $cacheState === 'unsupported'))) return v2raystore_pro_status_from_order_cache($order);
     $serverId = intval($order['server_id'] ?? 0);
     if($serverId <= 0) return v2raystore_pro_status_from_order_cache($order);
     $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
@@ -551,7 +600,7 @@ function v2raystore_pro_refresh_last_online_for_orders($orders, $limit = 8){
         if($done >= $limit) break;
         $checked = intval($order['last_online_checked_at'] ?? 0);
         $cacheState = trim((string)($order['last_online_state'] ?? ''));
-        if($checked >= time() - 75 && $cacheState === 'offline') continue;
+        if(($checked >= time() - 75 && $cacheState === 'offline') || ($checked >= time() - 3600 && $cacheState === 'unsupported')) continue;
         $status = v2raystore_pro_get_last_online_status_for_order($order, true);
         $orders[$idx]['last_online_state'] = $status['state'] ?? 'unknown';
         $orders[$idx]['last_online_at'] = intval($status['at'] ?? 0);
@@ -565,12 +614,17 @@ function v2raystore_pro_refresh_last_online_for_orders($orders, $limit = 8){
 if(!function_exists('v2raystore_pro_last_online_line_for_order')){
 function v2raystore_pro_last_online_line_for_order($order){
     $status = v2raystore_pro_get_last_online_status_for_order($order, false);
-    $txt = ($status['state'] ?? '') === 'online' ? 'آنلاین' : trim((string)($status['text'] ?? ''));
-    if($txt === '' || $txt === 'نامشخص / ثبت نشده'){
+    $state = trim((string)($status['state'] ?? 'unknown'));
+    if($state === 'unsupported') return '';
+    $txt = $state === 'online' ? 'آنلاین' : trim((string)($status['text'] ?? ''));
+    if($txt === '' || $txt === 'نامشخص / ثبت نشده' || $txt === 'نامشخص'){
         $at = intval($status['at'] ?? 0);
-        $txt = $at > 0 ? v2raystore_pro_format_last_online($at) : 'نامشخص / ثبت نشده';
+        if($at > 0) $txt = v2raystore_pro_format_last_online($at);
     }
-    return "\n🕘 آخرین اتصال: " . v2raystore_pro_h($txt) . "\n";
+    if($txt === '' || $txt === 'نامشخص / ثبت نشده' || $txt === 'نامشخص') return '';
+    return "
+🕘 آخرین اتصال: " . v2raystore_pro_h($txt) . "
+";
 }}
 
 if(!function_exists('v2raystore_pro_process_channel_leave_notice')){
