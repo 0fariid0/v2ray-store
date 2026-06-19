@@ -370,7 +370,6 @@ function v2raystore_pro_keyboard($rows){
 if(!function_exists('v2raystore_pro_menu_keyboard')){
 function v2raystore_pro_menu_keyboard(){
     return v2raystore_pro_keyboard([
-        [['text'=>'🔌 پلن پورت اشتراکی سنایی', 'callback_data'=>'proSharedPortAsk']],
         [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']],
     ]);
 }}
@@ -404,37 +403,6 @@ function v2raystore_pro_send_and_pin($type, $content, $caption = ''){
     return ['ok'=>false, 'message'=>'پیام ارسال شد ولی پین نشد. ربات باید در مقصد دسترسی pin داشته باشد.', 'message_id'=>$mid, 'chat_id'=>$chat];
 }}
 
-if(!function_exists('v2raystore_pro_top_buyers_text')){
-function v2raystore_pro_top_buyers_text($force = false){
-    global $connection;
-    $cacheRaw = v2raystore_pro_setting('PRO_TOP_BUYERS_CACHE', '');
-    if(!$force && $cacheRaw !== ''){
-        $cache = @json_decode($cacheRaw, true);
-        if(is_array($cache) && intval($cache['time'] ?? 0) > time() - 60 && !empty($cache['text'])) return (string)$cache['text'];
-    }
-    $sql = "SELECT p.`user_id`, COUNT(*) AS cnt, SUM(COALESCE(p.`price`,0)+COALESCE(p.`wallet_used`,0)) AS total, MAX(p.`request_date`) AS last_pay, u.`name`, u.`username` FROM `pays` p LEFT JOIN `users` u ON u.`userid`=p.`user_id` WHERE p.`state` IN ('paid','approved') GROUP BY p.`user_id` ORDER BY total DESC, cnt DESC LIMIT 20";
-    $res = @$connection->query($sql);
-    if(!$res || $res->num_rows <= 0) return "📊 هنوز خرید تاییدشده‌ای برای نمایش وجود ندارد.";
-    $i = 1; $lines = ["🏆 <b>برترین خریداران</b>
-"];
-    while($r = $res->fetch_assoc()){
-        $uid = (string)$r['user_id'];
-        $name = trim((string)($r['name'] ?? '')) ?: '-';
-        $username = trim((string)($r['username'] ?? ''));
-        $userTxt = $username !== '' ? '@' . $username : v2raystore_pro_h($name);
-        $last = intval($r['last_pay'] ?? 0);
-        $lastTxt = $last > 0 ? (function_exists('jdate') ? jdate('Y-m-d', $last) : date('Y-m-d', $last)) : '-';
-        $lines[] = $i . ") <code>$uid</code> | $userTxt | مبلغ: <b>" . number_format(intval($r['total'] ?? 0)) . "</b> | تعداد: <b>" . intval($r['cnt'] ?? 0) . "</b> | آخرین: $lastTxt";
-        $i++;
-    }
-    $text = implode("
-", $lines) . "
-
-⏱ این لیست برای جلوگیری از کندی، حداکثر هر ۱ دقیقه یک‌بار دوباره محاسبه می‌شود.";
-    v2raystore_pro_set_setting('PRO_TOP_BUYERS_CACHE', json_encode(['time'=>time(), 'text'=>$text], JSON_UNESCAPED_UNICODE));
-    return $text;
-}}
-
 if(!function_exists('v2raystore_pro_referrals_text')){
 function v2raystore_pro_referrals_text($uid){
     global $connection;
@@ -461,43 +429,6 @@ function v2raystore_pro_referrals_text($uid){
     }
     if(count($rows) >= 200) $lines[] = "\nفقط ۲۰۰ مورد آخر نمایش داده شد.";
     return implode("\n", $lines);
-}}
-
-if(!function_exists('v2raystore_pro_create_shared_port_plan')){
-function v2raystore_pro_create_shared_port_plan($input){
-    global $connection;
-    $parts = array_map('trim', explode('|', (string)$input));
-    if(count($parts) < 8) return ['ok'=>false, 'message'=>"فرمت درست نیست.\nserver_id|cat_id|inbound_id|title|price|volumeGB|days|count"];
-    [$serverId, $catId, $inboundId, $title, $price, $volume, $days, $count] = $parts;
-    $serverId = intval($serverId); $catId = intval($catId); $inboundId = intval($inboundId); $price = intval($price); $volume = floatval($volume); $days = floatval($days); $count = intval($count);
-    if($serverId <= 0 || $inboundId <= 0 || $title === '' || $price < 0 || $volume <= 0 || $days <= 0) return ['ok'=>false, 'message'=>'مقادیر واردشده معتبر نیست.'];
-    $json = function_exists('getJson') ? @getJson($serverId) : null;
-    if(!$json || !isset($json->obj)) return ['ok'=>false, 'message'=>'خواندن اینباند از پنل ناموفق بود.'];
-    $rows = is_array($json->obj) ? $json->obj : [$json->obj];
-    $found = null;
-    foreach($rows as $row){ if(intval($row->id ?? 0) === $inboundId){ $found = $row; break; } }
-    if(!$found) return ['ok'=>false, 'message'=>'اینباند موردنظر پیدا نشد.'];
-    $protocol = trim((string)($found->protocol ?? 'vless')) ?: 'vless';
-    $date = (string)time();
-    $descr = 'پلن پورت اشتراکی ساخته‌شده از inbound #' . $inboundId;
-    $pic = '';
-    $fileid = '';
-    $type = 'volume';
-    $active = 1;
-    $step = 10;
-    $customPort = intval($found->port ?? 0);
-    $flow = 'None';
-    $settings = @json_decode((string)($found->settings ?? '{}'), true);
-    if(is_array($settings) && !empty($settings['clients'][0]['flow'])) $flow = (string)$settings['clients'][0]['flow'];
-    $stmt = @$connection->prepare("INSERT INTO `server_plans` (`fileid`,`catid`,`server_id`,`inbound_id`,`acount`,`title`,`protocol`,`days`,`volume`,`type`,`price`,`descr`,`pic`,`active`,`step`,`date`,`flow`,`custom_port`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
-    if(!$stmt) return ['ok'=>false, 'message'=>'ساخت پلن در دیتابیس ناموفق بود.'];
-    $stmt->bind_param('siiiissddsissiissi', $fileid, $catId, $serverId, $inboundId, $count, $title, $protocol, $days, $volume, $type, $price, $descr, $pic, $active, $step, $date, $flow, $customPort);
-    $ok = $stmt->execute();
-    $newId = $stmt->insert_id;
-    $err = $stmt->error;
-    $stmt->close();
-    if(!$ok) return ['ok'=>false, 'message'=>'خطا در ذخیره پلن: ' . $err];
-    return ['ok'=>true, 'message'=>"✅ پلن پورت اشتراکی ساخته شد.\nID پلن: <code>$newId</code>\nپروتکل: <b>" . v2raystore_pro_h($protocol) . "</b>\nInbound: <code>$inboundId</code>"];
 }}
 
 if(!function_exists('v2raystore_pro_pinned_broadcasts_text')){
@@ -581,10 +512,6 @@ function v2raystore_pro_handle_bot_update(){
 
     if(($data ?? '') === 'proToolsMenu'){
         editText($message_id, "✅ این منوی جدا حذف شد و هر قابلیت به بخش مربوط خودش منتقل شده است.", function_exists('getAdminKeysPlus') ? getAdminKeysPlus() : v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
-        exit();
-    }
-    if(($data ?? '') === 'proTopBuyers'){
-        editText($message_id, v2raystore_pro_top_buyers_text(), v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
         exit();
     }
     if(($data ?? '') === 'proReferralAsk'){
@@ -749,17 +676,6 @@ function v2raystore_pro_handle_bot_update(){
 آیا ارسال و پین برای این گروه آغاز شود؟", json_encode(['inline_keyboard'=>[
             [['text'=>'✅ بله، شروع شود', 'callback_data'=>'yesSend2AllPin' . $id, 'style'=>'success'], ['text'=>'❌ لغو', 'callback_data'=>'noDontSend2all' . $id, 'style'=>'danger']]
         ]], JSON_UNESCAPED_UNICODE), 'HTML');
-        exit();
-    }
-    if(($data ?? '') === 'proSharedPortAsk'){
-        setUser('proSharedPortCreate');
-        editText($message_id, "🔌 ساخت پلن پورت اشتراکی سنایی از روی inbound\n\nفرمت را دقیق ارسال کن:\n<code>server_id|cat_id|inbound_id|title|price|volumeGB|days|count</code>\n\nمثال:\n<code>1|2|5|Shared VLESS|50000|30|30|1</code>", v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
-        exit();
-    }
-    if($step === 'proSharedPortCreate' && isset($text) && trim((string)$text) !== ''){
-        $r = v2raystore_pro_create_shared_port_plan($text);
-        setUser();
-        sendMessage(($r['ok'] ? '' : '⚠️ ') . $r['message'], v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
         exit();
     }
 }}
