@@ -9820,8 +9820,14 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
         exit;
     }
 
+    $ordersRows = [];
+    while($cat = $orders->fetch_assoc()) $ordersRows[] = $cat;
+    if(function_exists('v2raystore_pro_refresh_last_online_for_orders')){
+        $ordersRows = v2raystore_pro_refresh_last_online_for_orders($ordersRows, 8);
+    }
+
     $keyboard = [];
-    while($cat = $orders->fetch_assoc()){
+    foreach($ordersRows as $cat){
         $id = intval($cat['id']);
         $remark = $cat['remark'];
         $lastOnlineLabel = function_exists('v2raystore_pro_cached_last_online_label_for_order') ? v2raystore_pro_cached_last_online_label_for_order($cat) : '';
