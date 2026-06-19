@@ -9823,7 +9823,7 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     $ordersRows = [];
     while($cat = $orders->fetch_assoc()) $ordersRows[] = $cat;
     if(function_exists('v2raystore_pro_refresh_last_online_for_orders')){
-        $ordersRows = v2raystore_pro_refresh_last_online_for_orders($ordersRows, 8);
+        $ordersRows = v2raystore_pro_refresh_last_online_for_orders($ordersRows, 12);
     }
 
     $keyboard = [];
