@@ -74,6 +74,12 @@ function v2raystore_pro_ensure_schema(){
     v2raystore_pro_add_column_if_missing('orders_list', 'last_online_state', "varchar(20) DEFAULT NULL");
     v2raystore_pro_add_column_if_missing('orders_list', 'last_online_text', "varchar(100) DEFAULT NULL");
     v2raystore_pro_add_column_if_missing('orders_list', 'last_online_checked_at', "int(11) NOT NULL DEFAULT 0");
+    // نسخه قبلی فیکس، در بعضی پنل‌ها صرفاً با پیدا شدن ایمیل، همه کانفیگ‌ها را آنلاین cache می‌کرد.
+    // این cache اشتباه یک‌بار پاک می‌شود تا وضعیت واقعی دوباره از خود پنل خوانده شود.
+    if(v2raystore_pro_setting('LAST_ONLINE_ONLINE_CACHE_RESET_V2', '') !== 'done'){
+        @$connection->query("UPDATE `orders_list` SET `last_online_state`='unknown', `last_online_text`='نامشخص / ثبت نشده', `last_online_checked_at`=0 WHERE `last_online_state`='online'");
+        v2raystore_pro_set_setting('LAST_ONLINE_ONLINE_CACHE_RESET_V2', 'done');
+    }
     @$connection->query("CREATE TABLE IF NOT EXISTS `broadcast_pins` (
         `id` int(11) NOT NULL AUTO_INCREMENT,
         `send_id` int(11) NOT NULL DEFAULT 0,
@@ -338,7 +344,8 @@ function v2raystore_pro_scan_panel_data_for_status($data, $identifiers, $depth =
     if($depth > 8) return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
     if(is_object($data)) $data = json_decode(json_encode($data), true);
     if(!is_array($data)){
-        return v2raystore_pro_value_matches_identifiers($data, $identifiers) ? ['state'=>'online','at'=>time(),'text'=>'آنلاین'] : ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
+        // داخل خروجی get/list پنل، صرفاً پیدا شدن ایمیل/uuid یعنی کانفیگ وجود دارد؛ نشانه آنلاین بودن نیست.
+        return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
     }
 
     if(v2raystore_pro_array_has_matching_identifier($data, $identifiers)){
@@ -368,7 +375,7 @@ function v2raystore_pro_scan_panel_data_for_status($data, $identifiers, $depth =
         if(is_string($v)){
             $decoded = json_decode($v, true);
             if(is_array($decoded)) $v = $decoded;
-            elseif(v2raystore_pro_value_matches_identifiers($v, $identifiers)) return ['state'=>'online','at'=>time(),'text'=>'آنلاین'];
+            else continue;
         }
         if(is_array($v) || is_object($v)){
             $st = v2raystore_pro_scan_panel_data_for_status($v, $identifiers, $depth + 1);
@@ -379,15 +386,14 @@ function v2raystore_pro_scan_panel_data_for_status($data, $identifiers, $depth =
 }}
 
 if(!function_exists('v2raystore_pro_parse_last_online_response_multi')){
-function v2raystore_pro_parse_last_online_response_multi($decoded, $identifiers){
+function v2raystore_pro_parse_last_online_response_multi($decoded, $identifiers, $plainListMeansOnline = false){
     if(!is_array($decoded)) return ['state'=>'unknown','at'=>0,'text'=>'نامشخص / ثبت نشده'];
     $obj = $decoded['obj'] ?? $decoded['data'] ?? $decoded['result'] ?? $decoded;
     if(is_object($obj)) $obj = json_decode(json_encode($obj), true);
     if(!is_array($obj)) return v2raystore_pro_status_from_value($obj);
-
     foreach($obj as $k=>$v){
         if(is_string($k) && v2raystore_pro_value_matches_identifiers($k, $identifiers)) return v2raystore_pro_status_from_value($v);
-        if(is_string($v) && v2raystore_pro_value_matches_identifiers($v, $identifiers)) return ['state'=>'online','at'=>time(),'text'=>'آنلاین'];
+        if($plainListMeansOnline && is_int($k) && is_string($v) && v2raystore_pro_value_matches_identifiers($v, $identifiers)) return ['state'=>'online','at'=>time(),'text'=>'آنلاین'];
         if(is_array($v) || is_object($v)){
             $arr = v2raystore_pro_to_array($v);
             if(v2raystore_pro_array_has_matching_identifier($arr, $identifiers)) return v2raystore_pro_extract_status_from_panel_client($arr);
@@ -490,7 +496,7 @@ function v2raystore_pro_fetch_last_online_status($server, $email, $order = null)
     ];
     foreach($onlineRequests as $req){
         $decoded = v2raystore_pro_sanaei_request_cached($server, $req[0], $req[1], $req[2]);
-        $st = v2raystore_pro_parse_last_online_response_multi($decoded, $identifiers);
+        $st = v2raystore_pro_parse_last_online_response_multi($decoded, $identifiers, true);
         if(($st['state'] ?? '') === 'online') return $st;
     }
 
@@ -519,7 +525,7 @@ function v2raystore_pro_get_last_online_status_for_order($order, $force = false)
     global $connection;
     $checked = intval($order['last_online_checked_at'] ?? 0);
     $cacheState = trim((string)($order['last_online_state'] ?? ''));
-    if(!$force && $checked >= time() - 90 && $cacheState !== '' && $cacheState !== 'unknown') return v2raystore_pro_status_from_order_cache($order);
+    if(!$force && $checked >= time() - 90 && $cacheState === 'offline') return v2raystore_pro_status_from_order_cache($order);
     $serverId = intval($order['server_id'] ?? 0);
     if($serverId <= 0) return v2raystore_pro_status_from_order_cache($order);
     $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
@@ -545,7 +551,7 @@ function v2raystore_pro_refresh_last_online_for_orders($orders, $limit = 8){
         if($done >= $limit) break;
         $checked = intval($order['last_online_checked_at'] ?? 0);
         $cacheState = trim((string)($order['last_online_state'] ?? ''));
-        if($checked >= time() - 75 && $cacheState !== '' && $cacheState !== 'unknown') continue;
+        if($checked >= time() - 75 && $cacheState === 'offline') continue;
         $status = v2raystore_pro_get_last_online_status_for_order($order, true);
         $orders[$idx]['last_online_state'] = $status['state'] ?? 'unknown';
         $orders[$idx]['last_online_at'] = intval($status['at'] ?? 0);
