@@ -70,8 +70,9 @@ function v2raystore_broadcast_is_blocked_error($response){
 }
 
 function v2raystore_broadcast_send_to_user($info, $targetUserId, $keys){
+    global $connection;
     $type = $info['type'] ?? 'text';
-    $pinAfterSend = false;
+    $pinAfterSend = intval($info['pin_after_send'] ?? 0) === 1;
     if(strpos((string)$type, 'pin_') === 0){
         $pinAfterSend = true;
         $type = substr((string)$type, 4);
@@ -87,14 +88,33 @@ function v2raystore_broadcast_send_to_user($info, $targetUserId, $keys){
         '_timeout' => 12,
     ];
 
-    $pinResult = function($response) use ($pinAfterSend, $targetUserId){
+    $pinResult = function($response) use ($pinAfterSend, $targetUserId, $info, $text, $connection){
         if(!$pinAfterSend || !is_object($response) || empty($response->ok) || empty($response->result->message_id)) return $response;
-        bot('pinChatMessage', [
+        $mid = intval($response->result->message_id);
+        $pin = bot('pinChatMessage', [
             'chat_id' => $targetUserId,
-            'message_id' => intval($response->result->message_id),
+            'message_id' => $mid,
             'disable_notification' => true,
             '_timeout' => 8,
         ]);
+        if(is_object($pin) && !empty($pin->ok) && $connection){
+            $sendId = intval($info['id'] ?? 0);
+            $uid = intval($targetUserId);
+            $chat = (string)$targetUserId;
+            $title = trim((string)($info['pin_title'] ?? ''));
+            if($title === ''){
+                $raw = trim(strip_tags((string)$text));
+                if($raw === '') $raw = 'پیام همگانی';
+                $title = function_exists('mb_substr') ? mb_substr($raw, 0, 100, 'UTF-8') : substr($raw, 0, 100);
+            }
+            $now = time();
+            $stmt = @$connection->prepare("INSERT INTO `broadcast_pins` (`send_id`,`user_id`,`chat_id`,`message_id`,`title`,`created_at`) VALUES (?,?,?,?,?,?)");
+            if($stmt){
+                $stmt->bind_param('iisisi', $sendId, $uid, $chat, $mid, $title, $now);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
         return $response;
     };
 
