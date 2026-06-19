@@ -1,4 +1,22 @@
 <?php
+function v2raystore_updateHttpGetJson($url){
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_SSL_VERIFYPEER => false,
+    ]);
+    $body = curl_exec($ch);
+    curl_close($ch);
+    $json = json_decode((string)$body, true);
+    return is_array($json) ? $json : [];
+}
+
 require "../baseInfo.php";
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 $arrays = [
@@ -189,7 +207,7 @@ function updateBot(){
         if(!isset($botState['USDRate']) && !isset($botState['TRXRate'])){
             $query = "UPDATE `setting` SET `value` = ? WHERE `type` = 'BOT_STATES'";
             
-            $rate = json_decode(file_get_contents("https://api.changeto.technology/api/rate"),true)['result'];
+            $rate = v2raystore_updateHttpGetJson("https://api.changeto.technology/api/rate")['result'] ?? [];
             if(!empty($rate['USD'])) $botState['USDRate'] = $rate['USD'];
             if(!empty($rate['TRX'])) $botState['TRXRate'] = $rate['TRX'];
             
@@ -206,7 +224,7 @@ function updateBot(){
 
         $botState = array();
         
-        $rate = json_decode(file_get_contents("https://api.changeto.technology/api/rate"),true)['result'];
+        $rate = v2raystore_updateHttpGetJson("https://api.changeto.technology/api/rate")['result'] ?? [];
         if(!empty($rate['USD'])) $botState['USDRate'] = $rate['USD'];
         if(!empty($rate['TRX'])) $botState['TRXRate'] = $rate['TRX'];
         
