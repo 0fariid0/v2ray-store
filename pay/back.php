@@ -21,8 +21,15 @@ if(isset($_GET['NP_id'])){
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
 
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['X-API-KEY: ' . $paymentKeys['nowpayment']]);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     curl_setopt($ch, CURLOPT_URL, $base_url);
     $res = json_decode(curl_exec($ch));
+    curl_close($ch);
+    if(!is_object($res) || empty($res->invoice_id)){
+        showForm('اتصال به درگاه NowPayments ناموفق بود.', 'خطا!');
+        exit();
+    }
     $hash_id = $res->invoice_id;
 
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `payid` = ? AND (`state` = 'pending' OR `state` = 'send')");
@@ -140,7 +147,8 @@ if(mysqli_num_rows($payInfo)==0){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_TIMEOUT => 0,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 15,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -304,7 +312,7 @@ if($payType == "BUY_SUB"){
     $portType = $server_info['port_type'];
     $panelUrl = $server_info['panel_url'];
     $stmt->close();
-    include '../phpqrcode/qrlib.php';
+    include_once '../phpqrcode/qrlib.php';
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
 

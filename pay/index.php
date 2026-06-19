@@ -4,7 +4,11 @@ include '../baseInfo.php';
 include '../config.php';
 
 //====================//  Get  //==============================
-$hash_id = $_GET['hash_id'];
+$hash_id = isset($_GET['hash_id']) ? trim((string)$_GET['hash_id']) : '';
+if($hash_id === ''){
+    showForm("کد پرداخت نامعتبر است");
+    exit();
+}
 if(!isset($_GET['zarinpal']) && !isset($_GET['nowpayment']) && !isset($_GET['nextpay'])){
     showForm("درگاه پرداخت شناسایی نشد!");
     exit();
@@ -98,7 +102,12 @@ if(mysqli_num_rows($payInfo)==0){
     $stmt->close();
     
     if(isset($_GET['nowpayment'])){
-        $dollarPrice = json_decode(file_get_contents('https://api.tetherland.com/currencies'),true)['data']['currencies']['USDT']['price'];
+        $rateJson = function_exists('v2raystore_httpGetJson') ? v2raystore_httpGetJson('https://api.tetherland.com/currencies', 5, 8) : null;
+        $dollarPrice = $rateJson['data']['currencies']['USDT']['price'] ?? 0;
+        if($dollarPrice <= 0){
+            showForm('دریافت نرخ دلار ناموفق بود. لطفاً چند لحظه بعد دوباره تلاش کنید.');
+            exit();
+        }
         $base_url = 'https://api.nowpayments.io/v1/invoice';
     
         $ch = curl_init();
@@ -116,8 +125,15 @@ if(mysqli_num_rows($payInfo)==0){
             'success_url' => $botUrl . 'pay/back.php?nowpayment',
             'is_fee_paid_by_user' => true
         ]));
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
         curl_setopt($ch, CURLOPT_URL, $base_url);
         $res = json_decode(curl_exec($ch));
+        curl_close($ch);
+        if(!is_object($res) || empty($res->id) || empty($res->invoice_url)){
+            showForm('اتصال به درگاه NowPayments ناموفق بود.');
+            exit();
+        }
         $payid = $res->id;
         
         $stmt = $connection->prepare("UPDATE `pays` SET `payid` = ? WHERE `hash_id` = ?");
@@ -150,7 +166,8 @@ if(mysqli_num_rows($payInfo)==0){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_TIMEOUT => 0,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 15,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
