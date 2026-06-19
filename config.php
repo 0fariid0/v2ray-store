@@ -1325,7 +1325,7 @@ function farid_getBroadcastTargetKeyboard($mode = 'message'){
 function farid_getBroadcastThrottleSettings(){
     global $botState;
     $batchSize = intval($botState['broadcast_batch_size'] ?? 300);
-    $delayMs = intval($botState['broadcast_delay_ms'] ?? 200);
+    $delayMs = intval($botState['broadcast_delay_ms'] ?? 180);
     $maxRuntime = intval($botState['broadcast_max_runtime'] ?? 55);
     $progressInterval = intval($botState['broadcast_progress_interval'] ?? 120);
 
@@ -1350,8 +1350,8 @@ function farid_formatBroadcastQueueText($sendInfo, $includeSettings = false){
     $type = $sendInfo['type'] ?? 'text';
     $target = farid_normalizeBroadcastTarget($sendInfo['target_type'] ?? 'all');
     $usersCount = intval($sendInfo['total_count'] ?? 0);
-    if($usersCount <= 0) $usersCount = farid_countBroadcastTargets($target);
-    $leftMessages = max(0, $usersCount - $offset);
+    $usersCountText = $usersCount > 0 ? (string)$usersCount : 'در حال محاسبه';
+    $leftMessages = $usersCount > 0 ? max(0, $usersCount - $offset) : 'در حال محاسبه';
     $targetTitle = farid_getBroadcastTargetTitle($target);
     $sent = intval($sendInfo['sent_count'] ?? 0);
     $failed = intval($sendInfo['failed_count'] ?? 0);
@@ -1364,7 +1364,7 @@ function farid_formatBroadcastQueueText($sendInfo, $includeSettings = false){
     $txt = "❗️ یک $title در صف انتشار است.\n\n" .
            "$statusLine\n" .
            "🎯 گروه مخاطب: $targetTitle\n" .
-           "🔰 تعداد مخاطبان: $usersCount\n" .
+           "🔰 تعداد مخاطبان: $usersCountText\n" .
            "☑️ پردازش‌شده: $offset\n" .
            "📨 $doneLabel: $sent\n" .
            "⛔️ ناموفق: $failed\n" .
@@ -3810,16 +3810,54 @@ function v2raystore_sanaeiCollectCookiesFromHeader($header){
     return implode('; ', array_unique($cookies));
 }
 
+function v2raystore_normalizePanelCookieHeader($cookie){
+    $cookie = trim((string)$cookie);
+    if($cookie === '') return '';
+    return (strpos($cookie, '=') === false) ? ('session=' . $cookie) : $cookie;
+}
+
+function v2raystore_extractPanelSessionValue($cookieHeader){
+    $cookieHeader = trim((string)$cookieHeader);
+    if($cookieHeader === '') return '';
+    if(preg_match('/(?:^|;\s*)session=([^;]+)/i', $cookieHeader, $m)) return trim($m[1]);
+    return $cookieHeader;
+}
+
 function v2raystore_panelLoginSession($server_info){
+    global $connection;
     static $sessionCache = [];
     $panel_url = rtrim($server_info['panel_url'], '/');
     $loginUrl = $panel_url . '/login';
     $username = (string)($server_info['username'] ?? '');
     $password = (string)($server_info['password'] ?? '');
+    $serverId = intval($server_info['id'] ?? 0);
     $cacheKey = md5($panel_url . '|' . $username . '|' . $password);
+
     if(isset($sessionCache[$cacheKey]) && intval($sessionCache[$cacheKey]['expires'] ?? 0) > time()){
         $curl = curl_init();
         return [$curl, (string)$sessionCache[$cacheKey]['session']];
+    }
+
+    $storedCookie = trim((string)($server_info['cookie'] ?? ''));
+    $storedExpire = intval($server_info['cookie_expire'] ?? 0);
+    if(($storedCookie === '' || $storedExpire <= 0) && $serverId > 0 && isset($connection) && $connection instanceof mysqli){
+        $stmt = @$connection->prepare("SELECT `cookie`, `cookie_expire` FROM `server_config` WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $serverId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row){
+                $storedCookie = trim((string)($row['cookie'] ?? ''));
+                $storedExpire = intval($row['cookie_expire'] ?? 0);
+            }
+        }
+    }
+    if($storedCookie !== '' && $storedExpire > time() + 30){
+        $storedCookieHeader = v2raystore_normalizePanelCookieHeader($storedCookie);
+        $sessionCache[$cacheKey] = ['session' => $storedCookieHeader, 'expires' => $storedExpire];
+        $curl = curl_init();
+        return [$curl, $storedCookieHeader];
     }
 
     $formHeaders = v2raystore_panelLoginHeaders(null, $loginUrl);
@@ -3860,8 +3898,15 @@ function v2raystore_panelLoginSession($server_info){
         $session = v2raystore_sanaeiCollectCookiesFromHeader($header);
         $loginResponse = json_decode((string)$body, true);
         if($session && is_array($loginResponse) && !empty($loginResponse['success'])){
-            $sessionCache[$cacheKey] = ['session' => $session, 'expires' => time() + 900];
-            return [$curl, $session];
+            $expires = time() + 1800;
+            $sessionHeader = v2raystore_normalizePanelCookieHeader($session);
+            $sessionToStore = v2raystore_extractPanelSessionValue($sessionHeader);
+            $sessionCache[$cacheKey] = ['session' => $sessionHeader, 'expires' => $expires];
+            if($serverId > 0 && isset($connection) && $connection instanceof mysqli){
+                $stmt = @$connection->prepare("UPDATE `server_config` SET `cookie`=?, `cookie_expire`=? WHERE `id`=?");
+                if($stmt){ $stmt->bind_param('sii', $sessionToStore, $expires, $serverId); $stmt->execute(); $stmt->close(); }
+            }
+            return [$curl, $sessionHeader];
         }
         curl_close($curl);
     }
@@ -13651,8 +13696,6 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
         if($originalPrice > 0) $lines[] = "🧾 مبلغ اصلی: <b>" . number_format($originalPrice) . " تومان</b>";
         $lines[] = "👛 کسرشده از کیف پول: <b>" . number_format($walletUsed) . " تومان</b>";
     }
-    $cartRandom = intval($pay['cart_random_amount'] ?? 0);
-    if($cartRandom > 0) $lines[] = "🔢 مبلغ رندم شناسایی رسید: <b>" . number_format($cartRandom) . " تومان</b>";
 
     $remark = '';
     $planTitle = '';

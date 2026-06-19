@@ -9824,7 +9824,9 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     while($cat = $orders->fetch_assoc()){
         $id = intval($cat['id']);
         $remark = $cat['remark'];
-        $keyboard[] = [['text' => "$remark", 'callback_data' => "orderDetails$id"]];
+        $lastOnlineLabel = function_exists('v2raystore_pro_cached_last_online_label_for_order') ? v2raystore_pro_cached_last_online_label_for_order($cat) : '';
+        $btnText = trim($remark . ($lastOnlineLabel !== '' ? ' | ' . $lastOnlineLabel : ''));
+        $keyboard[] = [['text' => $btnText, 'callback_data' => "orderDetails$id"]];
     }
 
     $prev = $page - 1;
@@ -13482,6 +13484,9 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['discount_settings'], 'callback_data'=>'discount_codes', 'style'=>'primary']
     ];
     $keys[] = [
+        ['text'=>'🔌 پورت اشتراکی از inbound سنایی', 'callback_data'=>'proSharedPortAsk', 'style'=>'success']
+    ];
+    $keys[] = [
         ['text'=>$buttonValues['gateways_settings'], 'callback_data'=>'gateWays_Channels', 'style'=>'primary'],
         ['text'=>$buttonValues['bot_settings'], 'callback_data'=>'botSettings', 'style'=>'primary']
     ];
@@ -13527,6 +13532,9 @@ function getAdminKeysPlus(){
         ['text'=>'📌 پیام‌های پین‌شده', 'callback_data'=>'broadcastPinsMenu', 'style'=>'primary']
     ];
     $keys[] = [
+        ['text'=>'📌 پین دستی متن/تصویر/فایل', 'callback_data'=>'proPinMenu', 'style'=>'primary']
+    ];
+    $keys[] = [
         ['text'=>$buttonValues['main_button_settings'], 'callback_data'=>'mainMenuButtons', 'style'=>'primary']
     ];
     $keys[] = [
@@ -13536,10 +13544,6 @@ function getAdminKeysPlus(){
     $keys[] = [
         ['text'=>'📚 مدیریت FAQ و آموزش‌ها', 'callback_data'=>'adminHelpMenu', 'style'=>'primary']
     ];
-    $keys[] = [
-        ['text'=>'🔌 ابزار سنایی / 3x-ui', 'callback_data'=>'proToolsMenu', 'style'=>'success']
-    ];
-
     $keys[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
 
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
