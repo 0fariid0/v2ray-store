@@ -23,6 +23,9 @@ if(preg_match("/^haveJoined(.*)/",$data,$match)){
 }
 $v2raystoreJoinExempt = (!empty($userInfo) && !empty($userInfo['join_exempt']));
 $v2raystoreIsAdminUser = (!empty($userInfo) && !empty($userInfo['isAdmin']));
+if(function_exists('v2raystore_pro_process_channel_leave_notice')){
+    v2raystore_pro_process_channel_leave_notice($userInfo, $joniedState);
+}
 if (($joniedState== "kicked" || $joniedState== "left") && $from_id != $admin && !$v2raystoreIsAdminUser && !$v2raystoreJoinExempt){
     sendMessage(str_replace("CHANNEL-ID", $channelLock, $mainValues['join_channel_message']), json_encode(['inline_keyboard'=>[
         [['text'=>$buttonValues['join_channel'],'url'=>"https://t.me/" . str_replace("@", "", $botState['lockChannel'])]],
@@ -36,6 +39,9 @@ if($robotState == "off" && $from_id != $admin){
 }
 if(v2raystore_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
+}
+if(function_exists('v2raystore_pro_handle_bot_update')){
+    v2raystore_pro_handle_bot_update();
 }
 
 if(!function_exists('v2raystore_appendServerPlanToChannelReport')){
@@ -3334,7 +3340,7 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
     exit();
 }
 
-if(preg_match('/^broadcastTargetMessage_(all|approved)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^broadcastTargetMessage_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
     $count = farid_countBroadcastTargets($target);
     $title = farid_getBroadcastTargetTitle($target);
@@ -4445,7 +4451,7 @@ if($userInfo['step'] == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['is
 
 
 
-if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($broadcastStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
     $targetCount = farid_countBroadcastTargets($target);
@@ -4521,7 +4527,7 @@ if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)
     sendMessage("📤 فوروارد همگانی\n\nلطفاً مشخص کنید پیام فورواردی برای کدام گروه از کاربران ارسال شود.", farid_getBroadcastTargetKeyboard('forward'), 'HTML');
     exit();
 }
-if(preg_match('/^broadcastTargetForward_(all|approved)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
     $count = farid_countBroadcastTargets($target);
     $title = farid_getBroadcastTargetTitle($target);
@@ -4535,7 +4541,7 @@ if(preg_match('/^broadcastTargetForward_(all|approved)$/', $data, $match) && ($f
     sendMessage("📤 لطفاً پیامی را که می‌خواهید فوروارد شود ارسال کنید.\n\n🎯 گروه مخاطب: <b>$title</b>\n👥 تعداد مخاطبان: <b>$count</b>", $cancelKey, 'HTML');
     exit();
 }
-if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $target = farid_normalizeBroadcastTarget($forwardStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
     $targetCount = farid_countBroadcastTargets($target);
@@ -13512,6 +13518,9 @@ function getAdminKeysPlus(){
     $keys[] = [
         ['text'=>'📚 مدیریت FAQ و آموزش‌ها', 'callback_data'=>'adminHelpMenu', 'style'=>'primary']
     ];
+    $keys[] = [
+        ['text'=>'🚀 ابزار حرفه‌ای 3x-ui', 'callback_data'=>'proToolsMenu', 'style'=>'success']
+    ];
 
     $keys[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
 
@@ -16475,6 +16484,17 @@ function farid_xuiMsg_sendMessageToAccounts($accounts, $message){
         'failed' => $failed,
         'failed_user_ids' => $failedUserIds
     ];
+}
+
+// اگر کاربر در حالت عادی متن بی‌ربط ارسال کند، به جای سکوت، پیام استارت/منوی اصلی نمایش داده می‌شود.
+if(isset($update->message) && isset($text) && trim((string)$text) !== '' && empty($data)){
+    $currentStep = (string)($userInfo['step'] ?? 'none');
+    $isCommand = preg_match('/^\//', trim((string)$text));
+    if(!$isCommand && $currentStep === 'none'){
+        $startText = $mainValues['start_message'] ?? ($mainValues['reached_main_menu'] ?? 'منوی اصلی');
+        sendMessage($startText, getMainKeys(), 'HTML');
+        exit();
+    }
 }
 
 ?>

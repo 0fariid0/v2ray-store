@@ -1236,9 +1236,8 @@ function v2raystore_getSwitchPairToKeys($fromServerId, $deleteMode = false, $mod
 
 function farid_normalizeBroadcastTarget($target){
     $target = trim((string)$target);
-    // برای سازگاری با صف‌های قدیمی، targetهای قبلی هنوز شناخته می‌شوند؛
-    // اما در منوی جدید فقط all و approved نمایش داده می‌شوند.
-    $allowed = ['all', 'approved', 'buyers', 'access_code'];
+    // targetهای قدیمی حفظ شده‌اند و گروه‌های حرفه‌ای جدید هم اضافه شده‌اند.
+    $allowed = ['all', 'approved', 'buyers', 'access_code', 'no_config', 'no_purchase_30', 'left_channel', 'inactive_config'];
     return in_array($target, $allowed, true) ? $target : 'all';
 }
 
@@ -1249,6 +1248,10 @@ function farid_getBroadcastTargetTitle($target){
         'approved' => 'کاربرانی که دسترسی فعال به ربات دارند',
         'buyers' => 'فقط کاربرانی که سابقه خرید دارند',
         'access_code' => 'فقط کاربرانی که با کد ورود آزاد شده‌اند',
+        'no_config' => 'کاربران بدون کانفیگ فعال',
+        'no_purchase_30' => 'کاربرانی که ۳۰ روز خرید نداشته‌اند',
+        'left_channel' => 'کاربران خارج‌شده از کانال ولی عضو ربات',
+        'inactive_config' => 'کاربران دارای کانفیگ غیرفعال',
     ];
     return $titles[$target] ?? $titles['all'];
 }
@@ -1263,6 +1266,8 @@ function farid_getBroadcastTargetCondition($target, $userAlias = 'u'){
     $buyerCondition = "(EXISTS (SELECT 1 FROM `orders_list` o WHERE o.`userid` = {$u}.`userid` AND o.`status` = 1) OR EXISTS (SELECT 1 FROM `pays` p WHERE p.`user_id` = {$u}.`userid` AND p.`state` IN ('paid','approved')))";
     $accessCodeCondition = "(COALESCE({$u}.`access_code_used`, '') != '' AND COALESCE({$u}.`access_code_revoked`, 0) = 0)";
     $manualApprovalCondition = "(COALESCE({$u}.`approval_status`, '') = 'approved' AND COALESCE({$u}.`approval_request_date`, 0) > 0)";
+    $activeConfigCondition = "EXISTS (SELECT 1 FROM `orders_list` o2 WHERE o2.`userid` = {$u}.`userid` AND o2.`status` = 1 AND (o2.`expire_date` = 0 OR o2.`expire_date` > UNIX_TIMESTAMP()))";
+    $thirtyDaysAgo = time() - (30 * 86400);
 
     switch($target){
         // این دو حالت برای صف‌های قدیمی نگه داشته شده‌اند.
@@ -1270,6 +1275,14 @@ function farid_getBroadcastTargetCondition($target, $userAlias = 'u'){
             return $buyerCondition;
         case 'access_code':
             return $accessCodeCondition;
+        case 'no_config':
+            return "NOT ($activeConfigCondition)";
+        case 'no_purchase_30':
+            return "NOT EXISTS (SELECT 1 FROM `pays` p30 WHERE p30.`user_id` = {$u}.`userid` AND p30.`state` IN ('paid','approved') AND p30.`request_date` >= $thirtyDaysAgo)";
+        case 'left_channel':
+            return "COALESCE({$u}.`last_join_state`, '') IN ('left','kicked')";
+        case 'inactive_config':
+            return "EXISTS (SELECT 1 FROM `orders_list` oi WHERE oi.`userid` = {$u}.`userid` AND (oi.`status` != 1 OR (oi.`expire_date` > 0 AND oi.`expire_date` <= UNIX_TIMESTAMP())))";
         case 'approved':
             // این گزینه نباید همه کاربران قدیمی را حساب کند. مقدار پیش‌فرض approval_status در نصب‌های قدیمی
             // برای خیلی از کاربران approved است، بنابراین فقط approvalهایی حساب می‌شوند که واقعاً درخواست تایید داشته‌اند.
@@ -1293,29 +1306,35 @@ function farid_countBroadcastTargets($target){
 }
 
 function farid_getBroadcastTargetKeyboard($mode = 'message'){
-    $mode = ($mode === 'forward') ? 'forward' : 'message';
-    $prefix = ($mode === 'forward') ? 'broadcastTargetForward_' : 'broadcastTargetMessage_';
+    $mode = in_array($mode, ['message', 'forward', 'pin'], true) ? $mode : 'message';
+    if($mode === 'forward') $prefix = 'broadcastTargetForward_';
+    elseif($mode === 'pin') $prefix = 'broadcastTargetPin_';
+    else $prefix = 'broadcastTargetMessage_';
     return json_encode(['inline_keyboard'=>[
         [['text'=>'🎯 انتخاب گروه مخاطب', 'callback_data'=>'v2raystore', 'style'=>'primary']],
-        [['text'=>'🌍 پیام برای همه کاربران', 'callback_data'=>$prefix.'all', 'style'=>'success']],
-        [['text'=>'✅ پیام برای کاربران دارای دسترسی', 'callback_data'=>$prefix.'approved', 'style'=>'primary']],
+        [['text'=>'🌍 همه کاربران', 'callback_data'=>$prefix.'all', 'style'=>'success']],
+        [['text'=>'✅ دارای دسترسی', 'callback_data'=>$prefix.'approved', 'style'=>'primary'], ['text'=>'🛒 خریداران', 'callback_data'=>$prefix.'buyers', 'style'=>'primary']],
+        [['text'=>'🆓 بدون کانفیگ فعال', 'callback_data'=>$prefix.'no_config', 'style'=>'primary']],
+        [['text'=>'📆 ۳۰ روز بدون خرید', 'callback_data'=>$prefix.'no_purchase_30', 'style'=>'primary']],
+        [['text'=>'🚪 خارج‌شده از کانال', 'callback_data'=>$prefix.'left_channel', 'style'=>'warning']],
+        [['text'=>'⚠️ کانفیگ غیرفعال', 'callback_data'=>$prefix.'inactive_config', 'style'=>'warning']],
         [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']],
     ]], JSON_UNESCAPED_UNICODE);
 }
 
 function farid_getBroadcastThrottleSettings(){
     global $botState;
-    $batchSize = intval($botState['broadcast_batch_size'] ?? 60);
-    $delayMs = intval($botState['broadcast_delay_ms'] ?? 150);
-    $maxRuntime = intval($botState['broadcast_max_runtime'] ?? 22);
+    $batchSize = intval($botState['broadcast_batch_size'] ?? 300);
+    $delayMs = intval($botState['broadcast_delay_ms'] ?? 200);
+    $maxRuntime = intval($botState['broadcast_max_runtime'] ?? 55);
     $progressInterval = intval($botState['broadcast_progress_interval'] ?? 120);
 
     if($batchSize < 1) $batchSize = 1;
-    if($batchSize > 100) $batchSize = 100;
-    if($delayMs < 80) $delayMs = 80;
+    if($batchSize > 300) $batchSize = 300;
+    if($delayMs < 180) $delayMs = 180;
     if($delayMs > 2000) $delayMs = 2000;
     if($maxRuntime < 8) $maxRuntime = 8;
-    if($maxRuntime > 50) $maxRuntime = 50;
+    if($maxRuntime > 58) $maxRuntime = 58;
     if($progressInterval < 30) $progressInterval = 30;
 
     return [
@@ -3423,6 +3442,7 @@ function v2raystore_cartToCartNoCardText($alreadyReceived = false, $paymentKeys 
 
 function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = 'HTML'){
     global $mainValues, $userInfo;
+    $proPayLine = function_exists('v2raystore_pro_prepare_cart_to_cart_pay') ? v2raystore_pro_prepare_cart_to_cart_pay($hashId) : '';
     $paymentKeys = v2raystore_getPaymentKeys();
     $account = v2raystore_getCartToCartAccountForUser($userInfo['userid'] ?? null, $paymentKeys);
     $bank = trim((string)($account['bank'] ?? ''));
@@ -3433,12 +3453,12 @@ function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = '
              "برای انصراف، دکمه <b>لغو خرید</b> را بزنید.";
     if($bank !== ''){
         $template = $mainValues[$templateKey] ?? 'ACCOUNT-NUMBER\nHOLDER-NAME';
-        $txt = "💳 <b>کارت‌به‌کارت - $accountTitle</b>\n\n" . str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template) . $extra;
+        $txt = "💳 <b>کارت‌به‌کارت - $accountTitle</b>\n\n" . str_replace(["ACCOUNT-NUMBER", "HOLDER-NAME"], [$bank, $holder], $template) . $proPayLine . $extra;
         sendMessage($txt, v2raystore_cartToCartReceiptKeyboard($hashId), $parse);
         return;
     }
     $already = v2raystore_userHasCardVersion($userInfo, $paymentKeys);
-    sendMessage(v2raystore_cartToCartNoCardText($already, $paymentKeys, $account) . $extra, v2raystore_cartToCartKeyboard($hashId), 'HTML');
+    sendMessage(v2raystore_cartToCartNoCardText($already, $paymentKeys, $account) . $proPayLine . $extra, v2raystore_cartToCartKeyboard($hashId), 'HTML');
 }
 
 function v2raystore_deleteLocalOrderOnly($orderId){
@@ -3791,10 +3811,16 @@ function v2raystore_sanaeiCollectCookiesFromHeader($header){
 }
 
 function v2raystore_panelLoginSession($server_info){
+    static $sessionCache = [];
     $panel_url = rtrim($server_info['panel_url'], '/');
     $loginUrl = $panel_url . '/login';
     $username = (string)($server_info['username'] ?? '');
     $password = (string)($server_info['password'] ?? '');
+    $cacheKey = md5($panel_url . '|' . $username . '|' . $password);
+    if(isset($sessionCache[$cacheKey]) && intval($sessionCache[$cacheKey]['expires'] ?? 0) > time()){
+        $curl = curl_init();
+        return [$curl, (string)$sessionCache[$cacheKey]['session']];
+    }
 
     $formHeaders = v2raystore_panelLoginHeaders(null, $loginUrl);
     $jsonHeaders = [];
@@ -3834,6 +3860,7 @@ function v2raystore_panelLoginSession($server_info){
         $session = v2raystore_sanaeiCollectCookiesFromHeader($header);
         $loginResponse = json_decode((string)$body, true);
         if($session && is_array($loginResponse) && !empty($loginResponse['success'])){
+            $sessionCache[$cacheKey] = ['session' => $session, 'expires' => time() + 900];
             return [$curl, $session];
         }
         curl_close($curl);
@@ -6886,7 +6913,10 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         $msg = v2raystore_buildConfigDetailsMessage($enable, $remark, $configLinks, $subLink, $configNote);
-        
+        if(function_exists('v2raystore_pro_last_online_line_for_order')){
+            $lastOnlineLine = v2raystore_pro_last_online_line_for_order($order);
+            if(trim($lastOnlineLine) !== '') $msg .= $lastOnlineLine;
+        }
         
         if($found){
             $extrakey = [];
@@ -13615,6 +13645,14 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
     // کد پرداخت در پیام قابل مشاهده ادمین نمایش داده نمی‌شود؛ callback دکمه‌ها همان هش داخلی را نگه می‌دارد.
     $lines[] = "💰 مبلغ: <b>{$price} تومان</b>";
+    $walletUsed = intval($pay['wallet_used'] ?? 0);
+    $originalPrice = intval($pay['pay_amount_original'] ?? 0);
+    if($walletUsed > 0){
+        if($originalPrice > 0) $lines[] = "🧾 مبلغ اصلی: <b>" . number_format($originalPrice) . " تومان</b>";
+        $lines[] = "👛 کسرشده از کیف پول: <b>" . number_format($walletUsed) . " تومان</b>";
+    }
+    $cartRandom = intval($pay['cart_random_amount'] ?? 0);
+    if($cartRandom > 0) $lines[] = "🔢 مبلغ رندم شناسایی رسید: <b>" . number_format($cartRandom) . " تومان</b>";
 
     $remark = '';
     $planTitle = '';
@@ -15536,5 +15574,9 @@ function v2raystore_cancelAutoApprovedPay($hashId, $reason){
     return ['ok'=>true, 'message'=>"$deleted سفارش حذف شد.", 'deleted'=>$deleted, 'user_id'=>$uid];
 }
 // ===== End V2Ray Store extra realtime reports + auto order approval =====
+
+if(file_exists(__DIR__ . '/settings/proFeatures.php')){
+    include_once __DIR__ . '/settings/proFeatures.php';
+}
 
 ?>
