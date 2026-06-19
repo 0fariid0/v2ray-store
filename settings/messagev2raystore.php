@@ -71,6 +71,12 @@ function v2raystore_broadcast_is_blocked_error($response){
 
 function v2raystore_broadcast_send_to_user($info, $targetUserId, $keys){
     $type = $info['type'] ?? 'text';
+    $pinAfterSend = false;
+    if(strpos((string)$type, 'pin_') === 0){
+        $pinAfterSend = true;
+        $type = substr((string)$type, 4);
+        if($type === '') $type = 'text';
+    }
     $file_id = $info['file_id'] ?? '';
     $chat_id = $info['chat_id'] ?? '';
     $text = $info['text'] ?? '';
@@ -81,54 +87,65 @@ function v2raystore_broadcast_send_to_user($info, $targetUserId, $keys){
         '_timeout' => 12,
     ];
 
+    $pinResult = function($response) use ($pinAfterSend, $targetUserId){
+        if(!$pinAfterSend || !is_object($response) || empty($response->ok) || empty($response->result->message_id)) return $response;
+        bot('pinChatMessage', [
+            'chat_id' => $targetUserId,
+            'message_id' => intval($response->result->message_id),
+            'disable_notification' => true,
+            '_timeout' => 8,
+        ]);
+        return $response;
+    };
+
     if($type == 'text'){
-        return bot('sendMessage', $base + [
+        return $pinResult(bot('sendMessage', $base + [
             'text' => $text,
             'reply_markup' => $keys,
-        ]);
+        ]));
     }
     if($type == 'music'){
-        return bot('sendAudio', $base + [
+        return $pinResult(bot('sendAudio', $base + [
             'audio' => $file_id,
             'caption' => $text,
             'reply_markup' => $keys,
-        ]);
+        ]));
     }
     if($type == 'video'){
-        return bot('sendVideo', $base + [
+        return $pinResult(bot('sendVideo', $base + [
             'video' => $file_id,
             'caption' => $text,
             'reply_markup' => $keys,
-        ]);
+        ]));
     }
     if($type == 'voice'){
-        return bot('sendVoice', $base + [
+        return $pinResult(bot('sendVoice', $base + [
             'voice' => $file_id,
             'caption' => $text,
             'reply_markup' => $keys,
-        ]);
+        ]));
     }
     if($type == 'photo'){
-        return bot('sendPhoto', $base + [
+        return $pinResult(bot('sendPhoto', $base + [
             'photo' => $file_id,
             'caption' => $text,
             'reply_markup' => $keys,
-        ]);
+        ]));
     }
     if($type == 'forwardall'){
-        return bot('forwardMessage', [
+        return $pinResult(bot('forwardMessage', [
             'chat_id' => $targetUserId,
             'from_chat_id' => $chat_id,
             'message_id' => $message_id,
             '_timeout' => 12,
-        ]);
+        ]));
     }
 
-    return bot('sendDocument', $base + [
+    return $pinResult(bot('sendDocument', $base + [
         'document' => $file_id,
         'caption' => $text,
         'reply_markup' => $keys,
-    ]);
+    ]));
 }
 
 function v2raystore_broadcast_admin_message($text){
@@ -233,6 +250,24 @@ $pauseUntil = 0;
 $startTime = microtime(true);
 
 while($user = $usersList->fetch_assoc()){
+    if(($processed % 10) === 0){
+        $stateRow = $connection->query("SELECT `state` FROM `send_list` WHERE `id` = " . intval($sendId) . " LIMIT 1");
+        $stateInfo = $stateRow ? $stateRow->fetch_assoc() : null;
+        if(!$stateInfo || intval($stateInfo['state'] ?? 0) != 1){
+            $cancelUpdatedAt = time();
+            $stmtCancel = $connection->prepare("UPDATE `send_list` SET `offset` = ?, `last_user_id` = ?, `sent_count` = ?, `failed_count` = ?, `blocked_count` = ?, `updated_at` = ? WHERE `id` = ?");
+            if($stmtCancel){
+                $stmtCancel->bind_param('iiiiiii', $offset, $lastUserId, $sentCount, $failedCount, $blockedCount, $cancelUpdatedAt, $sendId);
+                $stmtCancel->execute();
+                $stmtCancel->close();
+            }
+            v2raystore_broadcast_admin_message("⛔️ ارسال همگانی وسط اجرا لغو شد.
+☑️ پردازش‌شده: $offset
+📨 موفق: $sentCount
+⛔️ ناموفق: $failedCount");
+            exit;
+        }
+    }
     $currentDbId = intval($user['id']);
     $targetUserId = trim((string)$user['userid']);
 
