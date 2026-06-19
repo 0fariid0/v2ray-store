@@ -13450,9 +13450,6 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['user_reports'], 'callback_data'=>'userReports', 'style'=>'primary']
     ];
     $keys[] = [
-        ['text'=>'🏆 برترین خریداران', 'callback_data'=>'proTopBuyers', 'style'=>'primary']
-    ];
-    $keys[] = [
         ['text'=>$buttonValues['search_admin_config'], 'callback_data'=>'searchUsersConfig', 'style'=>'primary'],
         ['text'=>$buttonValues['message_to_user'], 'callback_data'=>'messageToSpeceficUser', 'style'=>'primary']
     ];
@@ -13482,9 +13479,6 @@ function getAdminKeysPlus(){
     $keys[] = [
         ['text'=>$buttonValues['plan_settings'], 'callback_data'=>'backplan', 'style'=>'primary'],
         ['text'=>$buttonValues['discount_settings'], 'callback_data'=>'discount_codes', 'style'=>'primary']
-    ];
-    $keys[] = [
-        ['text'=>'🔌 پورت اشتراکی از inbound سنایی', 'callback_data'=>'proSharedPortAsk', 'style'=>'success']
     ];
     $keys[] = [
         ['text'=>$buttonValues['gateways_settings'], 'callback_data'=>'gateWays_Channels', 'style'=>'primary'],
