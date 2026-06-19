@@ -3342,16 +3342,15 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
 
 if(preg_match('/^broadcastTargetMessage_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
-    $count = farid_countBroadcastTargets($target);
     $title = farid_getBroadcastTargetTitle($target);
-    if($count <= 0){
-        editText($message_id, "⚠️ برای گروه انتخاب‌شده کاربری پیدا نشد.\n\n🎯 گروه مخاطب: <b>$title</b>", farid_getBroadcastTargetKeyboard('message'), 'HTML');
-        exit();
-    }
 
     delMessage();
     setUser('s2a|' . $target);
-    sendMessage("✉️ لطفاً متن یا فایل پیام همگانی را ارسال کنید.\n\n🎯 گروه مخاطب: <b>$title</b>\n👥 تعداد مخاطبان: <b>$count</b>\n\nپس از دریافت پیام، پیش‌نمایش تعداد مخاطبان دوباره برای تایید نمایش داده می‌شود.", $cancelKey, 'HTML');
+    sendMessage("✉️ لطفاً متن یا فایل پیام همگانی را ارسال کنید.
+
+🎯 گروه مخاطب: <b>$title</b>
+
+برای جلوگیری از هنگ، شمارش مخاطبان همین لحظه انجام نمی‌شود؛ بعد از تأیید، صف ارسال خودش مرحله‌ای مخاطبان را بررسی و ارسال می‌کند.", $cancelKey, 'HTML');
     exit();
 }
 
@@ -4454,22 +4453,15 @@ if($userInfo['step'] == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['is
 if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($broadcastStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
-    $targetCount = farid_countBroadcastTargets($target);
-
-    if($targetCount <= 0){
-        setUser();
-        sendMessage("⚠️ پیام همگانی ثبت نشد، چون برای گروه انتخاب‌شده هیچ مخاطبی وجود ندارد.\n\n🎯 گروه مخاطب: <b>$targetTitle</b>", getAdminKeysPlus(), 'HTML');
-        exit();
-    }
 
     setUser();
 
     if($fileid !== null) {
-        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `file_id`, `target_type`) VALUES (?, ?, ?, ?)");
+        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `file_id`, `target_type`, `pin_after_send`) VALUES (?, ?, ?, ?, 0)");
         $stmt->bind_param('ssss', $filetype, $caption, $fileid, $target);
     }
     else{
-        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `target_type`) VALUES ('text', ?, ?)");
+        $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `text`, `target_type`, `pin_after_send`) VALUES ('text', ?, ?, 0)");
         $stmt->bind_param("ss", $text, $target);
     }
     $stmt->execute();
@@ -4477,8 +4469,15 @@ if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|no_config|no_purchase_
     $stmt->close();
 
     sendMessage('⏳ پیام دریافت شد و آماده بررسی است.', $removeKeyboard);
-    sendMessage("📨 پیش‌نمایش ارسال همگانی\n\n🎯 گروه مخاطب: <b>$targetTitle</b>\n👥 تعداد مخاطبان: <b>$targetCount</b>\n\nآیا ارسال پیام برای این گروه آغاز شود؟", json_encode(['inline_keyboard'=>[
-        [['text'=>"✅ بله، ارسال شود", 'callback_data'=>"yesSend2All" . $id, 'style'=>'success'], ['text'=>"❌ لغو ارسال", 'callback_data'=>"noDontSend2all" . $id, 'style'=>'danger']]
+    sendMessage("📨 پیش‌نمایش ارسال همگانی
+
+🎯 گروه مخاطب: <b>$targetTitle</b>
+
+برای سبک‌ماندن ربات، تعداد مخاطبان داخل صف محاسبه و به‌روزرسانی می‌شود.
+
+بعد از ارسال، پیام برای کاربران پین شود؟", json_encode(['inline_keyboard'=>[
+        [['text'=>"✅ ارسال و پین شود", 'callback_data'=>"yesSend2AllPin" . $id, 'style'=>'success']],
+        [['text'=>"📨 ارسال بدون پین", 'callback_data'=>"yesSend2All" . $id, 'style'=>'primary'], ['text'=>"❌ لغو ارسال", 'callback_data'=>"noDontSend2all" . $id, 'style'=>'danger']]
     ]], JSON_UNESCAPED_UNICODE), 'HTML');
     exit();
 }
@@ -4491,25 +4490,32 @@ if(preg_match('/^noDontSend2all(\d+)/',$data,$match) && ($from_id == $admin || $
     editText($message_id,'✅ ارسال همگانی لغو شد.',getAdminKeysPlus());
     exit();
 }
-if(preg_match('/^yesSend2All(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^yesSend2All(Pin)?(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $queueId = intval($match[2]);
+    $pinAfterSend = !empty($match[1]) ? 1 : 0;
     $stmt = $connection->prepare("SELECT `target_type` FROM `send_list` WHERE `id` = ? LIMIT 1");
-    $stmt->bind_param('i', $match[1]);
+    $stmt->bind_param('i', $queueId);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
     $target = farid_normalizeBroadcastTarget($row['target_type'] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
-    $targetCount = farid_countBroadcastTargets($target);
 
-    $targetCountForQueue = intval($targetCount);
     $nowForQueue = time();
-    $stmt = $connection->prepare("UPDATE `send_list` SET `state` = 1, `offset` = 0, `last_user_id` = 0, `total_count` = ?, `sent_count` = 0, `failed_count` = 0, `blocked_count` = 0, `last_report_at` = 0, `pause_until` = 0, `started_at` = 0, `updated_at` = ? WHERE `id` = ?") ;
-    $stmt->bind_param('iii', $targetCountForQueue, $nowForQueue, $match[1]);
+    $stmt = $connection->prepare("UPDATE `send_list` SET `state` = 1, `pin_after_send` = ?, `offset` = 0, `last_user_id` = 0, `total_count` = 0, `sent_count` = 0, `failed_count` = 0, `blocked_count` = 0, `last_report_at` = 0, `pause_until` = 0, `started_at` = 0, `updated_at` = ? WHERE `id` = ?") ;
+    $stmt->bind_param('iii', $pinAfterSend, $nowForQueue, $queueId);
     $stmt->execute();
     $stmt->close();
-    
-    editText($message_id,"⏳ ارسال همگانی آغاز شد.\n\n🎯 گروه مخاطب: <b>$targetTitle</b>\n👥 تعداد مخاطبان: <b>$targetCount</b>\n\nارسال به‌صورت مرحله‌ای انجام می‌شود.",getAdminKeysPlus(), 'HTML');
+
+    $pinText = $pinAfterSend ? "
+📌 پین بعد از ارسال: <b>فعال</b>" : "
+📌 پین بعد از ارسال: <b>غیرفعال</b>";
+    editText($message_id,"⏳ ارسال همگانی آغاز شد.
+
+🎯 گروه مخاطب: <b>$targetTitle</b>$pinText
+
+ارسال و شمارش مخاطبان به‌صورت مرحله‌ای انجام می‌شود تا ربات هنگ نکند.",getAdminKeysPlus(), 'HTML');
     exit();
 }
 if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -4529,30 +4535,22 @@ if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)
 }
 if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
-    $count = farid_countBroadcastTargets($target);
     $title = farid_getBroadcastTargetTitle($target);
-    if($count <= 0){
-        editText($message_id, "⚠️ برای گروه انتخاب‌شده کاربری پیدا نشد.\n\n🎯 گروه مخاطب: <b>$title</b>", farid_getBroadcastTargetKeyboard('forward'), 'HTML');
-        exit();
-    }
 
     delMessage();
     setUser('forwardToAll|' . $target);
-    sendMessage("📤 لطفاً پیامی را که می‌خواهید فوروارد شود ارسال کنید.\n\n🎯 گروه مخاطب: <b>$title</b>\n👥 تعداد مخاطبان: <b>$count</b>", $cancelKey, 'HTML');
+    sendMessage("📤 لطفاً پیامی را که می‌خواهید فوروارد شود ارسال کنید.
+
+🎯 گروه مخاطب: <b>$title</b>
+
+شمارش مخاطبان داخل صف انجام می‌شود تا کلیک روی دکمه باعث هنگ نشود.", $cancelKey, 'HTML');
     exit();
 }
 if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $target = farid_normalizeBroadcastTarget($forwardStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
-    $targetCount = farid_countBroadcastTargets($target);
 
-    if($targetCount <= 0){
-        setUser();
-        sendMessage("⚠️ فوروارد همگانی ثبت نشد، چون برای گروه انتخاب‌شده هیچ مخاطبی وجود ندارد.\n\n🎯 گروه مخاطب: <b>$targetTitle</b>", getAdminKeysPlus(), 'HTML');
-        exit();
-    }
-
-    $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `message_id`, `chat_id`, `target_type`) VALUES ('forwardall', ?, ?, ?)");
+    $stmt = $connection->prepare("INSERT INTO `send_list` (`type`, `message_id`, `chat_id`, `target_type`, `pin_after_send`) VALUES ('forwardall', ?, ?, ?, 0)");
     $stmt->bind_param('sss', $message_id, $chat_id, $target);
     $stmt->execute();
     $id = $stmt->insert_id;
@@ -4560,8 +4558,15 @@ if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|no_config|no_
 
     setUser();
     sendMessage('⏳ پیام فورواردی دریافت شد و آماده بررسی است.', $removeKeyboard);
-    sendMessage("📤 پیش‌نمایش فوروارد همگانی\n\n🎯 گروه مخاطب: <b>$targetTitle</b>\n👥 تعداد مخاطبان: <b>$targetCount</b>\n\nآیا فوروارد برای این گروه آغاز شود؟", json_encode(['inline_keyboard'=>[
-        [['text'=>"✅ بله، فوروارد شود", 'callback_data'=>"yesSend2All" . $id, 'style'=>'success'], ['text'=>"❌ لغو", 'callback_data'=>"noDontSend2all" . $id, 'style'=>'danger']]
+    sendMessage("📤 پیش‌نمایش فوروارد همگانی
+
+🎯 گروه مخاطب: <b>$targetTitle</b>
+
+برای سبک‌ماندن ربات، تعداد مخاطبان داخل صف محاسبه و به‌روزرسانی می‌شود.
+
+بعد از فوروارد، پیام برای کاربران پین شود؟", json_encode(['inline_keyboard'=>[
+        [['text'=>"✅ فوروارد و پین شود", 'callback_data'=>"yesSend2AllPin" . $id, 'style'=>'success']],
+        [['text'=>"📤 فوروارد بدون پین", 'callback_data'=>"yesSend2All" . $id, 'style'=>'primary'], ['text'=>"❌ لغو", 'callback_data'=>"noDontSend2all" . $id, 'style'=>'danger']]
     ]], JSON_UNESCAPED_UNICODE), 'HTML');
     exit();
 }
@@ -13443,6 +13448,9 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['user_reports'], 'callback_data'=>'userReports', 'style'=>'primary']
     ];
     $keys[] = [
+        ['text'=>'🏆 برترین خریداران', 'callback_data'=>'proTopBuyers', 'style'=>'primary']
+    ];
+    $keys[] = [
         ['text'=>$buttonValues['search_admin_config'], 'callback_data'=>'searchUsersConfig', 'style'=>'primary'],
         ['text'=>$buttonValues['message_to_user'], 'callback_data'=>'messageToSpeceficUser', 'style'=>'primary']
     ];
@@ -13477,11 +13485,18 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['gateways_settings'], 'callback_data'=>'gateWays_Channels', 'style'=>'primary'],
         ['text'=>$buttonValues['bot_settings'], 'callback_data'=>'botSettings', 'style'=>'primary']
     ];
+    $keys[] = [
+        ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu', 'style'=>'primary']
+    ];
 
     $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>'🔐 قفل و دسترسی اعضای جدید', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary'],
         ['text'=>'🚪 معافیت جوین اجباری', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>'🚪 پیام ترک کانال', 'callback_data'=>'proLeaveNoticeMenu', 'style'=>'primary'],
+        ['text'=>'👥 زیرمجموعه‌های کاربر', 'callback_data'=>'proReferralAsk', 'style'=>'primary']
     ];
     if($from_id == $admin){
         $keys[] = [['text'=>$buttonValues['admins_list'], 'callback_data'=>'adminsList', 'style'=>'primary']];
@@ -13509,6 +13524,9 @@ function getAdminKeysPlus(){
         ['text'=>'📊 وضعیت صف همگانی', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary']
     ];
     $keys[] = [
+        ['text'=>'📌 پیام‌های پین‌شده', 'callback_data'=>'broadcastPinsMenu', 'style'=>'primary']
+    ];
+    $keys[] = [
         ['text'=>$buttonValues['main_button_settings'], 'callback_data'=>'mainMenuButtons', 'style'=>'primary']
     ];
     $keys[] = [
@@ -13519,7 +13537,7 @@ function getAdminKeysPlus(){
         ['text'=>'📚 مدیریت FAQ و آموزش‌ها', 'callback_data'=>'adminHelpMenu', 'style'=>'primary']
     ];
     $keys[] = [
-        ['text'=>'🚀 ابزار حرفه‌ای 3x-ui', 'callback_data'=>'proToolsMenu', 'style'=>'success']
+        ['text'=>'🔌 ابزار سنایی / 3x-ui', 'callback_data'=>'proToolsMenu', 'style'=>'success']
     ];
 
     $keys[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
