@@ -1789,8 +1789,12 @@ if($data=="inviteFriends"){
         $inviteAmount = number_format($stmt->get_result()->fetch_assoc()['value']??0) . " تومان";
         $stmt->close();
         
-        $getBotInfo = json_decode(file_get_contents("http://api.telegram.org/bot" . $botToken . "/getMe"),true);
-        $botId = $getBotInfo['result']['username'];
+        $getBotInfo = bot('getMe', ['_timeout' => 4]);
+        $botId = (is_object($getBotInfo) && !empty($getBotInfo->ok) && isset($getBotInfo->result->username)) ? $getBotInfo->result->username : '';
+        if($botId === ''){
+            alert('دریافت اطلاعات ربات از تلگرام ناموفق بود. لطفاً چند لحظه بعد دوباره تلاش کنید.', true);
+            exit();
+        }
         
         $link = "t.me/$botId?start=" . $from_id;
         if($inviteText['type'] == "text"){
@@ -2135,9 +2139,10 @@ if($data=="editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == 
     setUser($data);
 }
 if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    $botId = json_decode(file_get_contents("https://api.telegram.org/bot$botToken/getme"))->result->id;
-    $result = json_decode(file_get_contents("https://api.telegram.org/bot$botToken/getChatMember?chat_id=$text&user_id=$botId"));
-    if($result->ok){
+    $botInfo = bot('getMe', ['_timeout' => 4]);
+    $botId = (is_object($botInfo) && !empty($botInfo->ok) && isset($botInfo->result->id)) ? $botInfo->result->id : 0;
+    $result = $botId ? bot('getChatMember', ['chat_id'=>$text, 'user_id'=>$botId, '_timeout'=>5]) : null;
+    if(is_object($result) && !empty($result->ok)){
         if($result->result->status == "administrator"){
             setSettings('rewardChannel', $text);
             sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
@@ -2153,9 +2158,10 @@ if($data=="editLockChannel" && ($from_id == $admin || $userInfo['isAdmin'] == tr
     setUser($data);
 }
 if($userInfo['step'] == "editLockChannel" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    $botId = json_decode(file_get_contents("https://api.telegram.org/bot$botToken/getme"))->result->id;
-    $result = json_decode(file_get_contents("https://api.telegram.org/bot$botToken/getChatMember?chat_id=$text&user_id=$botId"));
-    if($result->ok){
+    $botInfo = bot('getMe', ['_timeout' => 4]);
+    $botId = (is_object($botInfo) && !empty($botInfo->ok) && isset($botInfo->result->id)) ? $botInfo->result->id : 0;
+    $result = $botId ? bot('getChatMember', ['chat_id'=>$text, 'user_id'=>$botId, '_timeout'=>5]) : null;
+    if(is_object($result) && !empty($result->ok)){
         if($result->result->status == "administrator"){
             setSettings("lockChannel", $text);
             sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
@@ -2400,7 +2406,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     $savedinfo = explode('-',$savedinfo);
     $port = $savedinfo[0];
     $last_num = $savedinfo[1];
-    include 'phpqrcode/qrlib.php';
+    include_once 'phpqrcode/qrlib.php';
     $ecc = 'L';
     $pixel_Size = 11;
     $frame_Size = 0;
@@ -2848,7 +2854,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     $portType = $serverConfig['port_type'];
     $panelUrl = $serverConfig['panel_url'];
     $stmt->close();
-    include 'phpqrcode/qrlib.php';
+    include_once 'phpqrcode/qrlib.php';
 
     alert($mainValues['sending_config_to_user']);
     define('IMAGE_WIDTH',540);
@@ -4075,7 +4081,9 @@ if($data == "updateConfigsRun" && ($from_id == $admin || $userInfo['isAdmin'] ==
     // پاسخ وبهوک را سریع تمام می‌کنیم تا تلگرام مجدداً درخواست را تکرار نکند
     farid_finishWebhookResponse();
 
-    // اجرای خودکار تا پایان (یا تا زمانی که ادمین توقف بزند)
+    // اجرای خودکار در بازه‌های امن؛ از ماندن طولانی PHP و هنگ سرور جلوگیری می‌کند.
+    $runStartedAt = microtime(true);
+    $maxRuntimeSeconds = farid_updateConfigsMaxRuntimeSeconds();
     while(true){
         $job = farid_getUpdateConfigsJob();
 
@@ -4102,20 +4110,27 @@ if($data == "updateConfigsRun" && ($from_id == $admin || $userInfo['isAdmin'] ==
             break;
         }
 
+        // اگر بازه امن تمام شد، عملیات را خراب نمی‌کنیم؛ فقط برای ادامه‌ی بعدی آزادش می‌کنیم.
+        if((microtime(true) - $runStartedAt) >= $maxRuntimeSeconds){
+            break;
+        }
+
         // کمی مکث برای جلوگیری از محدودیت ویرایش پیام
         usleep(250000);
     }
 
-    // پایان عملیات (تکمیل یا توقف)
+    // پایان این بازه اجرای امن (تکمیل، توقف یا آماده ادامه)
     $job = farid_getUpdateConfigsJob();
     $job['auto_running'] = 0;
     $job['auto_last_ts'] = time();
     farid_setUpdateConfigsJob($job);
 
-    // ارسال گزارش پایان کار (فقط یک بار)
-    farid_sendUpdateConfigsFinalReportIfNeeded($job);
+    // ارسال گزارش پایان کار فقط وقتی واقعاً عملیات تمام/متوقف شده باشد.
+    if(intval($job['state'] ?? 0) != 1){
+        farid_sendUpdateConfigsFinalReportIfNeeded($job);
+    }
 
-    // به‌روزرسانی پیام وضعیت نهایی
+    // به‌روزرسانی پیام وضعیت نهایی این بازه
     farid_editUpdateConfigsProgressMessage($job, true);
 
     exit();
@@ -5391,7 +5406,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` - ? WHERE `userid` = ?");
     $stmt->bind_param("ii", $price, $uid);
     $stmt->execute();
-    include 'phpqrcode/qrlib.php';
+    include_once 'phpqrcode/qrlib.php';
     
     if($serverType == "marzban"){
         $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
@@ -5507,7 +5522,7 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     $order = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    include 'phpqrcode/qrlib.php';
+    include_once 'phpqrcode/qrlib.php';
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     if($match[1] == "Sub"){
@@ -5824,7 +5839,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     }
     alert($mainValues['sending_config_to_user']);
     
-    include 'phpqrcode/qrlib.php';
+    include_once 'phpqrcode/qrlib.php';
     
     if($serverType == "marzban"){
         $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
@@ -6105,7 +6120,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         $panelUrl = $serverConfig['panel_url'];
         $stmt->close();
 
-        include 'phpqrcode/qrlib.php';
+        include_once 'phpqrcode/qrlib.php';
         $msg = $message_id;
 
         $agent_bought = false;
@@ -6665,7 +6680,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
     
     
         alert($mainValues['sending_config_to_user']);
-        include 'phpqrcode/qrlib.php';
+        include_once 'phpqrcode/qrlib.php';
         if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
         if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
         for($i = 1; $i <= $accountCount; $i++){
@@ -8285,7 +8300,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         exit;
     }
     alert($mainValues['sending_config_to_user']);
-	include 'phpqrcode/qrlib.php';
+	include_once 'phpqrcode/qrlib.php';
 	
     if($serverType == "marzban"){
         $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
@@ -8971,7 +8986,7 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
     }
     
     if($vraylink == null){delMessage(); exit();}
-    include 'phpqrcode/qrlib.php';  
+    include_once 'phpqrcode/qrlib.php';  
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
@@ -14523,6 +14538,21 @@ function farid_finishWebhookResponse(){
     @flush();
 }
 
+
+function farid_updateConfigsMaxRuntimeSeconds(){
+    // Prevent one webhook/process from staying alive too long on shared hosting.
+    // Admin can continue the remaining queue with the same button; no order is lost.
+    $limit = 20;
+    if(defined('V2RAYSTORE_UPDATE_CONFIGS_MAX_RUNTIME')){
+        $limit = intval(V2RAYSTORE_UPDATE_CONFIGS_MAX_RUNTIME);
+    }elseif(isset($GLOBALS['botState']['updateConfigsMaxRuntime'])){
+        $limit = intval($GLOBALS['botState']['updateConfigsMaxRuntime']);
+    }
+    if($limit < 5) $limit = 5;
+    if($limit > 55) $limit = 55;
+    return $limit;
+}
+
 function farid_updateConfigsModeTitle($job){
     $mode = $job['mode'] ?? '';
     if($mode == "all_active") return "همه کانفیگ‌های فعال";
@@ -14548,7 +14578,9 @@ function farid_buildUpdateConfigsProgressText($job){
 
     $state = intval($job['state'] ?? 0);
     $statusLine = "⏳ در حال اجرا";
-    if($state != 1){
+    if($state == 1 && intval($job['auto_running'] ?? 0) != 1){
+        $statusLine = "⏸ آماده ادامه";
+    }elseif($state != 1){
         if($offset >= $total){
             $statusLine = "✅ تکمیل شد";
         }else{
@@ -14603,11 +14635,17 @@ function farid_getUpdateConfigsProgressKeyboard($job){
     $offset = intval($job['offset'] ?? 0);
     $state  = intval($job['state'] ?? 0);
 
-    // در حال اجرا
+    // در حال اجرا یا آماده ادامه پس از پایان امن بازه پردازش
     if($state == 1){
-        return json_encode(['inline_keyboard'=>[
-            [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
-        ]], JSON_UNESCAPED_UNICODE);
+        $rows = [];
+        if(intval($job['auto_running'] ?? 0) == 1){
+            $rows[] = [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]];
+        }else{
+            $rows[] = [['text'=>"🚀 ادامه اجرای خودکار",'callback_data'=>"updateConfigsRun"]];
+            $rows[] = [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]];
+            $rows[] = [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]];
+        }
+        return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
     }
 
     // متوقف شده ولی کامل نشده

@@ -9,6 +9,35 @@ if($connection->connect_error){
 }
 $connection->set_charset("utf8mb4");
 
+function v2raystore_httpGetJson($url, $connectTimeout = 5, $timeout = 10){
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => max(1, intval($connectTimeout)),
+        CURLOPT_TIMEOUT => max(2, intval($timeout)),
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 3,
+        CURLOPT_SSL_VERIFYHOST => false,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_USERAGENT => 'v2raystore/fast-http',
+    ]);
+    $body = curl_exec($ch);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if($body === false || $err) return null;
+    $json = json_decode((string)$body, true);
+    return is_array($json) ? $json : null;
+}
+
+function v2raystore_applyCurlTimeouts($curl, $connectTimeout = 5, $timeout = 15){
+    if(!$curl) return;
+    @curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, max(1, intval($connectTimeout)));
+    @curl_setopt($curl, CURLOPT_TIMEOUT, max(2, intval($timeout)));
+    @curl_setopt($curl, CURLOPT_NOSIGNAL, true);
+    @curl_setopt($curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);
+}
+
 
 function v2raystore_textSettingsAllowedKeys(){
     return ['start_message', 'purchase_rules_text'];
@@ -147,7 +176,6 @@ function v2raystore_ensureOrderNoteColumn(){
     }
     if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('ORDER_CONFIG_NOTE_V1');
 }
-v2raystore_ensureOrderNoteColumn();
 v2raystore_applyTextSettings();
 
 function v2raystore_safeConfigNoteText($note){
@@ -427,26 +455,25 @@ function v2raystore_extractWsSettings($streamSettings, $fallbackHost = ''){
 function v2raystore_schemaPatchDone($key){
     global $connection;
     $key = (string)$key;
+
+    // Load all schema patch flags once per request instead of querying `setting` for every patch.
     if(!isset($GLOBALS['v2raystore_schema_patch_cache']) || !is_array($GLOBALS['v2raystore_schema_patch_cache'])){
         $GLOBALS['v2raystore_schema_patch_cache'] = [];
+        $res = @($connection->query("SELECT `type`, `value` FROM `setting` WHERE `type` LIKE 'SCHEMA_PATCH_%'"));
+        if($res){
+            while($row = $res->fetch_assoc()){
+                $patchKey = substr((string)($row['type'] ?? ''), strlen('SCHEMA_PATCH_'));
+                if($patchKey !== '') $GLOBALS['v2raystore_schema_patch_cache'][$patchKey] = (($row['value'] ?? '') === 'done');
+            }
+        }
     }
+
     if(array_key_exists($key, $GLOBALS['v2raystore_schema_patch_cache'])){
         return $GLOBALS['v2raystore_schema_patch_cache'][$key];
     }
-    $type = 'SCHEMA_PATCH_' . $key;
-    $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
-    if(!$stmt){
-        $GLOBALS['v2raystore_schema_patch_cache'][$key] = false;
-        return false;
-    }
-    $stmt->bind_param('s', $type);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
-    $stmt->close();
-    $done = $row && (($row['value'] ?? '') === 'done');
-    $GLOBALS['v2raystore_schema_patch_cache'][$key] = $done;
-    return $done;
+
+    $GLOBALS['v2raystore_schema_patch_cache'][$key] = false;
+    return false;
 }
 
 function v2raystore_markSchemaPatchDone($key){
@@ -490,6 +517,7 @@ function v2raystore_ensureFastSettingIndexes(){
     if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('FAST_SETTING_INDEX_V1');
 }
 v2raystore_ensureFastSettingIndexes();
+v2raystore_ensureOrderNoteColumn();
 
 function v2raystore_ensurePlanCustomDomainColumn(){
     global $connection;
@@ -4302,6 +4330,7 @@ function check($return = false){
 }
 function curl_get_file_contents($URL){
     $c = curl_init();
+    v2raystore_applyCurlTimeouts($c, 5, 12);
     curl_setopt($c, CURLOPT_RETURNTRANSFER, 1);
     curl_setopt($c, CURLOPT_URL, $URL);
     $contents = curl_exec($c);
@@ -4983,16 +5012,23 @@ function v2raystore_getTestAccountLimitsListText(){
 
 function setSettings($field, $value){
     global $connection, $botState;
-    $botState[$field]= $value;
-    
-    $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'BOT_STATES'");
+    $botState[$field] = $value;
+
+    // Keep the in-request cache fresh and avoid fetching the whole setting row every time.
+    if(function_exists('v2raystore_saveBotStatesArray')){
+        v2raystore_saveBotStatesArray($botState);
+        return;
+    }
+
+    $newData = json_encode($botState, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("SELECT `id` FROM `setting` WHERE `type` = 'BOT_STATES' LIMIT 1");
     $stmt->execute();
     $isExists = $stmt->get_result();
     $stmt->close();
-    if($isExists->num_rows>0) $query = "UPDATE `setting` SET `value` = ? WHERE `type` = 'BOT_STATES'";
+
+    if($isExists && $isExists->num_rows > 0) $query = "UPDATE `setting` SET `value` = ? WHERE `type` = 'BOT_STATES'";
     else $query = "INSERT INTO `setting` (`type`, `value`) VALUES ('BOT_STATES', ?)";
-    $newData = json_encode($botState);
-    
+
     $stmt = $connection->prepare($query);
     $stmt->bind_param("s", $newData);
     $stmt->execute();
@@ -5210,6 +5246,7 @@ function NOWPayments($method, $endpoint, $datas = []){
     $base_url = 'https://api.nowpayments.io/v1/';
 
     $ch = curl_init();
+    v2raystore_applyCurlTimeouts($ch, 5, 15);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
     curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
@@ -5242,9 +5279,11 @@ function NOWPayments($method, $endpoint, $datas = []){
     }
 
     $res = curl_exec($ch);
-    
-    if(curl_error($ch)) return null;
-    else return json_decode($res);
+    $err = curl_error($ch);
+    curl_close($ch);
+
+    if($err) return null;
+    return json_decode($res);
 }
 function getServerConfigKeys($serverId,$offset = 0){
     global $connection, $mainValues, $buttonValues;
@@ -10092,6 +10131,7 @@ function getMarzbanJson($server_id, $token = null){
     if(isset($token->detail)){return (object) ['success'=>false, 'msg'=>$token->detail];}
     $panel_url .= '/api/users';
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_HTTPGET, true);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -10153,6 +10193,7 @@ function getMarzbanUser($server_id, $remark, $token = null){
     $panel_url .= '/api/user/' . urlencode($remark);
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_HTTPGET, true);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -10183,6 +10224,7 @@ function getMarzbanHosts($server_id){
     $panel_url .= '/api/core/config';
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_HTTPGET, true);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -10229,6 +10271,7 @@ function addMarzbanUser($server_id, $remark, $volume, $days, $plan_id){
 
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url . "/api/user");
     curl_setopt($curl, CURLOPT_POST, true);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -10305,6 +10348,7 @@ function editMarzbanConfig($server_id,$info){
     
     $panel_url .=  '/api/user/'. $remark;
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
     curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'PUT');
@@ -10342,6 +10386,7 @@ function resetMarzbanTraffic($server_id, $remark, $token){
     $panel_url .=  '/api/user/' . $remark .'/reset';
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_POST , true);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -10372,6 +10417,7 @@ function renewMarzbanUUID($server_id,$remark){
     $panel_url .= '/api/user/' . $remark .'/revoke_sub';
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_POST , true);
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
@@ -10409,6 +10455,7 @@ function deleteMarzban($server_id,$remark){
     $panel_url .=  '/api/user/'. urlencode($remark);
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'DELETE');
     curl_setopt($curl, CURLOPT_HTTPGET, true);
@@ -10461,6 +10508,7 @@ function changeMarzbanState($server_id,$remark){
 
 
     $curl = curl_init();
+    v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
     curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'PUT');
     curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
