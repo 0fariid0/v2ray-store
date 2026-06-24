@@ -2099,8 +2099,8 @@ function v2raystore_sanaeiNewJsonPost($curl, $url, $session, $payload = null){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_POST => true,
@@ -2168,7 +2168,7 @@ function v2raystore_sanaeiRequestJson($server_info, $endpoint, $method = 'GET', 
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
         CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => $method,
@@ -3832,6 +3832,359 @@ function v2raystore_deleteOrderEverywhere($orderOrId, $deleteLocal = true, $incr
         'delete_response' => $deleteResponse,
     ];
 }
+
+
+// ===========================
+// Lightweight old-config cleanup queue + fast delete
+// این بخش برای جلوگیری از هنگ webhook است: هیچ پاکسازی سنگینی داخل کلیک انجام نمی‌شود.
+// ===========================
+if(!function_exists('v2raystore_cleanSettingGet')){
+function v2raystore_cleanSettingGet($type){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+    if($res && $res->num_rows > 0) return $res->fetch_assoc()['value'];
+    return null;
+}}
+
+if(!function_exists('v2raystore_cleanSettingSet')){
+function v2raystore_cleanSettingSet($type, $value){
+    global $connection;
+    $value = (string)$value;
+    $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `setting` WHERE `type` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $cnt = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+    if($cnt > 0){
+        $stmt = $connection->prepare("UPDATE `setting` SET `value` = ? WHERE `type` = ?");
+        if(!$stmt) return false;
+        $stmt->bind_param('ss', $value, $type);
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
+    }
+    $stmt = $connection->prepare("INSERT INTO `setting` (`value`, `type`) VALUES (?, ?)");
+    if(!$stmt) return false;
+    $stmt->bind_param('ss', $value, $type);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}}
+
+if(!function_exists('v2raystore_getCleanOldConfigsJob')){
+function v2raystore_getCleanOldConfigsJob(){
+    $raw = v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_JOB');
+    $job = json_decode((string)$raw, true);
+    return is_array($job) ? $job : ['state'=>0];
+}}
+
+if(!function_exists('v2raystore_setCleanOldConfigsJob')){
+function v2raystore_setCleanOldConfigsJob($job){
+    if(!is_array($job)) $job = ['state'=>0];
+    return v2raystore_cleanSettingSet('CLEAN_OLD_CONFIGS_JOB', json_encode($job, JSON_UNESCAPED_UNICODE));
+}}
+
+if(!function_exists('v2raystore_stopCleanOldConfigsJob')){
+function v2raystore_stopCleanOldConfigsJob(){
+    $job = v2raystore_getCleanOldConfigsJob();
+    $job['state'] = 0;
+    $job['stopped_at'] = time();
+    return v2raystore_setCleanOldConfigsJob($job);
+}}
+
+if(!function_exists('v2raystore_cleanOldSqlParts')){
+function v2raystore_cleanOldSqlParts($days, $basis){
+    $days = max(1, intval($days));
+    $basis = ($basis === 'date') ? 'date' : 'expire_date';
+    $now = time();
+    $threshold = $now - ($days * 86400);
+    $nowMs = $now * 1000;
+    $thresholdMs = $threshold * 1000;
+    $exp = "CAST(`expire_date` AS UNSIGNED)";
+    $dt = "CAST(`date` AS UNSIGNED)";
+    $expiredNow = "($exp > 0 AND (($exp < 10000000000 AND $exp < ?) OR ($exp >= 10000000000 AND $exp < ?)))";
+    $expiredThreshold = "($exp > 0 AND (($exp < 10000000000 AND $exp < ?) OR ($exp >= 10000000000 AND $exp < ?)))";
+    if($basis === 'date'){
+        return ["where"=>"$expiredNow AND $dt < ?", "types"=>'iii', "params"=>[$now, $nowMs, $threshold], "order"=>"$dt ASC, `id` ASC"];
+    }
+    return ["where"=>$expiredThreshold, "types"=>'ii', "params"=>[$threshold, $thresholdMs], "order"=>"$exp ASC, `id` ASC"];
+}}
+
+if(!function_exists('v2raystore_quickCountCleanOldConfigCandidates')){
+function v2raystore_quickCountCleanOldConfigCandidates($days, $basis = 'expire_date'){
+    global $connection;
+    $p = v2raystore_cleanOldSqlParts($days, $basis);
+    $sql = "SELECT COUNT(*) AS cnt FROM `orders_list` WHERE {$p['where']}";
+    $stmt = $connection->prepare($sql);
+    if(!$stmt) return 0;
+    $types = $p['types'];
+    $params = $p['params'];
+    $refs = [];
+    foreach($params as $k=>$v) $refs[$k] = $v;
+    $bind = [$types];
+    foreach($refs as $k=>$v) $bind[] = &$refs[$k];
+    call_user_func_array([$stmt, 'bind_param'], $bind);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return intval($row['cnt'] ?? 0);
+}}
+
+if(!function_exists('v2raystore_quickCleanOldConfigCandidates')){
+function v2raystore_quickCleanOldConfigCandidates($days, $basis = 'expire_date', $limit = 20, $excludeIds = []){
+    global $connection;
+    $limit = max(1, min(200, intval($limit)));
+    $excludeIds = is_array($excludeIds) ? array_values(array_unique(array_map('intval', $excludeIds))) : [];
+    $p = v2raystore_cleanOldSqlParts($days, $basis);
+    $sql = "SELECT * FROM `orders_list` WHERE {$p['where']} ORDER BY {$p['order']} LIMIT ?";
+    $stmt = $connection->prepare($sql);
+    if(!$stmt) return [];
+    $types = $p['types'] . 'i';
+    $params = $p['params'];
+    $params[] = max($limit, min(200, $limit + count($excludeIds) + 20));
+    $refs = [];
+    foreach($params as $k=>$v) $refs[$k] = $v;
+    $bind = [$types];
+    foreach($refs as $k=>$v) $bind[] = &$refs[$k];
+    call_user_func_array([$stmt, 'bind_param'], $bind);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = [];
+    $excludeMap = array_flip($excludeIds);
+    while($row = $res->fetch_assoc()){
+        $oid = intval($row['id'] ?? 0);
+        if($oid > 0 && isset($excludeMap[$oid])) continue;
+        $rows[] = $row;
+        if(count($rows) >= $limit) break;
+    }
+    $stmt->close();
+    return $rows;
+}}
+
+if(!function_exists('v2raystore_startCleanOldConfigsJob')){
+function v2raystore_startCleanOldConfigsJob($days, $basis = 'expire_date', $startedBy = 0, $initialTotal = null){
+    $days = max(1, intval($days));
+    $basis = ($basis === 'date') ? 'date' : 'expire_date';
+    if($initialTotal === null) $initialTotal = v2raystore_quickCountCleanOldConfigCandidates($days, $basis);
+    $job = [
+        'state' => 1,
+        'days' => $days,
+        'basis' => $basis,
+        'started_by' => intval($startedBy),
+        'created_at' => time(),
+        'last_run' => 0,
+        'initial_total' => intval($initialTotal),
+        'processed' => 0,
+        'panel_ok' => 0,
+        'local_deleted' => 0,
+        'failed' => 0,
+        'skip_ids' => [],
+        'last_errors' => [],
+        'last_message' => 'صف ثبت شد.',
+    ];
+    v2raystore_setCleanOldConfigsJob($job);
+    return $job;
+}}
+
+if(!function_exists('v2raystore_deleteResponseToUsage')){
+function v2raystore_deleteResponseToUsage($response){
+    if(is_object($response)) $response = json_decode(json_encode($response), true);
+    if(!is_array($response)) return [];
+    $total = intval($response['total'] ?? ($response['data_limit'] ?? 0));
+    $up = intval($response['up'] ?? 0);
+    $down = intval($response['down'] ?? ($response['used_traffic'] ?? 0));
+    $remaining = max(0, $total - $up - $down);
+    return [
+        'checked' => true,
+        'found' => empty($response['not_found']),
+        'total' => $total,
+        'up' => $up,
+        'down' => $down,
+        'remaining' => $remaining,
+        'expiryTime' => $response['expiryTime'] ?? ($response['expire'] ?? 0),
+    ];
+}}
+
+if(!function_exists('v2raystore_panelDeleteResultOk')){
+function v2raystore_panelDeleteResultOk($response){
+    if($response === true) return true;
+    if($response === null || $response === false) return false;
+    if(is_object($response)) $response = json_decode(json_encode($response), true);
+    if(is_array($response)){
+        if(!empty($response['not_found'])) return true;
+        if(array_key_exists('success', $response)) return !empty($response['success']);
+        if(array_key_exists('ok', $response)) return !empty($response['ok']);
+        return true;
+    }
+    return true;
+}}
+
+if(!function_exists('v2raystore_fastDeleteOrderEverywhere')){
+function v2raystore_fastDeleteOrderEverywhere($orderOrId, $deleteLocal = true, $incrementServerCount = true, $skipPanel = false){
+    global $connection;
+    $order = is_array($orderOrId) ? $orderOrId : (function_exists('v2raystore_orderFetchById') ? v2raystore_orderFetchById($orderOrId) : null);
+    if(!is_array($order)) return ['ok'=>false, 'panel_ok'=>false, 'local_deleted'=>false, 'message'=>'سفارش داخل ربات پیدا نشد.'];
+
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = trim((string)($order['uuid'] ?? '0'));
+    $remark = trim((string)($order['remark'] ?? ''));
+    $server = function_exists('v2raystore_orderServerConfig') ? v2raystore_orderServerConfig($serverId) : [];
+    $serverType = (string)($server['type'] ?? '');
+    $plan = function_exists('v2raystore_orderPlanInfo') ? v2raystore_orderPlanInfo($order) : [];
+    $owner = function_exists('v2raystore_orderOwnerInfo') ? v2raystore_orderOwnerInfo($order['userid'] ?? '') : [];
+
+    $panelOk = false;
+    $deleteResponse = null;
+    $message = '';
+
+    if($skipPanel){
+        $panelOk = true;
+        $message = 'حذف پنل در این مرحله رد شد.';
+    }else{
+        try{
+            if($serverType === 'marzban'){
+                $deleteResponse = function_exists('deleteMarzban') ? deleteMarzban($serverId, $remark) : null;
+            }else{
+                if($inboundId > 0 && function_exists('deleteClient')) $deleteResponse = deleteClient($serverId, $inboundId, $uuid, 1);
+                elseif(function_exists('deleteInbound')) $deleteResponse = deleteInbound($serverId, $uuid, 1);
+            }
+            $panelOk = v2raystore_panelDeleteResultOk($deleteResponse);
+        }catch(Throwable $e){
+            $panelOk = false;
+            $message = $e->getMessage();
+        }
+    }
+
+    $localDeleted = false;
+    if($deleteLocal && $panelOk){
+        $orderId = intval($order['id'] ?? 0);
+        if($orderId > 0){
+            $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $orderId);
+                $stmt->execute();
+                $localDeleted = $stmt->affected_rows > 0;
+                $stmt->close();
+            }
+        }
+        if($localDeleted && $incrementServerCount && $serverId > 0){
+            $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` + 1 WHERE `id` = ?");
+            if($stmt){
+                $stmt->bind_param('i', $serverId);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+
+    return [
+        'ok' => ($panelOk && ($localDeleted || !$deleteLocal)),
+        'panel_ok' => $panelOk,
+        'local_deleted' => $localDeleted,
+        'message' => $message,
+        'order' => $order,
+        'usage' => v2raystore_deleteResponseToUsage($deleteResponse),
+        'plan' => $plan,
+        'owner' => $owner,
+        'delete_response' => $deleteResponse,
+    ];
+}}
+
+if(!function_exists('v2raystore_processCleanOldConfigsJob')){
+function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $deletePanel = true){
+    $job = v2raystore_getCleanOldConfigsJob();
+    if(empty($job['state'])) return ['ok'=>false, 'message'=>'صف فعالی وجود ندارد.', 'processed'=>0];
+    $limit = max(1, min(10, intval($limit)));
+    $maxSeconds = max(5, min(55, intval($maxSeconds)));
+    $days = max(1, intval($job['days'] ?? 10));
+    $basis = (($job['basis'] ?? 'expire_date') === 'date') ? 'date' : 'expire_date';
+    $skipIds = is_array($job['skip_ids'] ?? null) ? array_values(array_unique(array_map('intval', $job['skip_ids']))) : [];
+    if(count($skipIds) > 300) $skipIds = array_slice($skipIds, -300);
+
+    $start = time();
+    $rows = v2raystore_quickCleanOldConfigCandidates($days, $basis, $limit, $skipIds);
+    if(count($rows) === 0){
+        $remaining = v2raystore_quickCountCleanOldConfigCandidates($days, $basis);
+        $job['state'] = ($remaining > 0 && count($skipIds) > 0) ? 3 : 2;
+        $job['done_at'] = time();
+        $job['last_run'] = time();
+        $job['last_message'] = ($job['state'] == 3) ? 'صف تمام شد اما چند مورد ناموفق/ردشده باقی مانده.' : 'پاکسازی کامل شد.';
+        v2raystore_setCleanOldConfigsJob($job);
+        return ['ok'=>true, 'processed'=>0, 'remaining'=>$remaining, 'message'=>$job['last_message']];
+    }
+
+    $processed = 0; $panelOk = 0; $localDeleted = 0; $failed = 0; $errors = [];
+    foreach($rows as $row){
+        if((time() - $start) >= $maxSeconds) break;
+        $processed++;
+        $res = v2raystore_fastDeleteOrderEverywhere($row, true, true, !$deletePanel);
+        if(!empty($res['panel_ok'])) $panelOk++;
+        if(!empty($res['local_deleted'])) $localDeleted++;
+        if(empty($res['ok'])){
+            $failed++;
+            $oid = intval($row['id'] ?? 0);
+            if($oid > 0) $skipIds[] = $oid;
+            if(count($errors) < 8) $errors[] = '#' . $oid . ' ' . trim((string)($row['remark'] ?? ''));
+        }
+        usleep(180000); // فشار روی پنل کم شود
+    }
+
+    $job['processed'] = intval($job['processed'] ?? 0) + $processed;
+    $job['panel_ok'] = intval($job['panel_ok'] ?? 0) + $panelOk;
+    $job['local_deleted'] = intval($job['local_deleted'] ?? 0) + $localDeleted;
+    $job['failed'] = intval($job['failed'] ?? 0) + $failed;
+    $job['skip_ids'] = array_values(array_unique(array_map('intval', $skipIds)));
+    if(count($job['skip_ids']) > 300) $job['skip_ids'] = array_slice($job['skip_ids'], -300);
+    $job['last_errors'] = $errors;
+    $job['last_run'] = time();
+    $remaining = v2raystore_quickCountCleanOldConfigCandidates($days, $basis);
+    if($remaining <= 0){
+        $job['state'] = 2;
+        $job['done_at'] = time();
+        $job['last_message'] = 'پاکسازی کامل شد.';
+    }else{
+        $job['last_message'] = "یک مرحله اجرا شد؛ باقی‌مانده تقریبی: $remaining";
+    }
+    v2raystore_setCleanOldConfigsJob($job);
+
+    return ['ok'=>true, 'processed'=>$processed, 'panel_ok'=>$panelOk, 'local_deleted'=>$localDeleted, 'failed'=>$failed, 'remaining'=>$remaining, 'message'=>$job['last_message']];
+}}
+
+if(!function_exists('v2raystore_formatCleanOldConfigsJobStatus')){
+function v2raystore_formatCleanOldConfigsJobStatus($lastResult = null){
+    $job = v2raystore_getCleanOldConfigsJob();
+    $state = intval($job['state'] ?? 0);
+    $days = intval($job['days'] ?? 0);
+    $basis = (($job['basis'] ?? 'expire_date') === 'date') ? 'تاریخ ایجاد' : 'تاریخ انقضا';
+    $remaining = ($days > 0) ? v2raystore_quickCountCleanOldConfigCandidates($days, ($job['basis'] ?? 'expire_date')) : 0;
+    $stateText = $state == 1 ? 'در حال اجرا 🟢' : ($state == 2 ? 'کامل شد ✅' : ($state == 3 ? 'تمام شد با چند خطا ⚠️' : 'غیرفعال ⛔️'));
+    $txt = "📊 وضعیت صف پاکسازی قدیمی‌ها\n\n".
+           "وضعیت: $stateText\n".
+           "📌 معیار: $basis\n".
+           "⏱ بازه: بیشتر از $days روز\n".
+           "🔢 تعداد اولیه: " . intval($job['initial_total'] ?? 0) . "\n".
+           "✅ پردازش‌شده: " . intval($job['processed'] ?? 0) . "\n".
+           "🖥 حذف/عدم‌وجود در پنل: " . intval($job['panel_ok'] ?? 0) . "\n".
+           "🤖 حذف‌شده از ربات: " . intval($job['local_deleted'] ?? 0) . "\n".
+           "⚠️ ناموفق: " . intval($job['failed'] ?? 0) . "\n".
+           "📣 باقی‌مانده تقریبی: $remaining\n".
+           "🕒 آخرین اجرا: " . (!empty($job['last_run']) ? date('Y-m-d H:i:s', intval($job['last_run'])) : '-') . "\n".
+           "💬 پیام: " . trim((string)($job['last_message'] ?? '-'));
+    if(is_array($lastResult)){
+        $txt .= "\n\nآخرین مرحله:\n".
+                "پردازش: " . intval($lastResult['processed'] ?? 0) . " | ربات: " . intval($lastResult['local_deleted'] ?? 0) . " | خطا: " . intval($lastResult['failed'] ?? 0);
+    }
+    $errs = is_array($job['last_errors'] ?? null) ? $job['last_errors'] : [];
+    if(count($errs)) $txt .= "\n\nنمونه خطا:\n" . implode("\n", array_slice($errs, 0, 5));
+    return $txt;
+}}
 
 function v2raystore_syncBroadCleanupCandidates($days, $basis = 'expire_date', $max = 300){
     global $connection;
@@ -7657,8 +8010,8 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_ENCODING => '',
                 CURLOPT_MAXREDIRS => 10,
-                CURLOPT_CONNECTTIMEOUT => 15,
-                CURLOPT_TIMEOUT => 15,
+                CURLOPT_CONNECTTIMEOUT => 6,
+                CURLOPT_TIMEOUT => 6,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                 CURLOPT_CUSTOMREQUEST => 'POST',
@@ -7685,8 +8038,8 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_ENCODING => '',
                 CURLOPT_MAXREDIRS => 10,
-                CURLOPT_CONNECTTIMEOUT => 15,  
-                CURLOPT_TIMEOUT => 15,
+                CURLOPT_CONNECTTIMEOUT => 6,  
+                CURLOPT_TIMEOUT => 6,
                 CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                 CURLOPT_CUSTOMREQUEST => 'POST',
@@ -7791,8 +8144,8 @@ function editInboundRemark($server_id, $uuid, $newRemark){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,      // timeout on connect
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,      // timeout on connect
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -7937,8 +8290,8 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,      // timeout on connect
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,      // timeout on connect
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8046,8 +8399,8 @@ function changeInboundState($server_id, $uuid){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,      // timeout on connect
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,      // timeout on connect
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8173,8 +8526,8 @@ function renewInboundUuid($server_id, $uuid){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,      // timeout on connect
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,      // timeout on connect
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8303,8 +8656,8 @@ function changeClientState($server_id, $inbound_id, $uuid){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8330,8 +8683,8 @@ function changeClientState($server_id, $inbound_id, $uuid){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8465,8 +8818,8 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8492,8 +8845,8 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8630,8 +8983,8 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8657,8 +9010,8 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8829,8 +9182,8 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8856,8 +9209,8 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -8976,8 +9329,8 @@ function deleteInbound($server_id, $uuid, $delete = 0){
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -9054,8 +9407,8 @@ function resetIpLog($server_id, $remark){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -9131,8 +9484,8 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -9296,8 +9649,8 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -9323,8 +9676,8 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,
-            CURLOPT_CONNECTTIMEOUT => 15,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_CONNECTTIMEOUT => 6,
+            CURLOPT_TIMEOUT => 6,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
             CURLOPT_CUSTOMREQUEST => 'POST',
@@ -10100,8 +10453,8 @@ function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $secu
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -10583,8 +10936,8 @@ function editInbound($server_id, $uniqid, $uuid, $protocol, $netType = 'tcp', $s
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',
@@ -11114,8 +11467,8 @@ function getJson($server_id){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => ($serverType == "sanaei_new" ? 'GET' : 'POST'),
@@ -11188,8 +11541,8 @@ function getNewCert($server_id){
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15,
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => ($serverType == "sanaei_new" ? 'GET' : 'POST'),
@@ -11826,8 +12179,8 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 15, 
-        CURLOPT_TIMEOUT => 15,
+        CURLOPT_CONNECTTIMEOUT => 6, 
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => 'POST',

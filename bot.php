@@ -3871,13 +3871,12 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
     if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
 
-    // این بار فقط به expire_date ربات تکیه نمی‌کنیم؛ قبل از شمارش، از پنل sync سبک می‌گیریم.
-    $syncedBeforePreview = function_exists('v2raystore_syncBroadCleanupCandidates') ? v2raystore_syncBroadCleanupCandidates($days, $basis, 500) : 0;
-    $candidates = function_exists('v2raystore_getCleanOldConfigCandidates') ? v2raystore_getCleanOldConfigCandidates($days, $basis, 1000, false) : [];
-    $total = count($candidates);
+    // پیش‌نمایش کاملاً سبک: اینجا هیچ درخواستی به پنل زده نمی‌شود تا ربات هنگ نکند.
+    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, $basis) : 0;
+    $candidates = function_exists('v2raystore_quickCleanOldConfigCandidates') ? v2raystore_quickCleanOldConfigCandidates($days, $basis, 15) : [];
 
     if($total <= 0){
-        editText($message_id, "✅ موردی برای حذف پیدا نشد.\n\n🔄 sync از پنل: $syncedBeforePreview مورد\n\nاگر مطمئنی داخل پنل اکانت منقضی داری ولی اینجا نمیاد، یک‌بار معیار را روی «تاریخ ایجاد» بگذار و دوباره پیش‌نمایش بزن.", json_encode(['inline_keyboard'=>[
+        editText($message_id, "✅ موردی برای حذف پیدا نشد.\n\n⚡️ این بررسی سبک است و برای جلوگیری از هنگ، هنگام کلیک به پنل وصل نمی‌شود. اگر داخل پنل مورد منقضی داری ولی اینجا نمی‌آید، اول به‌روزرسانی کانفیگ‌ها/Sync را اجرا کن یا معیار را روی «تاریخ ایجاد» بگذار.", json_encode(['inline_keyboard'=>[
             [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
             [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
         ]], JSON_UNESCAPED_UNICODE));
@@ -3885,30 +3884,40 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     }
 
     $lines = [];
-    foreach(array_slice($candidates, 0, 15) as $row){
+    foreach($candidates as $row){
         $oid = intval($row['id']);
         $uid = intval($row['userid']);
-        $rm  = $row['remark'] ?? '-';
+        $rm  = trim((string)($row['remark'] ?? '-'));
+        if($rm === '') $rm = '-';
         $cd  = intval($row['date'] ?? 0) > 0 ? jdate("Y-m-d", intval($row['date'])) : '-';
-        $ed  = intval($row['expire_date'] ?? 0) > 0 ? jdate("Y-m-d", intval($row['expire_date'])) : '-';
+        $expRaw = intval($row['expire_date'] ?? 0);
+        if($expRaw > 9999999999) $expRaw = intval($expRaw / 1000);
+        $ed  = $expRaw > 0 ? jdate("Y-m-d", $expRaw) : '-';
         $lines[] = "#$oid | $uid | $rm | ایجاد:$cd | انقضا:$ed";
     }
 
     $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
+    $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : [];
+    $jobLine = (!empty($job['state'])) ? "\n\n⚠️ یک صف پاکسازی فعال است. اول وضعیتش را ببین یا متوقفش کن." : "";
 
-    $msg = "🔍 پیش‌نمایش پاکسازی\n\n".
+    $msg = "🔍 پیش‌نمایش پاکسازی سبک\n\n".
            "📌 معیار: $basisTitle\n".
            "⏱ بازه: بیشتر از $days روز\n".
-           "🔄 همگام‌سازی سبک از پنل: $syncedBeforePreview مورد\n".
-           "🔢 تعداد کل موارد قابل حذف: $total\n\n".
+           "🔢 تعداد قابل حذف: $total\n\n".
            "نمونه (حداکثر 15 مورد):\n" . implode("\n", $lines) . "\n\n".
-           "⚠️ حذف، هم از پنل انجام می‌شود هم از دیتابیس ربات. اگر پنل قبلاً حذفش کرده باشد، فقط از ربات پاک می‌شود.";
+           "⚡️ حذف‌ها مستقیم داخل کلیک اجرا نمی‌شوند؛ فقط داخل صف ثبت می‌شوند و فایل cron مرحله‌ای پاک می‌کند تا به سرور فشار نیاید." . $jobLine;
 
-    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
-        [['text'=>"🗑 حذف کن",'callback_data'=>"cleanOldConfigsDoDelete", 'style'=>'danger']],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'primary']],
-        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    $buttons = [];
+    if(!empty($job['state'])){
+        $buttons[] = [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']];
+        $buttons[] = [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']];
+    }else{
+        $buttons[] = [['text'=>"🗑 ثبت در صف حذف",'callback_data'=>"cleanOldConfigsDoDelete", 'style'=>'danger']];
+    }
+    $buttons[] = [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'primary']];
+    $buttons[] = [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]];
+
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>$buttons], JSON_UNESCAPED_UNICODE));
     exit();
 }
 
@@ -3921,56 +3930,65 @@ if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdm
     $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
     if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
 
-    $syncedBeforeDelete = function_exists('v2raystore_syncBroadCleanupCandidates') ? v2raystore_syncBroadCleanupCandidates($days, $basis, 500) : 0;
-    $allCandidates = function_exists('v2raystore_getCleanOldConfigCandidates') ? v2raystore_getCleanOldConfigCandidates($days, $basis, 1000, false) : [];
-    $total = count($allCandidates);
-
+    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, $basis) : 0;
     if($total <= 0){
-        editText($message_id, "✅ موردی برای حذف پیدا نشد.\n\n🔄 sync از پنل: $syncedBeforeDelete مورد", json_encode(['inline_keyboard'=>[
+        editText($message_id, "✅ موردی برای حذف پیدا نشد.", json_encode(['inline_keyboard'=>[
             [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
             [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
         ]], JSON_UNESCAPED_UNICODE));
         exit();
     }
 
-    // برای جلوگیری از هنگ، هر بار حداکثر 80 مورد حذف می‌شود. اگر بیشتر ماند دوباره همین دکمه را بزن.
-    $limit = 80;
-    $candidates = array_slice($allCandidates, 0, $limit);
-    $deletedLocal = 0;
-    $deletedPanel = 0;
-    $failed = 0;
-    $failedSamples = [];
-
-    foreach($candidates as $row){
-        if(!function_exists('v2raystore_deleteOrderEverywhere')){
-            $failed++;
-            continue;
-        }
-        $result = v2raystore_deleteOrderEverywhere($row, true, true);
-        if(!empty($result['panel_ok'])) $deletedPanel++;
-        if(!empty($result['local_deleted'])) $deletedLocal++;
-        if(empty($result['ok'])){
-            $failed++;
-            if(count($failedSamples) < 5) $failedSamples[] = '#' . intval($row['id']) . ' ' . ($row['remark'] ?? '');
-        }
+    if(function_exists('v2raystore_startCleanOldConfigsJob')){
+        $job = v2raystore_startCleanOldConfigsJob($days, $basis, $from_id, $total);
+    }else{
+        $job = ['state'=>0];
     }
 
     $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
-    $remaining = max(0, $total - count($candidates));
-    $failText = count($failedSamples) ? "\nنمونه خطا:\n" . implode("\n", $failedSamples) : "";
-    $againText = $remaining > 0 ? "\n\n⚠️ هنوز $remaining مورد دیگر باقی مانده. برای جلوگیری از هنگ، دوباره «حذف کن» را بزن تا مرحله بعدی پاک شود." : "";
+    $txt = "✅ صف پاکسازی ثبت شد.\n\n".
+           "📌 معیار: $basisTitle\n".
+           "⏱ بازه: بیشتر از $days روز\n".
+           "🔢 تعداد اولیه: $total\n\n".
+           "از این به بعد حذف‌ها مرحله‌ای انجام می‌شود تا ربات و سرور هنگ نکنند.\n".
+           "فایل cron را هر ۱ دقیقه اجرا کن:\n".
+           "<code>settings/cleanOldConfigsWorker.php</code>";
 
-    $report = "🗑 گزارش پاکسازی\n\n".
-              "📌 معیار: $basisTitle\n".
-              "⏱ بازه: بیشتر از $days روز\n".
-              "🔄 همگام‌سازی قبل از حذف: $syncedBeforeDelete مورد\n".
-              "🧾 تعداد قابل حذف قبل اجرا: $total\n".
-              "🖥 حذف/عدم‌وجود در پنل: $deletedPanel\n".
-              "🤖 حذف‌شده از ربات: $deletedLocal\n".
-              "⚠️ ناموفق: $failed\n".
-              "🕒 زمان: " . jdate("Y-m-d H:i", time()) . $failText . $againText;
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
+        [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']],
+        [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],
+        [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
 
-    editText($message_id, $report, json_encode(['inline_keyboard'=>[
+if($data == "cleanOldConfigsQueueStatus" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $txt = function_exists('v2raystore_formatCleanOldConfigsJobStatus') ? v2raystore_formatCleanOldConfigsJobStatus() : "صف پاکسازی در دسترس نیست.";
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
+        [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],
+        [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsQueueRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    // فقط یک مرحله خیلی کوچک اجرا می‌شود؛ اجرای اصلی باید با cron باشد.
+    $res = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 18, true) : ['processed'=>0];
+    $txt = function_exists('v2raystore_formatCleanOldConfigsJobStatus') ? v2raystore_formatCleanOldConfigsJobStatus($res) : "یک مرحله اجرا شد.";
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
+        [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],
+        [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsQueueStop" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(function_exists('v2raystore_stopCleanOldConfigsJob')) v2raystore_stopCleanOldConfigsJob();
+    editText($message_id, "⛔️ صف پاکسازی متوقف شد.", json_encode(['inline_keyboard'=>[
         [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
         [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE));
@@ -11554,7 +11572,7 @@ elseif($data=="noDontDelete"){
 }
 elseif(preg_match('/^yesDeleteConfig(\d+)/',$data,$match)){
     $oid = intval($match[1]);
-    $deleteResult = function_exists('v2raystore_deleteOrderEverywhere') ? v2raystore_deleteOrderEverywhere($oid, true, true) : ['ok'=>false, 'message'=>'تابع حذف امن پیدا نشد.'];
+    $deleteResult = function_exists('v2raystore_fastDeleteOrderEverywhere') ? v2raystore_fastDeleteOrderEverywhere($oid, true, true) : (function_exists('v2raystore_deleteOrderEverywhere') ? v2raystore_deleteOrderEverywhere($oid, true, true) : ['ok'=>false, 'message'=>'تابع حذف پیدا نشد.']);
 
     if(empty($deleteResult['panel_ok']) && empty($deleteResult['local_deleted'])){
         editText($message_id, "❌ حذف کانفیگ انجام نشد. اتصال پنل یا اطلاعات کانفیگ را بررسی کن.", json_encode([
@@ -11601,7 +11619,7 @@ elseif(preg_match('/^delUserConfig(\d+)/',$data,$match) && ($from_id == $admin |
 }
 elseif(preg_match('/^yesDeleteUserConfig(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $oid = intval($match[1]);
-    $deleteResult = function_exists('v2raystore_deleteOrderEverywhere') ? v2raystore_deleteOrderEverywhere($oid, true, true) : ['ok'=>false, 'message'=>'تابع حذف امن پیدا نشد.'];
+    $deleteResult = function_exists('v2raystore_fastDeleteOrderEverywhere') ? v2raystore_fastDeleteOrderEverywhere($oid, true, true) : (function_exists('v2raystore_deleteOrderEverywhere') ? v2raystore_deleteOrderEverywhere($oid, true, true) : ['ok'=>false, 'message'=>'تابع حذف پیدا نشد.']);
 
     if(empty($deleteResult['panel_ok']) && empty($deleteResult['local_deleted'])){
         editText($message_id, "❌ حذف کانفیگ انجام نشد. اتصال پنل یا اطلاعات کانفیگ را بررسی کن.", json_encode([
