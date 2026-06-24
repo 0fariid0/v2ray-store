@@ -4076,50 +4076,194 @@ function v2raystore_refreshCleanOldIndexForOrder($order, $updateDb = true){
 }}
 
 if(!function_exists('v2raystore_refreshCleanOldExpiredIndex')){
-function v2raystore_refreshCleanOldExpiredIndex($limit = 20, $maxSeconds = 25){
+function v2raystore_refreshCleanOldExpiredIndex($limit = 5, $maxSeconds = 18, $resetCursor = false){
     global $connection;
-    $limit = max(1, min(50, intval($limit)));
-    $maxSeconds = max(3, min(55, intval($maxSeconds)));
+    $limit = max(1, min(20, intval($limit)));
+    $maxSeconds = max(3, min(25, intval($maxSeconds)));
     v2raystore_ensureCleanOldIndexTable();
 
+    if($resetCursor) v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', '0');
     $cursor = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_CURSOR') ?? 0);
     $start = time();
     $processed = 0; $finished = 0; $renewed = 0; $notFound = 0; $checked = 0;
+    $cycleDone = false;
 
-    while($processed < $limit && (time() - $start) < $maxSeconds){
-        $left = $limit - $processed;
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `id` > ? ORDER BY `id` ASC LIMIT ?");
-        if(!$stmt) break;
-        $stmt->bind_param('ii', $cursor, $left);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        $rows = [];
-        while($row = $res->fetch_assoc()) $rows[] = $row;
-        $stmt->close();
+    $left = $limit;
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `id` > ? ORDER BY `id` ASC LIMIT ?");
+    if(!$stmt){
+        return ['ok'=>false, 'processed'=>0, 'checked'=>0, 'finished'=>0, 'active_or_renewed'=>0, 'not_found'=>0, 'cursor'=>$cursor, 'cycle_done'=>false, 'message'=>'prepare_failed'];
+    }
+    $stmt->bind_param('ii', $cursor, $left);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = [];
+    while($row = $res->fetch_assoc()) $rows[] = $row;
+    $stmt->close();
 
-        if(count($rows) === 0){
-            if($cursor === 0) break;
-            $cursor = 0;
-            v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', '0');
-            continue;
-        }
+    if(count($rows) === 0){
+        // رسیدیم انتهای لیست؛ دوباره از اول شروع نمی‌کنیم تا فشار ایجاد نشود.
+        v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', '0');
+        v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_LAST', strval(time()));
+        return ['ok'=>true, 'processed'=>0, 'checked'=>0, 'finished'=>0, 'active_or_renewed'=>0, 'not_found'=>0, 'cursor'=>0, 'cycle_done'=>true, 'message'=>'scan_cycle_done'];
+    }
 
-        foreach($rows as $row){
-            if((time() - $start) >= $maxSeconds) break 2;
-            $cursor = intval($row['id'] ?? $cursor);
-            $processed++;
-            $r = v2raystore_refreshCleanOldIndexForOrder($row, true);
-            if(!empty($r['checked'])) $checked++;
-            if(!empty($r['finished'])) $finished++;
-            elseif(!empty($r['found'])) $renewed++;
-            elseif(!empty($r['checked'])) $notFound++;
-            usleep(90000);
-        }
+    $hitEnd = count($rows) < $left;
+    foreach($rows as $row){
+        if((time() - $start) >= $maxSeconds) break;
+        $cursor = intval($row['id'] ?? $cursor);
+        $processed++;
+        $r = v2raystore_refreshCleanOldIndexForOrder($row, true);
+        if(!empty($r['checked'])) $checked++;
+        if(!empty($r['finished'])) $finished++;
+        elseif(!empty($r['found'])) $renewed++;
+        elseif(!empty($r['checked'])) $notFound++;
+        usleep(90000);
+    }
+
+    if($hitEnd && $processed >= count($rows)){
+        $cursor = 0;
+        $cycleDone = true;
     }
 
     v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', strval($cursor));
     v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_LAST', strval(time()));
-    return ['ok'=>true, 'processed'=>$processed, 'checked'=>$checked, 'finished'=>$finished, 'active_or_renewed'=>$renewed, 'not_found'=>$notFound, 'cursor'=>$cursor];
+    return ['ok'=>true, 'processed'=>$processed, 'checked'=>$checked, 'finished'=>$finished, 'active_or_renewed'=>$renewed, 'not_found'=>$notFound, 'cursor'=>$cursor, 'cycle_done'=>$cycleDone, 'message'=>($cycleDone ? 'scan_cycle_done' : 'scan_step_done')];
+}}
+
+if(!function_exists('v2raystore_countActiveOrdersForCleanOld')){
+function v2raystore_countActiveOrdersForCleanOld(){
+    global $connection;
+    $res = @$connection->query("SELECT COUNT(*) AS cnt FROM `orders_list` WHERE `status`=1");
+    if($res){
+        $row = $res->fetch_assoc();
+        return intval($row['cnt'] ?? 0);
+    }
+    return 0;
+}}
+
+if(!function_exists('v2raystore_getCleanOldPanelScanSession')){
+function v2raystore_getCleanOldPanelScanSession(){
+    $raw = v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_SESSION');
+    $session = json_decode((string)$raw, true);
+    return is_array($session) ? $session : ['active'=>0];
+}}
+
+if(!function_exists('v2raystore_setCleanOldPanelScanSession')){
+function v2raystore_setCleanOldPanelScanSession($session){
+    if(!is_array($session)) $session = ['active'=>0];
+    return v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_SESSION', json_encode($session, JSON_UNESCAPED_UNICODE));
+}}
+
+if(!function_exists('v2raystore_startCleanOldPanelScan')){
+function v2raystore_startCleanOldPanelScan($mode = 'manual', $reset = true){
+    $mode = in_array($mode, ['manual','daily'], true) ? $mode : 'manual';
+    if($reset){
+        v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', '0');
+    }
+    $session = [
+        'active' => 1,
+        'mode' => $mode,
+        'started_at' => time(),
+        'last_run' => 0,
+        'done_at' => 0,
+        'processed' => 0,
+        'checked' => 0,
+        'finished' => 0,
+        'active_or_renewed' => 0,
+        'not_found' => 0,
+        'total' => v2raystore_countActiveOrdersForCleanOld(),
+        'last_message' => ($mode === 'daily' ? 'بررسی روزانه شروع شد.' : 'بررسی دستی شروع شد.'),
+    ];
+    v2raystore_setCleanOldPanelScanSession($session);
+    return $session;
+}}
+
+if(!function_exists('v2raystore_stopCleanOldPanelScan')){
+function v2raystore_stopCleanOldPanelScan(){
+    $session = v2raystore_getCleanOldPanelScanSession();
+    $session['active'] = 0;
+    $session['stopped_at'] = time();
+    $session['last_message'] = 'بررسی پنل متوقف شد.';
+    return v2raystore_setCleanOldPanelScanSession($session);
+}}
+
+if(!function_exists('v2raystore_isCleanOldDailyScanDue')){
+function v2raystore_isCleanOldDailyScanDue(){
+    try{
+        $tz = new DateTimeZone('Asia/Tehran');
+        $dt = new DateTime('now', $tz);
+        $today = $dt->format('Y-m-d');
+        $hour = intval($dt->format('G'));
+        $last = (string)(v2raystore_cleanSettingGet('CLEAN_OLD_DAILY_SCAN_DATE') ?? '');
+        return ($hour === 4 && $last !== $today);
+    }catch(Throwable $e){
+        return false;
+    }
+}}
+
+if(!function_exists('v2raystore_markCleanOldDailyScanStarted')){
+function v2raystore_markCleanOldDailyScanStarted(){
+    try{
+        $dt = new DateTime('now', new DateTimeZone('Asia/Tehran'));
+        v2raystore_cleanSettingSet('CLEAN_OLD_DAILY_SCAN_DATE', $dt->format('Y-m-d'));
+    }catch(Throwable $e){
+        v2raystore_cleanSettingSet('CLEAN_OLD_DAILY_SCAN_DATE', date('Y-m-d'));
+    }
+}}
+
+if(!function_exists('v2raystore_runCleanOldPanelScanStep')){
+function v2raystore_runCleanOldPanelScanStep($limit = 5, $maxSeconds = 18, $startIfDailyDue = true){
+    $session = v2raystore_getCleanOldPanelScanSession();
+    if((empty($session['active']) || intval($session['active']) !== 1) && $startIfDailyDue && v2raystore_isCleanOldDailyScanDue()){
+        v2raystore_markCleanOldDailyScanStarted();
+        $session = v2raystore_startCleanOldPanelScan('daily', true);
+    }
+
+    if(empty($session['active']) || intval($session['active']) !== 1){
+        return ['ok'=>true, 'skipped'=>true, 'message'=>'scan_not_active'];
+    }
+
+    $res = v2raystore_refreshCleanOldExpiredIndex($limit, $maxSeconds, false);
+    $session['last_run'] = time();
+    $session['processed'] = intval($session['processed'] ?? 0) + intval($res['processed'] ?? 0);
+    $session['checked'] = intval($session['checked'] ?? 0) + intval($res['checked'] ?? 0);
+    $session['finished'] = intval($session['finished'] ?? 0) + intval($res['finished'] ?? 0);
+    $session['active_or_renewed'] = intval($session['active_or_renewed'] ?? 0) + intval($res['active_or_renewed'] ?? 0);
+    $session['not_found'] = intval($session['not_found'] ?? 0) + intval($res['not_found'] ?? 0);
+    $session['cursor'] = intval($res['cursor'] ?? 0);
+    $session['last_message'] = !empty($res['cycle_done']) ? 'بررسی کامل پنل تمام شد.' : 'یک مرحله بررسی انجام شد.';
+
+    if(!empty($res['cycle_done'])){
+        $session['active'] = 0;
+        $session['done_at'] = time();
+        v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_FULL_LAST', strval(time()));
+    }
+    v2raystore_setCleanOldPanelScanSession($session);
+    return array_merge($res, ['session'=>$session]);
+}}
+
+if(!function_exists('v2raystore_formatCleanOldPanelScanStatus')){
+function v2raystore_formatCleanOldPanelScanStatus(){
+    $session = v2raystore_getCleanOldPanelScanSession();
+    $active = !empty($session['active']) && intval($session['active']) === 1;
+    $mode = (string)($session['mode'] ?? '-');
+    $modeTxt = $mode === 'daily' ? 'روزانه ساعت ۴ ایران' : ($mode === 'manual' ? 'دستی' : '-');
+    $lastScan = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0);
+    $lastFull = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_FULL_LAST') ?? 0);
+    $cursor = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_CURSOR') ?? 0);
+    $txt = "\n\n🔄 وضعیت بررسی پنل:\n".
+           "حالت: " . ($active ? 'در حال بررسی 🟢' : 'غیرفعال/تمام شده ✅') . "\n".
+           "نوع: $modeTxt\n".
+           "کل تقریبی: " . intval($session['total'] ?? 0) . "\n".
+           "بررسی‌شده این دور: " . intval($session['processed'] ?? 0) . "\n".
+           "تمام‌شده پیدا شده: " . intval($session['finished'] ?? 0) . "\n".
+           "تمدید/فعال شده: " . intval($session['active_or_renewed'] ?? 0) . "\n".
+           "پیدا نشد در پنل: " . intval($session['not_found'] ?? 0) . "\n".
+           "cursor: $cursor\n".
+           "آخرین مرحله: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n".
+           "آخرین بررسی کامل: " . ($lastFull > 0 ? date('Y-m-d H:i:s', $lastFull) : '-') . "\n".
+           "پیام: " . trim((string)($session['last_message'] ?? '-'));
+    return $txt;
 }}
 
 if(!function_exists('v2raystore_quickCountCleanOldConfigCandidates')){

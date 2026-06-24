@@ -3795,19 +3795,30 @@ if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin']
     $autoTitle = ($auto == "on") ? "روشن ✅" : "خاموش 🚫";
     $lastScan = function_exists('v2raystore_cleanSettingGet') ? intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0) : 0;
     $ready = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
+    $scanStatus = function_exists('v2raystore_formatCleanOldPanelScanStatus') ? v2raystore_formatCleanOldPanelScanStatus() : "";
 
-    $txt = "🗑 پاکسازی کانفیگ‌های تمام‌شده\n\n".
-           "📌 معیار جدید: فقط وضعیت واقعی خود پنل؛ اتمام زمان یا حجم.\n".
-           "❌ تاریخ خرید/زمان اولیه کانفیگ دیگر بررسی نمی‌شود.\n".
-           "⏱ حذف بعد از: بیشتر از $days روز از زمان اتمام واقعی\n".
-           "🚫 حذف خودکار: $autoTitle\n".
-           "📦 آماده حذف در لیست: $ready\n".
-           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\n".
-           "برای اینکه به سرور فشار نیاید، worker هر دقیقه فقط چند کانفیگ را از پنل بررسی می‌کند؛ اگر کانفیگ تمدید شده باشد از لیست حذف می‌شود.";
+    $txt = "🗑 پاکسازی کانفیگ‌های تمام‌شده
+
+".
+           "📌 معیار: فقط وضعیت واقعی خود پنل؛ اتمام زمان یا حجم.
+".
+           "❌ تاریخ خرید/زمان اولیه کانفیگ بررسی نمی‌شود.
+".
+           "⏱ حذف بعد از: بیشتر از $days روز از زمان اتمام واقعی
+".
+           "🚫 حذف خودکار: $autoTitle
+".
+           "📦 آماده حذف در لیست: $ready
+".
+           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "
+
+".
+           "⚙️ بررسی پنل مرحله‌ای است: هر ۲۰ ثانیه فقط ۵ کانفیگ چک می‌شود. بررسی کامل روزانه ساعت ۴ صبح ایران شروع می‌شود و تا پایان، مرحله‌ای ادامه پیدا می‌کند." . $scanStatus;
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"🔍 پیش‌نمایش لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
-        [['text'=>"🔄 بررسی سبک از پنل",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
+        [['text'=>"🔍 پیش‌نمایش / بروزرسانی لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
+        [['text'=>"🔄 شروع / ادامه بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
+        [['text'=>"⛔️ توقف بررسی پنل",'callback_data'=>"cleanOldConfigsScanStop", 'style'=>'danger']],
         [['text'=>"⏱ تعداد روز",'callback_data'=>"cleanOldConfigsSetDays", 'style'=>'primary']],
         [['text'=>"🚫 حذف خودکار: $autoTitle",'callback_data'=>"cleanOldConfigsToggleAuto", 'style'=>($auto == 'on' ? 'success' : 'danger')]],
         [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']],
@@ -3865,8 +3876,8 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     $lastScan = function_exists('v2raystore_cleanSettingGet') ? intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0) : 0;
 
     if($total <= 0){
-        editText($message_id, "✅ فعلاً موردی در لیست پاکسازی نیست.\n\n📌 معیار فقط خود پنل است: اگر زمان یا حجم کانفیگ تمام شود، worker آن را به لیست اضافه می‌کند؛ اگر تمدید شود، از لیست حذف می‌شود.\n\n🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\nاگر داخل پنل کانفیگ تمام‌شده زیاد داری، cron را فعال کن یا چند بار «بررسی سبک از پنل» را بزن تا مرحله‌ای شناسایی شوند و به سرور فشار نیاید.", json_encode(['inline_keyboard'=>[
-            [['text'=>"🔄 بررسی سبک از پنل",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
+        editText($message_id, "✅ فعلاً موردی در لیست پاکسازی نیست.\n\n📌 معیار فقط خود پنل است: اگر زمان یا حجم کانفیگ تمام شود، worker آن را به لیست اضافه می‌کند؛ اگر تمدید شود، از لیست حذف می‌شود.\n\n🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\nاگر داخل پنل کانفیگ تمام‌شده زیاد داری، «شروع / ادامه بررسی دستی» را بزن؛ worker هر ۲۰ ثانیه ۵ مورد را چک می‌کند و لیست مرحله‌ای بروز می‌شود.", json_encode(['inline_keyboard'=>[
+            [['text'=>"🔄 شروع / ادامه بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
             [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
             [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
         ]], JSON_UNESCAPED_UNICODE));
@@ -3896,12 +3907,13 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
            "📌 معیار: فقط اتمام واقعی زمان/حجم در پنل\n".
            "⏱ بازه: بیشتر از $days روز از اتمام\n".
            "🔢 تعداد آماده حذف: $total\n".
-           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\n".
+           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . (function_exists('v2raystore_formatCleanOldPanelScanStatus') ? v2raystore_formatCleanOldPanelScanStatus() : "") . "\n\n".
            "نمونه (حداکثر 15 مورد):\n" . implode("\n", $lines) . "\n\n".
            "قبل از حذف نهایی، worker همان کانفیگ را دوباره از پنل چک می‌کند؛ اگر تمدید شده باشد حذف نمی‌شود." . $jobLine;
 
     $buttons = [];
-    $buttons[] = [['text'=>"🔄 بررسی سبک از پنل",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']];
+    $buttons[] = [['text'=>"🔄 شروع / ادامه بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']];
+    $buttons[] = [['text'=>"⛔️ توقف بررسی پنل",'callback_data'=>"cleanOldConfigsScanStop", 'style'=>'danger']];
     if(!empty($job['state'])){
         $buttons[] = [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']];
         $buttons[] = [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']];
@@ -3916,15 +3928,45 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
 }
 
 if($data == "cleanOldConfigsScanRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $res = function_exists('v2raystore_refreshCleanOldExpiredIndex') ? v2raystore_refreshCleanOldExpiredIndex(5, 12) : ['processed'=>0];
-    $txt = "🔄 یک مرحله بررسی سبک از پنل انجام شد.\n\n".
-           "بررسی‌شده: " . intval($res['processed'] ?? 0) . "\n".
-           "پیدا شده تمام‌شده: " . intval($res['finished'] ?? 0) . "\n".
-           "فعال/تمدید و حذف از لیست: " . intval($res['active_or_renewed'] ?? 0) . "\n".
-           "پیدا نشد در پنل: " . intval($res['not_found'] ?? 0) . "\n\n".
-           "برای اسکن کامل بدون فشار، cron هر دقیقه اجرا شود.";
+    if(function_exists('v2raystore_getCleanOldPanelScanSession') && function_exists('v2raystore_startCleanOldPanelScan')){
+        $session = v2raystore_getCleanOldPanelScanSession();
+        if(empty($session['active']) || intval($session['active']) !== 1){
+            v2raystore_startCleanOldPanelScan('manual', true);
+        }
+    }
+    $res = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(5, 17, false) : ['processed'=>0];
+    $session = function_exists('v2raystore_getCleanOldPanelScanSession') ? v2raystore_getCleanOldPanelScanSession() : [];
+    $active = !empty($session['active']) && intval($session['active']) === 1;
+    $txt = "🔄 بررسی دستی پنل انجام شد.
+
+".
+           "در این مرحله بررسی‌شده: " . intval($res['processed'] ?? 0) . "
+".
+           "پیدا شده تمام‌شده: " . intval($res['finished'] ?? 0) . "
+".
+           "فعال/تمدید و حذف از لیست: " . intval($res['active_or_renewed'] ?? 0) . "
+".
+           "پیدا نشد در پنل: " . intval($res['not_found'] ?? 0) . "
+
+".
+           "وضعیت کلی:" . (function_exists('v2raystore_formatCleanOldPanelScanStatus') ? v2raystore_formatCleanOldPanelScanStatus() : '') . "
+
+".
+           ($active ? "برای ادامه، یا همین دکمه را دوباره بزن، یا صبر کن cron هر ۲۰ ثانیه ۵ مورد دیگر را بررسی کند." : "✅ بررسی کامل شد و لیست بروزرسانی شد.");
     editText($message_id, $txt, json_encode(['inline_keyboard'=>[
-        [['text'=>"🔍 پیش‌نمایش لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
+        [['text'=>($active ? "🔄 ادامه بررسی دستی" : "🔄 شروع بررسی دوباره"),'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
+        [['text'=>"🔍 پیش‌نمایش / بروزرسانی لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
+        [['text'=>"⛔️ توقف بررسی پنل",'callback_data'=>"cleanOldConfigsScanStop", 'style'=>'danger']],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
+if($data == "cleanOldConfigsScanStop" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(function_exists('v2raystore_stopCleanOldPanelScan')) v2raystore_stopCleanOldPanelScan();
+    editText($message_id, "⛔️ بررسی مرحله‌ای پنل متوقف شد.", json_encode(['inline_keyboard'=>[
+        [['text'=>"🔄 شروع بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
         [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
         [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE));
@@ -3959,8 +4001,7 @@ if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdm
            "⏱ بازه: بیشتر از $days روز از اتمام واقعی\n".
            "🔢 تعداد اولیه: $total\n\n".
            "از این به بعد حذف‌ها مرحله‌ای انجام می‌شود تا ربات و سرور هنگ نکنند. قبل از حذف هم دوباره از پنل چک می‌شود که اگر تمدید شده بود حذف نشود.\n".
-           "فایل cron را هر ۱ دقیقه اجرا کن:\n".
-           "<code>settings/cleanOldConfigsWorker.php</code>";
+           "cron را از اسکریپت نصب/آپدیت با گزینه Repair cron jobs / Reset cron jobs ریست کن؛ worker هر دقیقه ۳ بار اجرا می‌شود: ثانیه ۰، ۲۰ و ۴۰.";
 
     editText($message_id, $txt, json_encode(['inline_keyboard'=>[
         [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']],
@@ -3984,7 +4025,7 @@ if($data == "cleanOldConfigsQueueStatus" && ($from_id == $admin || $userInfo['is
 
 if($data == "cleanOldConfigsQueueRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     // فقط یک مرحله خیلی کوچک اجرا می‌شود؛ اجرای اصلی باید با cron باشد.
-    $res = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 18, true) : ['processed'=>0];
+    $res = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 12, true) : ['processed'=>0];
     $txt = function_exists('v2raystore_formatCleanOldConfigsJobStatus') ? v2raystore_formatCleanOldConfigsJobStatus($res) : "یک مرحله اجرا شد.";
     editText($message_id, $txt, json_encode(['inline_keyboard'=>[
         [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],

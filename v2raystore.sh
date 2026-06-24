@@ -412,6 +412,7 @@ clean_legacy_crons() {
     grep -v "${LEGACY_BACKUP_FILE}" | \
     grep -v "${LEGACY_MESSAGE_FILE}" | \
     grep -v "${BOT_SLUG}/settings/messagev2raystore.php" | \
+    grep -v "${BOT_SLUG}/settings/cleanOldConfigsWorker.php" | \
     grep -v "${PANEL_SLUG}/backupnutif.php" > "${tmp}.new" || true
     crontab "${tmp}.new" 2>/dev/null || true
     rm -f "$tmp" "${tmp}.new"
@@ -428,11 +429,16 @@ update_crons_for_domain() {
     grep -v "${BOT_SLUG}/settings/gift2all.php" | \
     grep -v "${BOT_SLUG}/settings/tronChecker.php" | \
     grep -v "${BOT_SLUG}/settings/reportGroupBackup.php" | \
+    grep -v "${BOT_SLUG}/settings/cleanOldConfigsWorker.php" | \
+    grep -v "cleanOldConfigsWorker.php" | \
     grep -v "${PANEL_SLUG}/backupnutif.php" | \
     grep -v "v2raystore" > "${tmp}.new" || true
     {
         cat "${tmp}.new"
         echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/messagev2raystore.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/cleanOldConfigsWorker.php >/dev/null 2>&1"
+        echo "* * * * * sleep 20; cd ${BOT_DIR} && php settings/cleanOldConfigsWorker.php >/dev/null 2>&1"
+        echo "* * * * * sleep 40; cd ${BOT_DIR} && php settings/cleanOldConfigsWorker.php >/dev/null 2>&1"
         echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/rewardReport.php >/dev/null 2>&1"
         echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/warnusers.php >/dev/null 2>&1"
         echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/gift2all.php >/dev/null 2>&1"
@@ -641,7 +647,7 @@ repair_crons() {
     dom=$(current_domain)
     [ -z "$dom" ] && { error "Domain not detected."; return 1; }
     update_crons_for_domain "$dom"
-    success "Cron jobs repaired."
+    success "Cron jobs repaired. Clean-old worker runs at second 0/20/40 and daily full scan starts at 04:00 Iran time."
 }
 
 repair_dns() {
