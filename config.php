@@ -4547,6 +4547,220 @@ function v2raystore_formatCleanOldConfigsJobStatus($lastResult = null){
     return $txt;
 }}
 
+
+if(!function_exists('v2raystore_cleanOldH')){
+function v2raystore_cleanOldH($value){
+    return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}}
+
+if(!function_exists('v2raystore_cleanOldJDate')){
+function v2raystore_cleanOldJDate($ts, $withTime = true){
+    $ts = intval($ts);
+    if($ts <= 0) return '-';
+    if(function_exists('jdate')) return jdate($withTime ? 'Y/m/d H:i' : 'Y/m/d', $ts);
+    return date($withTime ? 'Y-m-d H:i' : 'Y-m-d', $ts);
+}}
+
+if(!function_exists('v2raystore_cleanOldProgressBar')){
+function v2raystore_cleanOldProgressBar($done, $total, $size = 10){
+    $done = max(0, intval($done));
+    $total = max(0, intval($total));
+    $size = max(5, min(20, intval($size)));
+    if($total <= 0) return '▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️ 0%';
+    $percent = min(100, max(0, intval(floor(($done / max(1, $total)) * 100))));
+    $filled = min($size, max(0, intval(round(($percent / 100) * $size))));
+    return str_repeat('▪️', $filled) . str_repeat('▫️', $size - $filled) . ' ' . $percent . '%';
+}}
+
+if(!function_exists('v2raystore_registerCleanOldUiMessage')){
+function v2raystore_registerCleanOldUiMessage($chatId, $messageId){
+    $chatId = trim((string)$chatId);
+    $messageId = intval($messageId);
+    if($chatId === '' || $messageId <= 0) return false;
+    $ui = ['chat_id'=>$chatId, 'message_id'=>$messageId, 'updated_at'=>time(), 'last_edit'=>0];
+    return v2raystore_cleanSettingSet('CLEAN_OLD_UI_MESSAGE', json_encode($ui, JSON_UNESCAPED_UNICODE));
+}}
+
+if(!function_exists('v2raystore_getCleanOldUiMessage')){
+function v2raystore_getCleanOldUiMessage(){
+    $raw = v2raystore_cleanSettingGet('CLEAN_OLD_UI_MESSAGE');
+    $ui = json_decode((string)$raw, true);
+    if(!is_array($ui)) return [];
+    if(empty($ui['chat_id']) || empty($ui['message_id'])) return [];
+    return $ui;
+}}
+
+if(!function_exists('v2raystore_cleanOldControlPanelKeyboard')){
+function v2raystore_cleanOldControlPanelKeyboard(){
+    $session = function_exists('v2raystore_getCleanOldPanelScanSession') ? v2raystore_getCleanOldPanelScanSession() : ['active'=>0];
+    $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : ['state'=>0];
+    $auto = (string)(v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_AUTO') ?? 'off');
+    $autoTitle = ($auto === 'on') ? 'خودکار روشن ✅' : 'خودکار خاموش 🚫';
+    $scanActive = !empty($session['active']) && intval($session['active']) === 1;
+    $jobActive = !empty($job['state']) && intval($job['state']) === 1;
+
+    $rows = [];
+    $rows[] = [
+        ['text'=>'🔄 بروزرسانی همین پیام','callback_data'=>'cleanOldConfigsRefreshPanel','style'=>'primary']
+    ];
+    $rows[] = [
+        ['text'=>($scanActive ? '▶️ ادامه بررسی پنل' : '🔍 شروع بررسی پنل'),'callback_data'=>'cleanOldConfigsScanRunOnce','style'=>'success'],
+        ['text'=>'⛔ توقف بررسی','callback_data'=>'cleanOldConfigsScanStop','style'=>'danger']
+    ];
+    $rows[] = [
+        ['text'=>($jobActive ? '▶️ اجرای یک مرحله حذف' : '🗑 ثبت صف حذف'),'callback_data'=>($jobActive ? 'cleanOldConfigsQueueRunOnce' : 'cleanOldConfigsDoDelete'),'style'=>'danger'],
+        ['text'=>'⛔ توقف حذف','callback_data'=>'cleanOldConfigsQueueStop','style'=>'danger']
+    ];
+    $rows[] = [
+        ['text'=>'⏱ روز بعد از اتمام','callback_data'=>'cleanOldConfigsSetDays','style'=>'primary'],
+        ['text'=>$autoTitle,'callback_data'=>'cleanOldConfigsToggleAuto','style'=>($auto === 'on' ? 'success' : 'danger')]
+    ];
+    $rows[] = [
+        ['text'=>'⬅️ مدیریت','callback_data'=>'managePanel','style'=>'primary']
+    ];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}}
+
+if(!function_exists('v2raystore_cleanOldReasonTitle')){
+function v2raystore_cleanOldReasonTitle($reason){
+    $reason = (string)$reason;
+    if($reason === 'volume') return 'حجم';
+    if($reason === 'time_volume') return 'زمان+حجم';
+    if($reason === 'time') return 'زمان';
+    return '-';
+}}
+
+if(!function_exists('v2raystore_cleanOldCandidatesLines')){
+function v2raystore_cleanOldCandidatesLines($days, $limit = 10){
+    $rows = function_exists('v2raystore_quickCleanOldConfigCandidates') ? v2raystore_quickCleanOldConfigCandidates($days, 'panel_expiry', $limit) : [];
+    if(!is_array($rows) || count($rows) === 0) return "فعلاً مورد آماده حذف داخل لیست نیست.";
+    $lines = [];
+    $n = 1;
+    foreach($rows as $row){
+        $oid = intval($row['id'] ?? 0);
+        $uid = v2raystore_cleanOldH($row['userid'] ?? '-');
+        $remark = trim((string)($row['remark'] ?? '-'));
+        if($remark === '') $remark = '-';
+        $remark = function_exists('mb_substr') ? mb_substr($remark, 0, 36) : substr($remark, 0, 36);
+        $remark = v2raystore_cleanOldH($remark);
+        $reason = v2raystore_cleanOldReasonTitle($row['clean_reason'] ?? '');
+        $finished = v2raystore_cleanOldJDate($row['clean_finished_at'] ?? 0, false);
+        $used = intval($row['clean_used'] ?? 0);
+        $total = intval($row['clean_total'] ?? 0);
+        if($total > 0 && function_exists('sumerize')) $usage = sumerize($used) . ' / ' . sumerize($total);
+        elseif($total > 0) $usage = round($used/1073741824, 2) . ' / ' . round($total/1073741824, 2) . 'GB';
+        else $usage = '-';
+        $lines[] = $n . ") #$oid | کاربر: $uid\n   {$remark}\n   علت: $reason | اتمام: $finished | مصرف: $usage";
+        $n++;
+    }
+    return implode("\n", $lines);
+}}
+
+if(!function_exists('v2raystore_buildCleanOldControlPanelText')){
+function v2raystore_buildCleanOldControlPanelText($lastResult = null){
+    $days = intval(v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_DAYS') ?? 10);
+    if($days <= 0) $days = 10;
+    $auto = (string)(v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_AUTO') ?? 'off');
+    $ready = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
+    $session = function_exists('v2raystore_getCleanOldPanelScanSession') ? v2raystore_getCleanOldPanelScanSession() : ['active'=>0];
+    $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : ['state'=>0];
+
+    $scanActive = !empty($session['active']) && intval($session['active']) === 1;
+    $scanTotal = intval($session['total'] ?? 0);
+    $scanDone = intval($session['processed'] ?? 0);
+    $scanMode = (string)($session['mode'] ?? '-');
+    $scanModeTxt = ($scanMode === 'daily') ? 'روزانه ساعت ۴ ایران' : (($scanMode === 'manual') ? 'دستی' : '-');
+
+    $jobState = intval($job['state'] ?? 0);
+    $jobStateTxt = $jobState === 1 ? 'در حال حذف مرحله‌ای 🟢' : ($jobState === 2 ? 'کامل شد ✅' : ($jobState === 3 ? 'تمام شد با چند خطا ⚠️' : 'غیرفعال ⛔'));
+
+    $notice = '';
+    if(is_array($lastResult) && !empty($lastResult['notice'])){
+        $notice = "\n📌 <b>آخرین کار:</b> " . v2raystore_cleanOldH($lastResult['notice']) . "\n";
+    }
+
+    $lastScan = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0);
+    $lastFull = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_FULL_LAST') ?? 0);
+    $cursor = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_CURSOR') ?? 0);
+
+    $txt = "🗑 <b>پنل مستقل پاکسازی کانفیگ‌های تمام‌شده</b>\n".
+           "این بخش دیگر داخل منوی آپدیت نیست و پیام وضعیت، تکراری ارسال نمی‌شود؛ همین پیام آپدیت می‌شود.\n".
+           $notice .
+           "\n<b>⚙️ تنظیمات</b>\n".
+           "معیار حذف: فقط وضعیت واقعی خود پنل؛ اتمام زمان یا حجم\n".
+           "حذف بعد از: بیشتر از <b>$days</b> روز از اتمام واقعی\n".
+           "حذف خودکار: " . ($auto === 'on' ? 'روشن ✅' : 'خاموش 🚫') . "\n".
+           "آماده حذف داخل لیست: <b>$ready</b>\n".
+           "\n<b>🔍 بررسی پنل</b>\n".
+           "وضعیت: " . ($scanActive ? 'در حال بررسی 🟢' : 'غیرفعال/تمام شده ✅') . "\n".
+           "نوع: $scanModeTxt\n".
+           "پیشرفت: " . v2raystore_cleanOldProgressBar($scanDone, $scanTotal) . "\n".
+           "بررسی‌شده این دور: $scanDone / " . ($scanTotal > 0 ? $scanTotal : '-') . "\n".
+           "تمام‌شده پیدا شده: " . intval($session['finished'] ?? 0) . "\n".
+           "تمدید/فعال و خروج از لیست: " . intval($session['active_or_renewed'] ?? 0) . "\n".
+           "پیدا نشد در پنل: " . intval($session['not_found'] ?? 0) . "\n".
+           "cursor: $cursor\n".
+           "آخرین مرحله: " . v2raystore_cleanOldJDate($lastScan) . "\n".
+           "آخرین بررسی کامل: " . v2raystore_cleanOldJDate($lastFull) . "\n".
+           "پیام: " . v2raystore_cleanOldH($session['last_message'] ?? '-') . "\n".
+           "\n<b>🧹 صف حذف</b>\n".
+           "وضعیت: $jobStateTxt\n".
+           "تعداد اولیه صف: " . intval($job['initial_total'] ?? 0) . "\n".
+           "حذف پردازش‌شده: " . intval($job['processed'] ?? 0) . "\n".
+           "حذف از پنل/عدم‌وجود: " . intval($job['panel_ok'] ?? 0) . "\n".
+           "حذف از ربات: " . intval($job['local_deleted'] ?? 0) . "\n".
+           "تمدید شده و حذف نشد: " . intval($job['skipped_renewed'] ?? 0) . "\n".
+           "ناموفق: " . intval($job['failed'] ?? 0) . "\n".
+           "آخرین اجرای حذف: " . v2raystore_cleanOldJDate($job['last_run'] ?? 0) . "\n".
+           "پیام حذف: " . v2raystore_cleanOldH($job['last_message'] ?? '-') . "\n";
+
+    if(is_array($lastResult)){
+        $scan = $lastResult['scan'] ?? null;
+        $delete = $lastResult['delete'] ?? null;
+        if(is_array($scan) || is_array($delete)){
+            $txt .= "\n<b>📍 آخرین مرحله worker</b>\n";
+            if(is_array($scan)){
+                $txt .= "بررسی: " . intval($scan['processed'] ?? 0) . " مورد | تمام‌شده: " . intval($scan['finished'] ?? 0) . " | تمدید/فعال: " . intval($scan['active_or_renewed'] ?? 0) . "\n";
+            }
+            if(is_array($delete)){
+                $txt .= "حذف: " . intval($delete['processed'] ?? 0) . " مورد | ربات: " . intval($delete['local_deleted'] ?? 0) . " | خطا: " . intval($delete['failed'] ?? 0) . "\n";
+            }
+        }
+    }
+
+    $txt .= "\n<b>📋 نمونه لیست آماده حذف</b>\n<pre>" . v2raystore_cleanOldH(v2raystore_cleanOldCandidatesLines($days, 10)) . "</pre>";
+    $txt .= "\nبرای فشار نیامدن به سرور، worker هر ۲۰ ثانیه فقط ۵ کانفیگ را از پنل بررسی می‌کند.";
+
+    // محدودیت تلگرام برای editMessageText حدود 4096 کاراکتر است.
+    if((function_exists('mb_strlen') ? mb_strlen($txt) : strlen($txt)) > 3900){
+        $txt = (function_exists('mb_substr') ? mb_substr($txt, 0, 3800) : substr($txt, 0, 3800)) . "\n...\n📋 لیست طولانی بود؛ برای ادامه از دکمه بروزرسانی همین پیام استفاده کن.";
+    }
+    return $txt;
+}}
+
+if(!function_exists('v2raystore_updateCleanOldUiMessage')){
+function v2raystore_updateCleanOldUiMessage($lastResult = null, $force = false){
+    if(!function_exists('bot')) return false;
+    $ui = v2raystore_getCleanOldUiMessage();
+    if(empty($ui)) return false;
+    $now = time();
+    $last = intval($ui['last_edit'] ?? 0);
+    if(!$force && $last > 0 && ($now - $last) < 8) return false;
+    $text = v2raystore_buildCleanOldControlPanelText($lastResult);
+    $markup = v2raystore_cleanOldControlPanelKeyboard();
+    $res = bot('editMessageText', [
+        'chat_id' => $ui['chat_id'],
+        'message_id' => intval($ui['message_id']),
+        'text' => $text,
+        'parse_mode' => 'HTML',
+        'reply_markup' => $markup,
+        '_timeout' => 5,
+    ]);
+    $ui['last_edit'] = $now;
+    v2raystore_cleanSettingSet('CLEAN_OLD_UI_MESSAGE', json_encode($ui, JSON_UNESCAPED_UNICODE));
+    return $res;
+}}
+
 function v2raystore_syncBroadCleanupCandidates($days, $basis = 'expire_date', $max = 300){
     $res = v2raystore_refreshCleanOldExpiredIndex(min(50, max(1, intval($max))), 45);
     return intval($res['checked'] ?? 0);

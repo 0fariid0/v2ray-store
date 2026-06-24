@@ -3395,7 +3395,6 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
 
         [['text'=>"🧰 ابزارها", 'callback_data'=>"v2raystore", 'style'=>'primary']],
         [['text'=>"➕ افزودن دستی برای کاربر",'callback_data'=>"manualAttachConfig", 'style'=>'success'], ['text'=>"✉️ پیام پس از آپدیت",'callback_data'=>"updateConfigsAfterMessage", 'style'=>'primary']],
-        [['text'=>"🗑 پاکسازی قدیمی‌ها",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'danger']],
 
         [['text'=>"🚀 شروع / ادامه",'callback_data'=>"updateConfigsRun", 'style'=>'success'], ['text'=>"📊 وضعیت",'callback_data'=>"updateConfigsStatus", 'style'=>'primary']],
         [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop", 'style'=>'danger']],
@@ -3782,71 +3781,43 @@ if($userInfo['step'] == "updateConfigsAfterMessage" && ($from_id == $admin || $u
     exit();
 }
 
-// 🗑 پاکسازی کانفیگ‌های قدیمی (با پیش‌نمایش)
+// 🗑 پنل مستقل پاکسازی کانفیگ‌های تمام‌شده
+// این پنل از بخش آپدیت جداست و همه‌ی وضعیت‌ها روی همان پیام قبلی edit می‌شوند.
 if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser();
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText() : "🗑 پنل پاکسازی در دسترس نیست.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'managePanel']]]], JSON_UNESCAPED_UNICODE);
+    editText($message_id, $txt, $keys, 'HTML');
+    exit();
+}
 
-    $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
-    if($days <= 0) $days = 10;
-
-    $auto = farid_getSettingValue("CLEAN_OLD_CONFIGS_AUTO") ?? "off"; // on/off
-    if($auto != "on") $auto = "off";
-
-    $autoTitle = ($auto == "on") ? "روشن ✅" : "خاموش 🚫";
-    $lastScan = function_exists('v2raystore_cleanSettingGet') ? intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0) : 0;
-    $ready = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
-    $scanStatus = function_exists('v2raystore_formatCleanOldPanelScanStatus') ? v2raystore_formatCleanOldPanelScanStatus() : "";
-
-    $txt = "🗑 پاکسازی کانفیگ‌های تمام‌شده
-
-".
-           "📌 معیار: فقط وضعیت واقعی خود پنل؛ اتمام زمان یا حجم.
-".
-           "❌ تاریخ خرید/زمان اولیه کانفیگ بررسی نمی‌شود.
-".
-           "⏱ حذف بعد از: بیشتر از $days روز از زمان اتمام واقعی
-".
-           "🚫 حذف خودکار: $autoTitle
-".
-           "📦 آماده حذف در لیست: $ready
-".
-           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "
-
-".
-           "⚙️ بررسی پنل مرحله‌ای است: هر ۲۰ ثانیه فقط ۵ کانفیگ چک می‌شود. بررسی کامل روزانه ساعت ۴ صبح ایران شروع می‌شود و تا پایان، مرحله‌ای ادامه پیدا می‌کند." . $scanStatus;
-
-    $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"🔍 پیش‌نمایش / بروزرسانی لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
-        [['text'=>"🔄 شروع / ادامه بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
-        [['text'=>"⛔️ توقف بررسی پنل",'callback_data'=>"cleanOldConfigsScanStop", 'style'=>'danger']],
-        [['text'=>"⏱ تعداد روز",'callback_data'=>"cleanOldConfigsSetDays", 'style'=>'primary']],
-        [['text'=>"🚫 حذف خودکار: $autoTitle",'callback_data'=>"cleanOldConfigsToggleAuto", 'style'=>($auto == 'on' ? 'success' : 'danger')]],
-        [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']],
-        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE);
-
-    editText($message_id, $txt, $keys);
+if(in_array($data ?? '', ["cleanOldConfigsPreview", "cleanOldConfigsRefreshPanel", "cleanOldConfigsQueueStatus"], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText() : "🗑 وضعیت در دسترس نیست.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'managePanel']]]], JSON_UNESCAPED_UNICODE);
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsToggleAuto" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $auto = farid_getSettingValue("CLEAN_OLD_CONFIGS_AUTO") ?? "off";
+    $auto = function_exists('v2raystore_cleanSettingGet') ? (string)(v2raystore_cleanSettingGet("CLEAN_OLD_CONFIGS_AUTO") ?? "off") : (string)(farid_getSettingValue("CLEAN_OLD_CONFIGS_AUTO") ?? "off");
     $auto = ($auto == "on") ? "off" : "on";
-    farid_setSettingValue("CLEAN_OLD_CONFIGS_AUTO", $auto);
-    alert("✅ انجام شد");
-    // بازگشت به منو
-    sendMessage("برای ادامه:", json_encode(['inline_keyboard'=>[
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    if(function_exists('v2raystore_cleanSettingSet')) v2raystore_cleanSettingSet("CLEAN_OLD_CONFIGS_AUTO", $auto);
+    else farid_setSettingValue("CLEAN_OLD_CONFIGS_AUTO", $auto);
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'وضعیت حذف خودکار تغییر کرد.']) : "✅ انجام شد";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    sendMessage("⏱ تعداد روز رو بفرست (مثلا 10).\n\nنکته: فقط کانفیگ‌های منقضی‌شده‌ای حذف میشن که از معیار انتخابی، بیشتر از این تعداد روز گذشته باشه.", $cancelKey);
+    sendMessage("⏱ تعداد روز بعد از اتمام واقعی کانفیگ را بفرست.\n\nمثال: اگر 2 بفرستی، کانفیگ‌هایی حذف می‌شوند که حداقل ۲ روز از تمام شدن زمان یا حجمشان در خود پنل گذشته باشد.\n\nفقط عدد بفرست.", $cancelKey);
     setUser("cleanOldConfigsSetDays");
     exit();
 }
-if($userInfo['step'] == "cleanOldConfigsSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(($userInfo['step'] ?? '') == "cleanOldConfigsSetDays" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     if(!is_numeric($text)){
         sendMessage("⛔️ فقط عدد بفرست.");
         exit();
@@ -3854,193 +3825,73 @@ if($userInfo['step'] == "cleanOldConfigsSetDays" && ($from_id == $admin || $user
     $days = intval($text);
     if($days < 1) $days = 1;
     if($days > 3650) $days = 3650;
-
-    farid_setSettingValue("CLEAN_OLD_CONFIGS_DAYS", strval($days));
+    if(function_exists('v2raystore_cleanSettingSet')) v2raystore_cleanSettingSet("CLEAN_OLD_CONFIGS_DAYS", strval($days));
+    else farid_setSettingValue("CLEAN_OLD_CONFIGS_DAYS", strval($days));
     setUser();
-
-    sendMessage("✅ بازه پاکسازی روی $days روز تنظیم شد.", json_encode(['inline_keyboard'=>[
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
-    exit();
-}
-
-if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    global $connection;
-
-    $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
-    if($days <= 0) $days = 10;
-
-    // پیش‌نمایش سبک: اینجا همه پنل‌ها اسکن نمی‌شوند؛ worker لیست را مرحله‌ای از خود پنل می‌سازد.
-    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
-    $candidates = function_exists('v2raystore_quickCleanOldConfigCandidates') ? v2raystore_quickCleanOldConfigCandidates($days, 'panel_expiry', 15) : [];
-    $lastScan = function_exists('v2raystore_cleanSettingGet') ? intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0) : 0;
-
-    if($total <= 0){
-        editText($message_id, "✅ فعلاً موردی در لیست پاکسازی نیست.\n\n📌 معیار فقط خود پنل است: اگر زمان یا حجم کانفیگ تمام شود، worker آن را به لیست اضافه می‌کند؛ اگر تمدید شود، از لیست حذف می‌شود.\n\n🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\nاگر داخل پنل کانفیگ تمام‌شده زیاد داری، «شروع / ادامه بررسی دستی» را بزن؛ worker هر ۲۰ ثانیه ۵ مورد را چک می‌کند و لیست مرحله‌ای بروز می‌شود.", json_encode(['inline_keyboard'=>[
-            [['text'=>"🔄 شروع / ادامه بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
-            [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-        ]], JSON_UNESCAPED_UNICODE));
-        exit();
-    }
-
-    $lines = [];
-    foreach($candidates as $row){
-        $oid = intval($row['id']);
-        $uid = intval($row['userid']);
-        $rm  = trim((string)($row['remark'] ?? '-'));
-        if($rm === '') $rm = '-';
-        $finished = intval($row['clean_finished_at'] ?? 0);
-        $finishedTxt = $finished > 0 ? jdate("Y-m-d", $finished) : '-';
-        $reasonRaw = (string)($row['clean_reason'] ?? '');
-        $reason = ($reasonRaw == 'volume') ? 'حجم' : (($reasonRaw == 'time_volume') ? 'زمان+حجم' : 'زمان');
-        $used = intval($row['clean_used'] ?? 0);
-        $totalBytes = intval($row['clean_total'] ?? 0);
-        $usageTxt = ($totalBytes > 0 && function_exists('sumerize')) ? (sumerize($used) . ' / ' . sumerize($totalBytes)) : '-';
-        $lines[] = "#$oid | $uid | $rm | علت:$reason | اتمام:$finishedTxt | مصرف:$usageTxt";
-    }
-
-    $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : [];
-    $jobLine = (!empty($job['state'])) ? "\n\n⚠️ یک صف پاکسازی فعال است. اول وضعیتش را ببین یا متوقفش کن." : "";
-
-    $msg = "🔍 پیش‌نمایش پاکسازی از روی پنل\n\n".
-           "📌 معیار: فقط اتمام واقعی زمان/حجم در پنل\n".
-           "⏱ بازه: بیشتر از $days روز از اتمام\n".
-           "🔢 تعداد آماده حذف: $total\n".
-           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . (function_exists('v2raystore_formatCleanOldPanelScanStatus') ? v2raystore_formatCleanOldPanelScanStatus() : "") . "\n\n".
-           "نمونه (حداکثر 15 مورد):\n" . implode("\n", $lines) . "\n\n".
-           "قبل از حذف نهایی، worker همان کانفیگ را دوباره از پنل چک می‌کند؛ اگر تمدید شده باشد حذف نمی‌شود." . $jobLine;
-
-    $buttons = [];
-    $buttons[] = [['text'=>"🔄 شروع / ادامه بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']];
-    $buttons[] = [['text'=>"⛔️ توقف بررسی پنل",'callback_data'=>"cleanOldConfigsScanStop", 'style'=>'danger']];
-    if(!empty($job['state'])){
-        $buttons[] = [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']];
-        $buttons[] = [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']];
-    }else{
-        $buttons[] = [['text'=>"🗑 ثبت در صف حذف",'callback_data'=>"cleanOldConfigsDoDelete", 'style'=>'danger']];
-    }
-    $buttons[] = [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu", 'style'=>'primary']];
-    $buttons[] = [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]];
-
-    editText($message_id, $msg, json_encode(['inline_keyboard'=>$buttons], JSON_UNESCAPED_UNICODE));
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>"بازه پاکسازی روی $days روز تنظیم شد."]) : "✅ بازه پاکسازی روی $days روز تنظیم شد.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>'🗑 پنل پاکسازی','callback_data'=>'cleanOldConfigsMenu']]]], JSON_UNESCAPED_UNICODE);
+    sendMessage($txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsScanRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
     if(function_exists('v2raystore_getCleanOldPanelScanSession') && function_exists('v2raystore_startCleanOldPanelScan')){
         $session = v2raystore_getCleanOldPanelScanSession();
         if(empty($session['active']) || intval($session['active']) !== 1){
             v2raystore_startCleanOldPanelScan('manual', true);
         }
     }
-    $res = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(5, 17, false) : ['processed'=>0];
-    $session = function_exists('v2raystore_getCleanOldPanelScanSession') ? v2raystore_getCleanOldPanelScanSession() : [];
-    $active = !empty($session['active']) && intval($session['active']) === 1;
-    $txt = "🔄 بررسی دستی پنل انجام شد.
-
-".
-           "در این مرحله بررسی‌شده: " . intval($res['processed'] ?? 0) . "
-".
-           "پیدا شده تمام‌شده: " . intval($res['finished'] ?? 0) . "
-".
-           "فعال/تمدید و حذف از لیست: " . intval($res['active_or_renewed'] ?? 0) . "
-".
-           "پیدا نشد در پنل: " . intval($res['not_found'] ?? 0) . "
-
-".
-           "وضعیت کلی:" . (function_exists('v2raystore_formatCleanOldPanelScanStatus') ? v2raystore_formatCleanOldPanelScanStatus() : '') . "
-
-".
-           ($active ? "برای ادامه، یا همین دکمه را دوباره بزن، یا صبر کن cron هر ۲۰ ثانیه ۵ مورد دیگر را بررسی کند." : "✅ بررسی کامل شد و لیست بروزرسانی شد.");
-    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
-        [['text'=>($active ? "🔄 ادامه بررسی دستی" : "🔄 شروع بررسی دوباره"),'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
-        [['text'=>"🔍 پیش‌نمایش / بروزرسانی لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
-        [['text'=>"⛔️ توقف بررسی پنل",'callback_data'=>"cleanOldConfigsScanStop", 'style'=>'danger']],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    $scanRes = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(5, 17, false) : ['processed'=>0];
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['scan'=>$scanRes, 'notice'=>'یک مرحله بررسی پنل انجام شد.']) : "یک مرحله اجرا شد.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsScanStop" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(function_exists('v2raystore_stopCleanOldPanelScan')) v2raystore_stopCleanOldPanelScan();
-    editText($message_id, "⛔️ بررسی مرحله‌ای پنل متوقف شد.", json_encode(['inline_keyboard'=>[
-        [['text'=>"🔄 شروع بررسی دستی",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'بررسی مرحله‌ای پنل متوقف شد.']) : "⛔️ متوقف شد.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    global $connection;
-
-    $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
+    $days = intval(function_exists('v2raystore_cleanSettingGet') ? (v2raystore_cleanSettingGet("CLEAN_OLD_CONFIGS_DAYS") ?? 10) : (farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10));
     if($days <= 0) $days = 10;
-
-    $basis = 'panel_expiry';
-
-    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, $basis) : 0;
+    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
     if($total <= 0){
-        editText($message_id, "✅ موردی برای حذف پیدا نشد.", json_encode(['inline_keyboard'=>[
-            [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-        ]], JSON_UNESCAPED_UNICODE));
+        if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+        $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'فعلاً مورد آماده حذف در لیست نیست. برای ساخت لیست، بررسی دستی را شروع کن.']) : "✅ موردی برای حذف نیست.";
+        $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+        editText($message_id, $txt, $keys, 'HTML');
         exit();
     }
-
-    if(function_exists('v2raystore_startCleanOldConfigsJob')){
-        $job = v2raystore_startCleanOldConfigsJob($days, $basis, $from_id, $total);
-    }else{
-        $job = ['state'=>0];
-    }
-
-    $txt = "✅ صف پاکسازی ثبت شد.\n\n".
-           "📌 معیار: فقط وضعیت واقعی پنل؛ اتمام زمان یا حجم\n".
-           "⏱ بازه: بیشتر از $days روز از اتمام واقعی\n".
-           "🔢 تعداد اولیه: $total\n\n".
-           "از این به بعد حذف‌ها مرحله‌ای انجام می‌شود تا ربات و سرور هنگ نکنند. قبل از حذف هم دوباره از پنل چک می‌شود که اگر تمدید شده بود حذف نشود.\n".
-           "cron را از اسکریپت نصب/آپدیت با گزینه Repair cron jobs / Reset cron jobs ریست کن؛ worker هر دقیقه ۳ بار اجرا می‌شود: ثانیه ۰، ۲۰ و ۴۰.";
-
-    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
-        [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']],
-        [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],
-        [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
-    exit();
-}
-
-if($data == "cleanOldConfigsQueueStatus" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $txt = function_exists('v2raystore_formatCleanOldConfigsJobStatus') ? v2raystore_formatCleanOldConfigsJobStatus() : "صف پاکسازی در دسترس نیست.";
-    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
-        [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],
-        [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    if(function_exists('v2raystore_startCleanOldConfigsJob')) v2raystore_startCleanOldConfigsJob($days, 'panel_expiry', $from_id, $total);
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'صف حذف ثبت شد؛ از این به بعد همان پیام مرحله‌ای آپدیت می‌شود.']) : "✅ صف ثبت شد.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsQueueRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    // فقط یک مرحله خیلی کوچک اجرا می‌شود؛ اجرای اصلی باید با cron باشد.
-    $res = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 12, true) : ['processed'=>0];
-    $txt = function_exists('v2raystore_formatCleanOldConfigsJobStatus') ? v2raystore_formatCleanOldConfigsJobStatus($res) : "یک مرحله اجرا شد.";
-    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
-        [['text'=>"▶️ اجرای دستی یک مرحله سبک",'callback_data'=>"cleanOldConfigsQueueRunOnce", 'style'=>'success']],
-        [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']],
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $deleteRes = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 12, true) : ['processed'=>0];
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['delete'=>$deleteRes, 'notice'=>'یک مرحله حذف سبک اجرا شد.']) : "یک مرحله حذف اجرا شد.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
 if($data == "cleanOldConfigsQueueStop" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(function_exists('v2raystore_stopCleanOldConfigsJob')) v2raystore_stopCleanOldConfigsJob();
-    editText($message_id, "⛔️ صف پاکسازی متوقف شد.", json_encode(['inline_keyboard'=>[
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'صف حذف متوقف شد.']) : "⛔️ صف متوقف شد.";
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+    editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
 
@@ -13436,8 +13287,11 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['create_account'], 'callback_data'=>'createMultipleAccounts', 'style'=>'success']
     ];
     $keys[] = [
-        ['text'=>$buttonValues['gift_volume_day'], 'callback_data'=>'giftVolumeAndDay', 'style'=>'success'],
+        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu', 'style'=>'danger'],
         ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>$buttonValues['gift_volume_day'], 'callback_data'=>'giftVolumeAndDay', 'style'=>'success']
     ];
     $keys[] = [
         ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement', 'style'=>'primary'],
