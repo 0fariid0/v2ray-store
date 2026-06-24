@@ -4532,6 +4532,78 @@ function v2raystore_fastDeleteOrderEverywhere($orderOrId, $deleteLocal = true, $
     ];
 }}
 
+
+if(!function_exists('v2raystore_cleanOldFormatBytesFa')){
+function v2raystore_cleanOldFormatBytesFa($amount){
+    $amount = max(0, intval($amount));
+    if(function_exists('sumerize')) return sumerize($amount);
+    $gb = $amount / 1073741824;
+    if($gb >= 1) return round($gb, 2) . ' گیگابایت';
+    return round($gb * 1024, 2) . ' مگابایت';
+}}
+
+if(!function_exists('v2raystore_reportCleanOldDeletedConfig')){
+function v2raystore_reportCleanOldDeletedConfig($deleteResult, $verify = null, $sourceRow = null){
+    if(!function_exists('v2raystore_reportEvent')) return null;
+    if(!is_array($deleteResult)) return null;
+
+    $order = is_array($deleteResult['order'] ?? null) ? $deleteResult['order'] : (is_array($sourceRow) ? $sourceRow : []);
+    if(!is_array($order) || count($order) === 0) return null;
+
+    $owner = is_array($deleteResult['owner'] ?? null) ? $deleteResult['owner'] : (function_exists('v2raystore_orderOwnerInfo') ? v2raystore_orderOwnerInfo($order['userid'] ?? '') : []);
+    $plan = is_array($deleteResult['plan'] ?? null) ? $deleteResult['plan'] : (function_exists('v2raystore_orderPlanInfo') ? v2raystore_orderPlanInfo($order) : []);
+    $server = function_exists('v2raystore_orderServerConfig') ? v2raystore_orderServerConfig(intval($order['server_id'] ?? 0)) : [];
+    if(!is_array($server)) $server = [];
+
+    $idx = function_exists('v2raystore_cleanOldIndexGet') ? v2raystore_cleanOldIndexGet(intval($order['id'] ?? 0)) : null;
+    if(!is_array($idx)) $idx = [];
+
+    $reason = (string)($idx['reason'] ?? ($sourceRow['clean_reason'] ?? ($verify['reason'] ?? '')));
+    $reasonTitle = function_exists('v2raystore_cleanOldReasonTitle') ? v2raystore_cleanOldReasonTitle($reason) : $reason;
+    $finishedAt = intval($idx['finished_at'] ?? ($sourceRow['clean_finished_at'] ?? ($verify['finished_at'] ?? 0)));
+    $panelExpire = intval($idx['panel_expire'] ?? ($sourceRow['clean_panel_expire'] ?? ($verify['expire'] ?? 0)));
+    $total = intval($idx['total'] ?? ($sourceRow['clean_total'] ?? ($verify['total'] ?? 0)));
+    $used = intval($idx['used'] ?? ($sourceRow['clean_used'] ?? ($verify['used'] ?? 0)));
+    $remain = $total > 0 ? max(0, $total - $used) : 0;
+
+    $uid = trim((string)($order['userid'] ?? ($owner['userid'] ?? '-')));
+    $name = trim((string)($owner['name'] ?? '-'));
+    $username = trim((string)($owner['username'] ?? '-'));
+    $usernameTxt = ($username !== '' && $username !== '-' && $username !== 'ندارد') ? '@' . ltrim($username, '@') : 'ندارد';
+    $remark = trim((string)($order['remark'] ?? '-'));
+    if($remark === '') $remark = '-';
+    $serverTitle = trim((string)($server['title'] ?? ($server['remark'] ?? ($server['name'] ?? '-'))));
+    if($serverTitle === '') $serverTitle = '-';
+    $planTitle = trim((string)($plan['title'] ?? '-'));
+    if($planTitle === '') $planTitle = '-';
+
+    $panelStatus = !empty($deleteResult['panel_ok']) ? 'حذف شد / وجود نداشت ✅' : 'ناموفق ❌';
+    $robotStatus = !empty($deleteResult['local_deleted']) ? 'حذف شد ✅' : 'حذف نشد ❌';
+
+    $lines = [];
+    $lines[] = "🧾 شماره سفارش: <code>" . intval($order['id'] ?? 0) . "</code>";
+    $lines[] = "👤 کاربر: " . (($uid !== '' && ctype_digit($uid)) ? "<a href='tg://user?id={$uid}'>" . v2raystore_cleanOldH($name) . "</a>" : v2raystore_cleanOldH($name));
+    $lines[] = "🆔 آیدی عددی: <code>" . v2raystore_cleanOldH($uid) . "</code>";
+    $lines[] = "🔸 یوزرنیم: " . v2raystore_cleanOldH($usernameTxt);
+    $lines[] = "🔮 کانفیگ: <code>" . v2raystore_cleanOldH($remark) . "</code>";
+    $lines[] = "🌐 سرور: " . v2raystore_cleanOldH($serverTitle) . " | پلن: " . v2raystore_cleanOldH($planTitle);
+    $lines[] = "📌 علت اتمام: " . v2raystore_cleanOldH($reasonTitle);
+    if($finishedAt > 0) $lines[] = "⏰ زمان اتمام واقعی: " . v2raystore_cleanOldH(v2raystore_cleanOldJDate($finishedAt));
+    if($panelExpire > 0) $lines[] = "📆 انقضای پنل: " . v2raystore_cleanOldH(v2raystore_cleanOldJDate($panelExpire));
+    if($total > 0) $lines[] = "📊 مصرف: " . v2raystore_cleanOldH(v2raystore_cleanOldFormatBytesFa($used)) . " / " . v2raystore_cleanOldH(v2raystore_cleanOldFormatBytesFa($total));
+    if($total > 0) $lines[] = "❌ باقی‌مانده: " . v2raystore_cleanOldH(v2raystore_cleanOldFormatBytesFa($remain));
+    $lines[] = "🖥 وضعیت پنل: " . $panelStatus;
+    $lines[] = "🤖 وضعیت ربات: " . $robotStatus;
+    $lines[] = "🕒 زمان حذف: " . v2raystore_cleanOldH(v2raystore_cleanOldJDate(time()));
+
+    $keyboard = null;
+    if(function_exists('v2raystore_reportPrivateKeyboard') && ctype_digit($uid)){
+        $keyboard = v2raystore_reportPrivateKeyboard($uid);
+    }
+
+    return v2raystore_reportEvent('🗑 گزارش حذف کانفیگ', implode("\n", $lines), $keyboard, 'cleanup_deleted');
+}}
+
 if(!function_exists('v2raystore_processCleanOldConfigsJob')){
 function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $deletePanel = true){
     $job = v2raystore_getCleanOldConfigsJob();
@@ -4571,6 +4643,9 @@ function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $del
         $res = v2raystore_fastDeleteOrderEverywhere($row, true, true, !$deletePanel);
         if(!empty($res['panel_ok'])) $panelOk++;
         if(!empty($res['local_deleted'])) $localDeleted++;
+        if((!empty($res['panel_ok']) || !empty($res['local_deleted'])) && function_exists('v2raystore_reportCleanOldDeletedConfig')){
+            v2raystore_reportCleanOldDeletedConfig($res, $verify, $row);
+        }
         if(empty($res['ok'])){
             $failed++;
             $oid = intval($row['id'] ?? 0);
@@ -12946,6 +13021,7 @@ function v2raystore_reportTopicItems(){
         'stats' => ['title'=>'📊 آمار ربات', 'events'=>['daily_stats']],
         'errors' => ['title'=>'⚠️ خطاها و هشدارها', 'events'=>['approval_failed','admin_order_send_failed']],
         'database' => ['title'=>'🗄 بکاپ دیتابیس', 'events'=>['database_backup']],
+        'cleanup' => ['title'=>'🗑 حذف کانفیگ‌ها', 'events'=>['cleanup_deleted']],
     ];
 }
 
@@ -13008,7 +13084,9 @@ function v2raystore_reportEnsureTopic($eventKey){
     v2raystore_reportCleanupLegacyTopics();
     $chat = v2raystore_getIncomeReportChatId();
     if($chat === null || trim((string)$chat) === '') return 0;
-    if(!v2raystore_reportForumEnabled()) return 0;
+    // برای گزارش‌های حذف کانفیگ، تاپیک به‌صورت خودکار ساخته می‌شود حتی اگر حالت کلی تاپیک‌ها خاموش باشد.
+    // اگر گروه Forum نباشد یا ربات دسترسی ساخت تاپیک نداشته باشد، گزارش بدون تاپیک ارسال می‌شود.
+    if(!v2raystore_reportForumEnabled() && trim((string)$eventKey) !== 'cleanup_deleted') return 0;
 
     $topicKey = v2raystore_reportTopicKeyForEvent($eventKey);
     if(!v2raystore_reportTopicEnabled($topicKey)) return 0;
@@ -13638,7 +13716,8 @@ function v2raystore_reportEventItems(){
         'approval_failed' => '⚠️ خطای تأیید خودکار',
         'admin_order_send_failed' => '⚠️ خطای ارسال رسید/سفارش به ادمین',
         'daily_stats' => '📊 آمار روزانه',
-        'database_backup' => '🗄 بکاپ دیتابیس'
+        'database_backup' => '🗄 بکاپ دیتابیس',
+        'cleanup_deleted' => '🗑 حذف کانفیگ‌های تمام‌شده'
     ];
 }
 
