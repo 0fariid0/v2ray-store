@@ -4060,9 +4060,9 @@ function v2raystore_cleanOldUsageStatus($usage, $orderId = 0){
         $finishedAt = intval($old['finished_at'] ?? 0) > 0 ? intval($old['finished_at']) : ($now - ($days * 86400) - 60);
     }
 
-    $days = max(1, intval(v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_DAYS') ?? 1));
-    $threshold = $now - ($days * 86400);
-    $ready = ($finishedAt > 0 && $finishedAt <= $threshold);
+    // درخواست ادمین: هر کانفیگی که خود پنل آن را تمام‌شده نشان داد، همان لحظه وارد لیست آماده حذف شود.
+    // حذف واقعی فقط بعد از زدن «شروع حذف» و به‌صورت مرحله‌ای انجام می‌شود، پس اینجا فقط صف را آماده می‌کنیم.
+    $ready = true;
 
     return [
         'finished'=>true,
@@ -4363,14 +4363,11 @@ if(!function_exists('v2raystore_quickCountCleanOldConfigCandidates')){
 function v2raystore_quickCountCleanOldConfigCandidates($days, $basis = 'expire_date'){
     global $connection;
     if(!v2raystore_ensureCleanOldIndexTable()) return 0;
-    $days = max(1, intval($days));
-    $threshold = time() - ($days * 86400);
-    $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `clean_old_configs_index` ci INNER JOIN `orders_list` o ON o.`id`=ci.`order_id` WHERE o.`status`=1 AND ci.`finished_at` > 0 AND ci.`finished_at` <= ?");
-    if(!$stmt) return 0;
-    $stmt->bind_param('i', $threshold);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
+    // لیست آماده حذف یعنی هر چیزی که در بررسی پنل واقعاً تمام‌شده تشخیص داده شده است.
+    // شرط روز از اینجا حذف شد تا موردهای شناسایی‌شده پشت threshold گیر نکنند.
+    $res = @$connection->query("SELECT COUNT(*) AS cnt FROM `clean_old_configs_index` ci INNER JOIN `orders_list` o ON o.`id`=ci.`order_id` WHERE o.`status`=1 AND ci.`finished_at` > 0");
+    if(!$res) return 0;
+    $row = $res->fetch_assoc();
     return intval($row['cnt'] ?? 0);
 }}
 
@@ -4381,16 +4378,15 @@ function v2raystore_quickCleanOldConfigCandidates($days, $basis = 'expire_date',
     $days = max(1, intval($days));
     $limit = max(1, min(200, intval($limit)));
     $excludeIds = is_array($excludeIds) ? array_values(array_unique(array_map('intval', $excludeIds))) : [];
-    $threshold = time() - ($days * 86400);
     $sql = "SELECT o.*, ci.`finished_at` AS clean_finished_at, ci.`reason` AS clean_reason, ci.`panel_expire` AS clean_panel_expire, ci.`total` AS clean_total, ci.`used` AS clean_used
             FROM `clean_old_configs_index` ci
             INNER JOIN `orders_list` o ON o.`id` = ci.`order_id`
-            WHERE o.`status`=1 AND ci.`finished_at` > 0 AND ci.`finished_at` <= ?
+            WHERE o.`status`=1 AND ci.`finished_at` > 0
             ORDER BY ci.`finished_at` ASC, ci.`order_id` ASC LIMIT ?";
     $stmt = $connection->prepare($sql);
     if(!$stmt) return [];
     $fetchLimit = max($limit, min(200, $limit + count($excludeIds) + 20));
-    $stmt->bind_param('ii', $threshold, $fetchLimit);
+    $stmt->bind_param('i', $fetchLimit);
     $stmt->execute();
     $res = $stmt->get_result();
     $rows = [];
@@ -4770,36 +4766,27 @@ function v2raystore_buildCleanOldControlPanelText($lastResult = null){
         $notice = "\n📌 " . v2raystore_cleanOldH($lastResult['notice']) . "\n";
     }
 
-    $percent = ($scanTotal > 0) ? min(100, intval(($scanDone / max(1, $scanTotal)) * 100)) : 0;
     $txt = "🗑 <b>پاکسازی کانفیگ‌های تمام‌شده</b>" . $notice . "\n".
-           "⏱ حذف بعد از: <b>$days</b> روز از اتمام واقعی پنل\n".
-           "♻️ حذف خودکار: " . ($auto === 'on' ? 'روشن ✅' : 'خاموش 🚫') . "\n".
-           "📋 آماده حذف: <b>$ready</b>\n\n".
-           "🔍 <b>بررسی پنل</b>: " . ($scanActive ? 'در حال بررسی 🟢' : 'متوقف/کامل ✅') . "\n".
-           "پیشرفت: " . v2raystore_cleanOldProgressBar($scanDone, $scanTotal) . " $percent%\n".
-           "بررسی‌شده: $scanDone / " . ($scanTotal > 0 ? $scanTotal : '-') . "\n".
-           "تمام‌شده آماده حذف: " . intval($session['finished'] ?? 0) . "\n".
-           "تمام‌شده دیده‌شده: " . intval($session['expired'] ?? 0) . "\n".
-           "فعال/تمدید و خروج از لیست: " . intval($session['active_or_renewed'] ?? 0) . "\n".
-           "آخرین مرحله: " . v2raystore_cleanOldJDate($lastScan) . "\n\n".
-           "🧹 <b>حذف</b>: $jobTxt\n".
-           "حذف‌شده پنل/عدم‌وجود: " . intval($job['panel_ok'] ?? 0) . " | ربات: " . intval($job['local_deleted'] ?? 0) . "\n".
-           "رد شده به‌خاطر تمدید: " . intval($job['skipped_renewed'] ?? 0) . " | خطا: " . intval($job['failed'] ?? 0) . "\n".
-           "پیام حذف: " . v2raystore_cleanOldH($job['last_message'] ?? '-') . "\n";
+           "📋 آماده حذف: <b>$ready</b> | ♻️ خودکار: " . ($auto === 'on' ? 'روشن ✅' : 'خاموش 🚫') . "\n".
+           "🔍 بررسی: " . ($scanActive ? 'در حال اجرا 🟢' : 'متوقف/کامل ✅') . " | " . v2raystore_cleanOldProgressBar($scanDone, $scanTotal) . "\n".
+           "بررسی‌شده: $scanDone / " . ($scanTotal > 0 ? $scanTotal : '-') . " | آماده‌شده: " . intval($session['finished'] ?? 0) . " | فعال/تمدید: " . intval($session['active_or_renewed'] ?? 0) . "\n".
+           "🧹 حذف: $jobTxt | پنل: " . intval($job['panel_ok'] ?? 0) . " | ربات: " . intval($job['local_deleted'] ?? 0) . " | خطا: " . intval($job['failed'] ?? 0) . "\n".
+           "آخرین بررسی: " . v2raystore_cleanOldJDate($lastScan) . " | پیام حذف: " . v2raystore_cleanOldH($job['last_message'] ?? '-') . "\n";
 
     if(is_array($lastResult)){
         $scan = $lastResult['scan'] ?? null;
         $delete = $lastResult['delete'] ?? null;
         if(is_array($scan)){
-            $txt .= "\n📍 مرحله آخر بررسی: " . intval($scan['processed'] ?? 0) . " مورد | آماده: " . intval($scan['finished'] ?? 0) . "\n";
+            $txt .= "\n📍 مرحله بررسی: " . intval($scan['processed'] ?? 0) . " مورد | آماده: " . intval($scan['finished'] ?? 0);
         }
         if(is_array($delete)){
-            $txt .= "📍 مرحله آخر حذف: " . intval($delete['processed'] ?? 0) . " مورد | ربات: " . intval($delete['local_deleted'] ?? 0) . " | خطا: " . intval($delete['failed'] ?? 0) . "\n";
+            $txt .= "\n📍 مرحله حذف: " . intval($delete['processed'] ?? 0) . " مورد | ربات: " . intval($delete['local_deleted'] ?? 0) . " | خطا: " . intval($delete['failed'] ?? 0);
         }
+        $txt .= "\n";
     }
 
-    $txt .= "\n📋 <b>نمونه آماده حذف</b>\n<pre>" . v2raystore_cleanOldH(v2raystore_cleanOldCandidatesLines($days, 6)) . "</pre>";
-    $txt .= "\nبررسی: هر ۲۰ ثانیه ۱۰ کانفیگ. حذف: هر ۱۰ ثانیه ۵ کانفیگ، فقط بعد از زدن شروع حذف.";
+    $txt .= "\n📋 <b>نمونه آماده حذف</b>\n<pre>" . v2raystore_cleanOldH(v2raystore_cleanOldCandidatesLines($days, 5)) . "</pre>";
+    $txt .= "\nبررسی: هر ۲۰ ثانیه ۲۰ کانفیگ. حذف: هر ۱۰ ثانیه ۵ کانفیگ.";
 
     if((function_exists('mb_strlen') ? mb_strlen($txt) : strlen($txt)) > 3900){
         $txt = (function_exists('mb_substr') ? mb_substr($txt, 0, 3800) : substr($txt, 0, 3800)) . "\n...";

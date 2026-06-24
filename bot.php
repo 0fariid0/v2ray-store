@@ -3842,7 +3842,7 @@ if($data == "cleanOldConfigsScanRunOnce" && ($from_id == $admin || $userInfo['is
             v2raystore_startCleanOldPanelScan('manual', true);
         }
     }
-    $scanRes = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(10, 17, false) : ['processed'=>0];
+    $scanRes = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(20, 18, false) : ['processed'=>0];
     $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['scan'=>$scanRes, 'notice'=>'یک مرحله بررسی پنل انجام شد.']) : "یک مرحله اجرا شد.";
     $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
     editText($message_id, $txt, $keys, 'HTML');
@@ -3870,7 +3870,7 @@ if(in_array($data ?? '', ["cleanOldConfigsDoDelete", "cleanOldConfigsQueueRunOnc
     if(empty($job['state']) || intval($job['state']) !== 1){
         $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
         if($total <= 0){
-            $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'فعلاً مورد آماده حذف داخل لیست نیست. اول بررسی پنل را شروع کن تا کانفیگ‌های تمام‌شده خودکار وارد لیست شوند.']) : "✅ موردی برای حذف نیست.";
+            $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'فعلاً لیست آماده حذف خالی است؛ بررسی پنل را شروع کن تا موارد تمام‌شده مستقیم وارد لیست شوند.']) : "✅ موردی برای حذف نیست.";
             $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
             editText($message_id, $txt, $keys, 'HTML');
             exit();
