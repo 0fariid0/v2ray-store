@@ -2092,7 +2092,64 @@ function v2raystore_sanaeiNewDecodePayloadJsonFields($payload){
     return $payload;
 }
 
+
+function v2raystore_sanaeiNewNormalizeClientPayload($client){
+    if(is_object($client)) $client = json_decode(json_encode($client), true);
+    if(!is_array($client)) return $client;
+
+    // 3x-ui 3.2.0 expects these fields as numbers/bools. If tgId is sent as
+    // an empty string or text, the Go API returns: cannot unmarshal string into
+    // Client.tgId of type int64. Keep all existing values but normalize types.
+    foreach(array('tgId','tgid','tgID','telegramId','telegram_id','limitIp','totalGB','expiryTime','alterId') as $field){
+        if(array_key_exists($field, $client)){
+            $value = $client[$field];
+            if($value === '' || $value === null || $value === false) $client[$field] = 0;
+            elseif(is_bool($value)) $client[$field] = $value ? 1 : 0;
+            elseif(is_numeric($value)) $client[$field] = (int)$value;
+        }
+    }
+    if(array_key_exists('enable', $client)){
+        $client['enable'] = ($client['enable'] === true || $client['enable'] === 1 || $client['enable'] === '1' || $client['enable'] === 'true' || $client['enable'] === 'on');
+    }
+    return $client;
+}
+
+function v2raystore_sanaeiNewNormalizePayload($payload){
+    if(is_object($payload)) $payload = json_decode(json_encode($payload), true);
+    if(!is_array($payload)) return $payload;
+
+    $payload = v2raystore_sanaeiNewDecodePayloadJsonFields($payload);
+
+    foreach(array('up','down','total','expiryTime','port','id') as $field){
+        if(array_key_exists($field, $payload)){
+            if($payload[$field] === '' || $payload[$field] === null) $payload[$field] = 0;
+            elseif(is_numeric($payload[$field])) $payload[$field] = (int)$payload[$field];
+        }
+    }
+    if(array_key_exists('enable', $payload)){
+        $payload['enable'] = ($payload['enable'] === true || $payload['enable'] === 1 || $payload['enable'] === '1' || $payload['enable'] === 'true' || $payload['enable'] === 'on');
+    }
+
+    if(isset($payload['client'])) $payload['client'] = v2raystore_sanaeiNewNormalizeClientPayload($payload['client']);
+    if(isset($payload['clients']) && is_array($payload['clients'])){
+        foreach($payload['clients'] as $k => $client) $payload['clients'][$k] = v2raystore_sanaeiNewNormalizeClientPayload($client);
+    }
+    if(isset($payload['settings']) && is_array($payload['settings']) && isset($payload['settings']['clients']) && is_array($payload['settings']['clients'])){
+        foreach($payload['settings']['clients'] as $k => $client) $payload['settings']['clients'][$k] = v2raystore_sanaeiNewNormalizeClientPayload($client);
+    }
+    if(isset($payload['inboundIds']) && is_array($payload['inboundIds'])){
+        $payload['inboundIds'] = array_values(array_map('intval', $payload['inboundIds']));
+    }
+
+    $looksLikeClient = isset($payload['email']) || isset($payload['tgId']) || isset($payload['tgid']) || isset($payload['id']) || isset($payload['password']);
+    if($looksLikeClient && !isset($payload['settings']) && !isset($payload['client']) && !isset($payload['clients'])){
+        $payload = v2raystore_sanaeiNewNormalizeClientPayload($payload);
+    }
+    return $payload;
+}
+
 function v2raystore_sanaeiNewJsonPost($curl, $url, $session, $payload = null){
+    if($payload !== null) $payload = v2raystore_sanaeiNewNormalizePayload($payload);
     $body = $payload === null ? '' : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     curl_setopt_array($curl, array(
         CURLOPT_URL => $url,
@@ -8724,8 +8781,6 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
             $up = 0;
             $down = 0;
             $volume = $extend_volume;
-            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
-            else resetClientTraffic($server_id, $email);
         }
         else $total = ($leftGB > 0) ? $total + $extend_volume : $extend_volume;
     }
@@ -8814,8 +8869,13 @@ function editInboundTraffic($server_id, $uuid, $volume, $days, $editType = null)
 
     $response = curl_exec($curl);
     curl_close($curl);
+    $decodedResponse = json_decode($response);
+    if(($editType == "renew") && is_object($decodedResponse) && !empty($decodedResponse->success) && isset($email)){
+        if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
+        else resetClientTraffic($server_id, $email);
+    }
     resetIpLog($server_id, $email);
-    return $response = json_decode($response);
+    return $decodedResponse;
 }
 function changeInboundState($server_id, $uuid){
     global $connection;
@@ -9588,8 +9648,6 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         $volume = ($client_total > 0) ? $client_total + $extend_volume : $extend_volume;
         if($editType == "renew"){
             $volume = $extend_volume;
-            if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
-            else resetClientTraffic($server_id, $email);
         }
         $settings['clients'][$client_key]['totalGB'] = $volume;
         if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
@@ -9734,8 +9792,13 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
 
     $response = curl_exec($curl);
     curl_close($curl);
+    $decodedResponse = json_decode($response);
+    if(($editType == "renew") && is_object($decodedResponse) && !empty($decodedResponse->success) && isset($email)){
+        if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza") resetClientTraffic($server_id, $email, $inbound_id);
+        else resetClientTraffic($server_id, $email);
+    }
     resetIpLog($server_id, $email);
-    return $response = json_decode($response);
+    return $decodedResponse;
 
 }
 function deleteInbound($server_id, $uuid, $delete = 0){
