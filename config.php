@@ -3601,7 +3601,7 @@ function v2raystore_orderPanelUsage($order){
         return $res;
     }
 
-    $json = function_exists('getJson') ? getJson($serverId) : null;
+    $json = function_exists('v2raystore_getJsonCachedForCleanup') ? v2raystore_getJsonCachedForCleanup($serverId) : (function_exists('getJson') ? getJson($serverId) : null);
     $res = $empty;
     $res['checked'] = (bool)($json && (!isset($json->success) || $json->success));
     $res['source'] = 'xui';
@@ -3877,6 +3877,20 @@ function v2raystore_cleanSettingSet($type, $value){
     return $ok;
 }}
 
+if(!function_exists('v2raystore_getJsonCachedForCleanup')){
+function v2raystore_getJsonCachedForCleanup($serverId){
+    static $cache = [];
+    $serverId = intval($serverId);
+    if($serverId <= 0 || !function_exists('getJson')) return null;
+    $now = time();
+    if(isset($cache[$serverId]) && ($now - intval($cache[$serverId]['time'] ?? 0)) <= 20){
+        return $cache[$serverId]['json'];
+    }
+    $json = getJson($serverId);
+    $cache[$serverId] = ['time'=>$now, 'json'=>$json];
+    return $json;
+}}
+
 if(!function_exists('v2raystore_getCleanOldConfigsJob')){
 function v2raystore_getCleanOldConfigsJob(){
     $raw = v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_JOB');
@@ -3898,38 +3912,225 @@ function v2raystore_stopCleanOldConfigsJob(){
     return v2raystore_setCleanOldConfigsJob($job);
 }}
 
-if(!function_exists('v2raystore_cleanOldSqlParts')){
-function v2raystore_cleanOldSqlParts($days, $basis){
-    $days = max(1, intval($days));
-    $basis = ($basis === 'date') ? 'date' : 'expire_date';
+if(!function_exists('v2raystore_ensureCleanOldIndexTable')){
+function v2raystore_ensureCleanOldIndexTable(){
+    global $connection;
+    static $done = false;
+    if($done) return true;
+    $sql = "CREATE TABLE IF NOT EXISTS `clean_old_configs_index` (
+        `order_id` INT NOT NULL PRIMARY KEY,
+        `userid` VARCHAR(64) DEFAULT NULL,
+        `server_id` INT DEFAULT 0,
+        `inbound_id` INT DEFAULT 0,
+        `uuid` VARCHAR(191) DEFAULT NULL,
+        `remark` VARCHAR(255) DEFAULT NULL,
+        `finished_at` INT NOT NULL DEFAULT 0,
+        `reason` VARCHAR(32) DEFAULT NULL,
+        `panel_expire` INT NOT NULL DEFAULT 0,
+        `total` BIGINT NOT NULL DEFAULT 0,
+        `used` BIGINT NOT NULL DEFAULT 0,
+        `detected_at` INT NOT NULL DEFAULT 0,
+        `updated_at` INT NOT NULL DEFAULT 0,
+        KEY `idx_finished_at` (`finished_at`),
+        KEY `idx_updated_at` (`updated_at`),
+        KEY `idx_server` (`server_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+    $ok = @$connection->query($sql);
+    $done = (bool)$ok;
+    return $done;
+}}
+
+if(!function_exists('v2raystore_cleanOldIndexGet')){
+function v2raystore_cleanOldIndexGet($orderId){
+    global $connection;
+    if(!v2raystore_ensureCleanOldIndexTable()) return null;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return null;
+    $stmt = $connection->prepare("SELECT * FROM `clean_old_configs_index` WHERE `order_id`=? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return is_array($row) ? $row : null;
+}}
+
+if(!function_exists('v2raystore_cleanOldIndexRemove')){
+function v2raystore_cleanOldIndexRemove($orderId){
+    global $connection;
+    if(!v2raystore_ensureCleanOldIndexTable()) return false;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return false;
+    $stmt = $connection->prepare("DELETE FROM `clean_old_configs_index` WHERE `order_id`=?");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $ok = $stmt->affected_rows >= 0;
+    $stmt->close();
+    return $ok;
+}}
+
+if(!function_exists('v2raystore_cleanOldUsageStatus')){
+function v2raystore_cleanOldUsageStatus($usage, $orderId = 0){
     $now = time();
-    $threshold = $now - ($days * 86400);
-    $nowMs = $now * 1000;
-    $thresholdMs = $threshold * 1000;
-    $exp = "CAST(`expire_date` AS UNSIGNED)";
-    $dt = "CAST(`date` AS UNSIGNED)";
-    $expiredNow = "($exp > 0 AND (($exp < 10000000000 AND $exp < ?) OR ($exp >= 10000000000 AND $exp < ?)))";
-    $expiredThreshold = "($exp > 0 AND (($exp < 10000000000 AND $exp < ?) OR ($exp >= 10000000000 AND $exp < ?)))";
-    if($basis === 'date'){
-        return ["where"=>"$expiredNow AND $dt < ?", "types"=>'iii', "params"=>[$now, $nowMs, $threshold], "order"=>"$dt ASC, `id` ASC"];
+    if(!is_array($usage) || empty($usage['checked']) || empty($usage['found'])){
+        return ['finished'=>false, 'reason'=>'', 'finished_at'=>0];
     }
-    return ["where"=>$expiredThreshold, "types"=>'ii', "params"=>[$threshold, $thresholdMs], "order"=>"$exp ASC, `id` ASC"];
+    $expire = v2raystore_panelExpiryToSeconds($usage['expiryTime'] ?? 0);
+    $total = intval($usage['total'] ?? 0);
+    $up = intval($usage['up'] ?? 0);
+    $down = intval($usage['down'] ?? 0);
+    $used = max(0, $up + $down);
+
+    $timeExpired = ($expire > 0 && $expire <= $now);
+    $volumeExpired = ($total > 0 && $used >= $total);
+    if(!$timeExpired && !$volumeExpired){
+        return ['finished'=>false, 'reason'=>'', 'finished_at'=>0];
+    }
+
+    $reason = ($timeExpired && $volumeExpired) ? 'time_volume' : ($timeExpired ? 'time' : 'volume');
+    if($timeExpired){
+        $finishedAt = $expire;
+    }else{
+        // برای اتمام حجم، پنل زمان دقیق تمام شدن حجم را نمی‌دهد؛ اولین زمان تشخیص را نگه می‌داریم.
+        $old = $orderId > 0 ? v2raystore_cleanOldIndexGet($orderId) : null;
+        $finishedAt = intval($old['finished_at'] ?? 0) > 0 ? intval($old['finished_at']) : $now;
+    }
+    return ['finished'=>true, 'reason'=>$reason, 'finished_at'=>$finishedAt, 'expire'=>$expire, 'total'=>$total, 'used'=>$used];
+}}
+
+if(!function_exists('v2raystore_cleanOldIndexUpsert')){
+function v2raystore_cleanOldIndexUpsert($order, $status){
+    global $connection;
+    if(!v2raystore_ensureCleanOldIndexTable()) return false;
+    if(!is_array($order) || !is_array($status) || empty($status['finished'])) return false;
+    $orderId = intval($order['id'] ?? 0);
+    if($orderId <= 0) return false;
+    $userid = (string)($order['userid'] ?? '');
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $remark = trim((string)($order['remark'] ?? ''));
+    $finishedAt = max(1, intval($status['finished_at'] ?? time()));
+    $reason = trim((string)($status['reason'] ?? 'expired'));
+    $panelExpire = intval($status['expire'] ?? 0);
+    $total = intval($status['total'] ?? 0);
+    $used = intval($status['used'] ?? 0);
+    $now = time();
+
+    $stmt = $connection->prepare("INSERT INTO `clean_old_configs_index`
+        (`order_id`,`userid`,`server_id`,`inbound_id`,`uuid`,`remark`,`finished_at`,`reason`,`panel_expire`,`total`,`used`,`detected_at`,`updated_at`)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE
+            `userid`=VALUES(`userid`), `server_id`=VALUES(`server_id`), `inbound_id`=VALUES(`inbound_id`),
+            `uuid`=VALUES(`uuid`), `remark`=VALUES(`remark`),
+            `finished_at`=IF(`finished_at` > 0, LEAST(`finished_at`, VALUES(`finished_at`)), VALUES(`finished_at`)),
+            `reason`=VALUES(`reason`), `panel_expire`=VALUES(`panel_expire`), `total`=VALUES(`total`),
+            `used`=VALUES(`used`), `updated_at`=VALUES(`updated_at`)");
+    if(!$stmt) return false;
+    $stmt->bind_param('isiissisiiiii', $orderId, $userid, $serverId, $inboundId, $uuid, $remark, $finishedAt, $reason, $panelExpire, $total, $used, $now, $now);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}}
+
+if(!function_exists('v2raystore_refreshCleanOldIndexForOrder')){
+function v2raystore_refreshCleanOldIndexForOrder($order, $updateDb = true){
+    global $connection;
+    if(is_numeric($order)) $order = v2raystore_orderFetchById($order);
+    if(!is_array($order)) return ['checked'=>false, 'found'=>false, 'finished'=>false, 'message'=>'order_not_found'];
+    $orderId = intval($order['id'] ?? 0);
+    if($orderId <= 0) return ['checked'=>false, 'found'=>false, 'finished'=>false, 'message'=>'bad_order'];
+
+    $usage = function_exists('v2raystore_orderPanelUsage') ? v2raystore_orderPanelUsage($order) : ['checked'=>false];
+    if(!is_array($usage) || empty($usage['checked'])) return ['checked'=>false, 'found'=>false, 'finished'=>false, 'message'=>'panel_not_checked'];
+
+    if(empty($usage['found'])){
+        // اگر از پنل قابل پیدا کردن نبود، برای جلوگیری از حذف اشتباه فقط از لیست پاکسازی حذف می‌شود.
+        v2raystore_cleanOldIndexRemove($orderId);
+        return ['checked'=>true, 'found'=>false, 'finished'=>false, 'message'=>'not_found_on_panel'];
+    }
+
+    $expire = v2raystore_panelExpiryToSeconds($usage['expiryTime'] ?? 0);
+    if($updateDb && $expire > 0){
+        $oldExpire = intval($order['expire_date'] ?? 0);
+        if($oldExpire !== $expire){
+            $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date`=?, `notif`=0 WHERE `id`=?");
+            if($stmt){
+                $stmt->bind_param('ii', $expire, $orderId);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+
+    $status = v2raystore_cleanOldUsageStatus($usage, $orderId);
+    if(!empty($status['finished'])){
+        v2raystore_cleanOldIndexUpsert($order, $status);
+        return array_merge(['checked'=>true, 'found'=>true], $status, ['usage'=>$usage]);
+    }
+
+    // تمدید زمان یا حجم: از لیست پاکسازی حذف شود.
+    v2raystore_cleanOldIndexRemove($orderId);
+    return ['checked'=>true, 'found'=>true, 'finished'=>false, 'message'=>'active_or_renewed', 'usage'=>$usage];
+}}
+
+if(!function_exists('v2raystore_refreshCleanOldExpiredIndex')){
+function v2raystore_refreshCleanOldExpiredIndex($limit = 20, $maxSeconds = 25){
+    global $connection;
+    $limit = max(1, min(50, intval($limit)));
+    $maxSeconds = max(3, min(55, intval($maxSeconds)));
+    v2raystore_ensureCleanOldIndexTable();
+
+    $cursor = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_CURSOR') ?? 0);
+    $start = time();
+    $processed = 0; $finished = 0; $renewed = 0; $notFound = 0; $checked = 0;
+
+    while($processed < $limit && (time() - $start) < $maxSeconds){
+        $left = $limit - $processed;
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `id` > ? ORDER BY `id` ASC LIMIT ?");
+        if(!$stmt) break;
+        $stmt->bind_param('ii', $cursor, $left);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $rows = [];
+        while($row = $res->fetch_assoc()) $rows[] = $row;
+        $stmt->close();
+
+        if(count($rows) === 0){
+            if($cursor === 0) break;
+            $cursor = 0;
+            v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', '0');
+            continue;
+        }
+
+        foreach($rows as $row){
+            if((time() - $start) >= $maxSeconds) break 2;
+            $cursor = intval($row['id'] ?? $cursor);
+            $processed++;
+            $r = v2raystore_refreshCleanOldIndexForOrder($row, true);
+            if(!empty($r['checked'])) $checked++;
+            if(!empty($r['finished'])) $finished++;
+            elseif(!empty($r['found'])) $renewed++;
+            elseif(!empty($r['checked'])) $notFound++;
+            usleep(90000);
+        }
+    }
+
+    v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_CURSOR', strval($cursor));
+    v2raystore_cleanSettingSet('CLEAN_OLD_PANEL_SCAN_LAST', strval(time()));
+    return ['ok'=>true, 'processed'=>$processed, 'checked'=>$checked, 'finished'=>$finished, 'active_or_renewed'=>$renewed, 'not_found'=>$notFound, 'cursor'=>$cursor];
 }}
 
 if(!function_exists('v2raystore_quickCountCleanOldConfigCandidates')){
 function v2raystore_quickCountCleanOldConfigCandidates($days, $basis = 'expire_date'){
     global $connection;
-    $p = v2raystore_cleanOldSqlParts($days, $basis);
-    $sql = "SELECT COUNT(*) AS cnt FROM `orders_list` WHERE {$p['where']}";
-    $stmt = $connection->prepare($sql);
+    if(!v2raystore_ensureCleanOldIndexTable()) return 0;
+    $days = max(1, intval($days));
+    $threshold = time() - ($days * 86400);
+    $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `clean_old_configs_index` ci INNER JOIN `orders_list` o ON o.`id`=ci.`order_id` WHERE o.`status`=1 AND ci.`finished_at` > 0 AND ci.`finished_at` <= ?");
     if(!$stmt) return 0;
-    $types = $p['types'];
-    $params = $p['params'];
-    $refs = [];
-    foreach($params as $k=>$v) $refs[$k] = $v;
-    $bind = [$types];
-    foreach($refs as $k=>$v) $bind[] = &$refs[$k];
-    call_user_func_array([$stmt, 'bind_param'], $bind);
+    $stmt->bind_param('i', $threshold);
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
@@ -3939,20 +4140,20 @@ function v2raystore_quickCountCleanOldConfigCandidates($days, $basis = 'expire_d
 if(!function_exists('v2raystore_quickCleanOldConfigCandidates')){
 function v2raystore_quickCleanOldConfigCandidates($days, $basis = 'expire_date', $limit = 20, $excludeIds = []){
     global $connection;
+    if(!v2raystore_ensureCleanOldIndexTable()) return [];
+    $days = max(1, intval($days));
     $limit = max(1, min(200, intval($limit)));
     $excludeIds = is_array($excludeIds) ? array_values(array_unique(array_map('intval', $excludeIds))) : [];
-    $p = v2raystore_cleanOldSqlParts($days, $basis);
-    $sql = "SELECT * FROM `orders_list` WHERE {$p['where']} ORDER BY {$p['order']} LIMIT ?";
+    $threshold = time() - ($days * 86400);
+    $sql = "SELECT o.*, ci.`finished_at` AS clean_finished_at, ci.`reason` AS clean_reason, ci.`panel_expire` AS clean_panel_expire, ci.`total` AS clean_total, ci.`used` AS clean_used
+            FROM `clean_old_configs_index` ci
+            INNER JOIN `orders_list` o ON o.`id` = ci.`order_id`
+            WHERE o.`status`=1 AND ci.`finished_at` > 0 AND ci.`finished_at` <= ?
+            ORDER BY ci.`finished_at` ASC, ci.`order_id` ASC LIMIT ?";
     $stmt = $connection->prepare($sql);
     if(!$stmt) return [];
-    $types = $p['types'] . 'i';
-    $params = $p['params'];
-    $params[] = max($limit, min(200, $limit + count($excludeIds) + 20));
-    $refs = [];
-    foreach($params as $k=>$v) $refs[$k] = $v;
-    $bind = [$types];
-    foreach($refs as $k=>$v) $bind[] = &$refs[$k];
-    call_user_func_array([$stmt, 'bind_param'], $bind);
+    $fetchLimit = max($limit, min(200, $limit + count($excludeIds) + 20));
+    $stmt->bind_param('ii', $threshold, $fetchLimit);
     $stmt->execute();
     $res = $stmt->get_result();
     $rows = [];
@@ -3970,7 +4171,7 @@ function v2raystore_quickCleanOldConfigCandidates($days, $basis = 'expire_date',
 if(!function_exists('v2raystore_startCleanOldConfigsJob')){
 function v2raystore_startCleanOldConfigsJob($days, $basis = 'expire_date', $startedBy = 0, $initialTotal = null){
     $days = max(1, intval($days));
-    $basis = ($basis === 'date') ? 'date' : 'expire_date';
+    $basis = 'panel_expiry';
     if($initialTotal === null) $initialTotal = v2raystore_quickCountCleanOldConfigCandidates($days, $basis);
     $job = [
         'state' => 1,
@@ -3986,7 +4187,7 @@ function v2raystore_startCleanOldConfigsJob($days, $basis = 'expire_date', $star
         'failed' => 0,
         'skip_ids' => [],
         'last_errors' => [],
-        'last_message' => 'صف ثبت شد.',
+        'last_message' => 'صف ثبت شد؛ worker قبل از حذف، هر کانفیگ را دوباره از پنل بررسی می‌کند.',
     ];
     v2raystore_setCleanOldConfigsJob($job);
     return $job;
@@ -3999,7 +4200,7 @@ function v2raystore_deleteResponseToUsage($response){
     $total = intval($response['total'] ?? ($response['data_limit'] ?? 0));
     $up = intval($response['up'] ?? 0);
     $down = intval($response['down'] ?? ($response['used_traffic'] ?? 0));
-    $remaining = max(0, $total - $up - $down);
+    $remaining = ($total > 0) ? max(0, $total - $up - $down) : null;
     return [
         'checked' => true,
         'found' => empty($response['not_found']),
@@ -4073,6 +4274,7 @@ function v2raystore_fastDeleteOrderEverywhere($orderOrId, $deleteLocal = true, $
                 $localDeleted = $stmt->affected_rows > 0;
                 $stmt->close();
             }
+            if($localDeleted && function_exists('v2raystore_cleanOldIndexRemove')) v2raystore_cleanOldIndexRemove($orderId);
         }
         if($localDeleted && $incrementServerCount && $serverId > 0){
             $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` + 1 WHERE `id` = ?");
@@ -4104,7 +4306,7 @@ function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $del
     $limit = max(1, min(10, intval($limit)));
     $maxSeconds = max(5, min(55, intval($maxSeconds)));
     $days = max(1, intval($job['days'] ?? 10));
-    $basis = (($job['basis'] ?? 'expire_date') === 'date') ? 'date' : 'expire_date';
+    $basis = 'panel_expiry';
     $skipIds = is_array($job['skip_ids'] ?? null) ? array_values(array_unique(array_map('intval', $job['skip_ids']))) : [];
     if(count($skipIds) > 300) $skipIds = array_slice($skipIds, -300);
 
@@ -4120,9 +4322,18 @@ function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $del
         return ['ok'=>true, 'processed'=>0, 'remaining'=>$remaining, 'message'=>$job['last_message']];
     }
 
-    $processed = 0; $panelOk = 0; $localDeleted = 0; $failed = 0; $errors = [];
+    $processed = 0; $panelOk = 0; $localDeleted = 0; $failed = 0; $skippedRenewed = 0; $errors = [];
     foreach($rows as $row){
         if((time() - $start) >= $maxSeconds) break;
+
+        // قبل از حذف، همان کانفیگ یک‌بار دیگر از پنل چک می‌شود؛ اگر تمدید شده باشد، حذف نمی‌شود و از لیست پاکسازی بیرون می‌رود.
+        $verify = v2raystore_refreshCleanOldIndexForOrder($row, true);
+        if(empty($verify['finished'])){
+            $skippedRenewed++;
+            usleep(120000);
+            continue;
+        }
+
         $processed++;
         $res = v2raystore_fastDeleteOrderEverywhere($row, true, true, !$deletePanel);
         if(!empty($res['panel_ok'])) $panelOk++;
@@ -4133,13 +4344,14 @@ function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $del
             if($oid > 0) $skipIds[] = $oid;
             if(count($errors) < 8) $errors[] = '#' . $oid . ' ' . trim((string)($row['remark'] ?? ''));
         }
-        usleep(180000); // فشار روی پنل کم شود
+        usleep(220000);
     }
 
     $job['processed'] = intval($job['processed'] ?? 0) + $processed;
     $job['panel_ok'] = intval($job['panel_ok'] ?? 0) + $panelOk;
     $job['local_deleted'] = intval($job['local_deleted'] ?? 0) + $localDeleted;
     $job['failed'] = intval($job['failed'] ?? 0) + $failed;
+    $job['skipped_renewed'] = intval($job['skipped_renewed'] ?? 0) + $skippedRenewed;
     $job['skip_ids'] = array_values(array_unique(array_map('intval', $skipIds)));
     if(count($job['skip_ids']) > 300) $job['skip_ids'] = array_slice($job['skip_ids'], -300);
     $job['last_errors'] = $errors;
@@ -4154,7 +4366,7 @@ function v2raystore_processCleanOldConfigsJob($limit = 5, $maxSeconds = 45, $del
     }
     v2raystore_setCleanOldConfigsJob($job);
 
-    return ['ok'=>true, 'processed'=>$processed, 'panel_ok'=>$panelOk, 'local_deleted'=>$localDeleted, 'failed'=>$failed, 'remaining'=>$remaining, 'message'=>$job['last_message']];
+    return ['ok'=>true, 'processed'=>$processed, 'panel_ok'=>$panelOk, 'local_deleted'=>$localDeleted, 'failed'=>$failed, 'skipped_renewed'=>$skippedRenewed, 'remaining'=>$remaining, 'message'=>$job['last_message']];
 }}
 
 if(!function_exists('v2raystore_formatCleanOldConfigsJobStatus')){
@@ -4162,24 +4374,29 @@ function v2raystore_formatCleanOldConfigsJobStatus($lastResult = null){
     $job = v2raystore_getCleanOldConfigsJob();
     $state = intval($job['state'] ?? 0);
     $days = intval($job['days'] ?? 0);
-    $basis = (($job['basis'] ?? 'expire_date') === 'date') ? 'تاریخ ایجاد' : 'تاریخ انقضا';
-    $remaining = ($days > 0) ? v2raystore_quickCountCleanOldConfigCandidates($days, ($job['basis'] ?? 'expire_date')) : 0;
+    $remaining = ($days > 0) ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
     $stateText = $state == 1 ? 'در حال اجرا 🟢' : ($state == 2 ? 'کامل شد ✅' : ($state == 3 ? 'تمام شد با چند خطا ⚠️' : 'غیرفعال ⛔️'));
+    $lastScan = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0);
+    $cursor = intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_CURSOR') ?? 0);
     $txt = "📊 وضعیت صف پاکسازی قدیمی‌ها\n\n".
-           "وضعیت: $stateText\n".
-           "📌 معیار: $basis\n".
-           "⏱ بازه: بیشتر از $days روز\n".
+           "وضعیت حذف: $stateText\n".
+           "📌 معیار: فقط وضعیت واقعی پنل؛ اتمام زمان یا حجم\n".
+           "⏱ حذف بعد از: بیشتر از $days روز از اتمام واقعی کانفیگ\n".
            "🔢 تعداد اولیه: " . intval($job['initial_total'] ?? 0) . "\n".
-           "✅ پردازش‌شده: " . intval($job['processed'] ?? 0) . "\n".
+           "✅ پردازش حذف: " . intval($job['processed'] ?? 0) . "\n".
            "🖥 حذف/عدم‌وجود در پنل: " . intval($job['panel_ok'] ?? 0) . "\n".
            "🤖 حذف‌شده از ربات: " . intval($job['local_deleted'] ?? 0) . "\n".
+           "♻️ تمدید/فعال شده و حذف نشد: " . intval($job['skipped_renewed'] ?? 0) . "\n".
            "⚠️ ناموفق: " . intval($job['failed'] ?? 0) . "\n".
-           "📣 باقی‌مانده تقریبی: $remaining\n".
-           "🕒 آخرین اجرا: " . (!empty($job['last_run']) ? date('Y-m-d H:i:s', intval($job['last_run'])) : '-') . "\n".
+           "📣 آماده حذف از لیست پنل: $remaining\n".
+           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n".
+           "📍 cursor بررسی: $cursor\n".
+           "🕒 آخرین اجرای حذف: " . (!empty($job['last_run']) ? date('Y-m-d H:i:s', intval($job['last_run'])) : '-') . "\n".
            "💬 پیام: " . trim((string)($job['last_message'] ?? '-'));
     if(is_array($lastResult)){
         $txt .= "\n\nآخرین مرحله:\n".
-                "پردازش: " . intval($lastResult['processed'] ?? 0) . " | ربات: " . intval($lastResult['local_deleted'] ?? 0) . " | خطا: " . intval($lastResult['failed'] ?? 0);
+                "بررسی پنل: " . intval($lastResult['scan_processed'] ?? 0) . " | تمام‌شده پیدا شد: " . intval($lastResult['scan_finished'] ?? 0) . "\n".
+                "حذف: " . intval($lastResult['processed'] ?? 0) . " | ربات: " . intval($lastResult['local_deleted'] ?? 0) . " | تمدید/رد: " . intval($lastResult['skipped_renewed'] ?? 0) . " | خطا: " . intval($lastResult['failed'] ?? 0);
     }
     $errs = is_array($job['last_errors'] ?? null) ? $job['last_errors'] : [];
     if(count($errs)) $txt .= "\n\nنمونه خطا:\n" . implode("\n", array_slice($errs, 0, 5));
@@ -4187,86 +4404,13 @@ function v2raystore_formatCleanOldConfigsJobStatus($lastResult = null){
 }}
 
 function v2raystore_syncBroadCleanupCandidates($days, $basis = 'expire_date', $max = 300){
-    global $connection;
-    if(!function_exists('v2raystore_syncOrderExpiryFromPanel')) return 0;
-    $days = max(1, intval($days));
-    $basis = ($basis === 'date') ? 'date' : 'expire_date';
-    $max = max(1, min(1000, intval($max)));
-    $now = time();
-    $threshold = $now - ($days * 86400);
-
-    // فقط یک بخش محدود را sync می‌کنیم تا منوی پاکسازی هنگ نکند، اما برخلاف قبل فقط به expire_date دیتابیس وابسته نیست.
-    if($basis === 'date'){
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND CAST(`date` AS UNSIGNED) < ? ORDER BY `id` ASC LIMIT ?");
-        if(!$stmt) return 0;
-        $stmt->bind_param('ii', $threshold, $max);
-    }else{
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND ((`expire_date` > 0 AND `expire_date` <= ?) OR `expire_date` = 0 OR CAST(`date` AS UNSIGNED) < ?) ORDER BY `expire_date` ASC, `id` ASC LIMIT ?");
-        if(!$stmt) return 0;
-        $stmt->bind_param('iii', $now, $threshold, $max);
-    }
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $stmt->close();
-    $synced = 0;
-    while($order = $res->fetch_assoc()){
-        $info = v2raystore_syncOrderExpiryFromPanel($order, true);
-        if(is_array($info) && !empty($info['checked'])) $synced++;
-    }
-    return $synced;
+    $res = v2raystore_refreshCleanOldExpiredIndex(min(50, max(1, intval($max))), 45);
+    return intval($res['checked'] ?? 0);
 }
 
 function v2raystore_getCleanOldConfigCandidates($days, $basis = 'expire_date', $limit = 300, $syncPanel = true){
-    global $connection;
-    $days = max(1, intval($days));
-    $basis = ($basis === 'date') ? 'date' : 'expire_date';
-    $limit = max(1, min(1000, intval($limit)));
-    $now = time();
-    $threshold = $now - ($days * 86400);
-    if($syncPanel) v2raystore_syncBroadCleanupCandidates($days, $basis, min(500, $limit));
-
-    if($basis === 'date'){
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `expire_date` > 0 AND `expire_date` < ? AND CAST(`date` AS UNSIGNED) < ? ORDER BY `expire_date` ASC, `id` ASC LIMIT ?");
-        if(!$stmt) return [];
-        $stmt->bind_param('iii', $now, $threshold, $limit);
-    }else{
-        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `expire_date` > 0 AND `expire_date` < ? ORDER BY `expire_date` ASC, `id` ASC LIMIT ?");
-        if(!$stmt) return [];
-        $stmt->bind_param('ii', $threshold, $limit);
-    }
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $rows = [];
-    $seen = [];
-    while($row = $res->fetch_assoc()){
-        $rows[] = $row;
-        $seen[intval($row['id'] ?? 0)] = true;
-    }
-    $stmt->close();
-
-    // موردهایی که در پنل از قبل حذف شده‌اند ولی هنوز در دیتابیس مانده‌اند هم باید در پاکسازی دیده شوند.
-    $missingLimit = min(500, max(100, $limit));
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND (CAST(`date` AS UNSIGNED) < ? OR `expire_date` = 0 OR (`expire_date` > 0 AND `expire_date` <= ?)) ORDER BY `id` ASC LIMIT ?");
-    if($stmt){
-        $stmt->bind_param('iii', $threshold, $now, $missingLimit);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        while($row = $res->fetch_assoc()){
-            $oid = intval($row['id'] ?? 0);
-            if($oid <= 0 || isset($seen[$oid])) continue;
-            if(function_exists('v2raystore_syncOrderExpiryFromPanel')){
-                $sync = v2raystore_syncOrderExpiryFromPanel($row, false);
-                if(is_array($sync) && !empty($sync['checked']) && empty($sync['found'])){
-                    $rows[] = $row;
-                    $seen[$oid] = true;
-                    if(count($rows) >= $limit) break;
-                }
-            }
-        }
-        $stmt->close();
-    }
-
-    return $rows;
+    if($syncPanel) v2raystore_refreshCleanOldExpiredIndex(min(20, max(1, intval($limit))), 25);
+    return v2raystore_quickCleanOldConfigCandidates($days, 'panel_expiry', $limit);
 }
 
 function v2raystore_panelExpiryToSeconds($value){

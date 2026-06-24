@@ -3789,26 +3789,28 @@ if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin']
     $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
     if($days <= 0) $days = 10;
 
-    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date"; // expire_date | date
-    if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
-
     $auto = farid_getSettingValue("CLEAN_OLD_CONFIGS_AUTO") ?? "off"; // on/off
     if($auto != "on") $auto = "off";
 
-    $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
     $autoTitle = ($auto == "on") ? "روشن ✅" : "خاموش 🚫";
+    $lastScan = function_exists('v2raystore_cleanSettingGet') ? intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0) : 0;
+    $ready = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
 
-    $txt = "🗑 پاکسازی کانفیگ‌های قدیمی\n\n".
-           "🔧 تنظیمات فعلی:\n".
-           "⏱ بازه: بیشتر از $days روز\n".
-           "📅 معیار: $basisTitle\n".
-           "🚫 حذف خودکار: $autoTitle\n\n".
-           "برای دیدن تعداد و نمونه‌ها، «پیش‌نمایش» رو بزن.";
+    $txt = "🗑 پاکسازی کانفیگ‌های تمام‌شده\n\n".
+           "📌 معیار جدید: فقط وضعیت واقعی خود پنل؛ اتمام زمان یا حجم.\n".
+           "❌ تاریخ خرید/زمان اولیه کانفیگ دیگر بررسی نمی‌شود.\n".
+           "⏱ حذف بعد از: بیشتر از $days روز از زمان اتمام واقعی\n".
+           "🚫 حذف خودکار: $autoTitle\n".
+           "📦 آماده حذف در لیست: $ready\n".
+           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\n".
+           "برای اینکه به سرور فشار نیاید، worker هر دقیقه فقط چند کانفیگ را از پنل بررسی می‌کند؛ اگر کانفیگ تمدید شده باشد از لیست حذف می‌شود.";
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"🔍 پیش‌نمایش امن",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
-        [['text'=>"⏱ تعداد روز",'callback_data'=>"cleanOldConfigsSetDays", 'style'=>'primary'], ['text'=>"📅 معیار حذف",'callback_data'=>"cleanOldConfigsToggleBasis", 'style'=>'primary']],
+        [['text'=>"🔍 پیش‌نمایش لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
+        [['text'=>"🔄 بررسی سبک از پنل",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
+        [['text'=>"⏱ تعداد روز",'callback_data'=>"cleanOldConfigsSetDays", 'style'=>'primary']],
         [['text'=>"🚫 حذف خودکار: $autoTitle",'callback_data'=>"cleanOldConfigsToggleAuto", 'style'=>($auto == 'on' ? 'success' : 'danger')]],
+        [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']],
         [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE);
 
@@ -3822,17 +3824,6 @@ if($data == "cleanOldConfigsToggleAuto" && ($from_id == $admin || $userInfo['isA
     farid_setSettingValue("CLEAN_OLD_CONFIGS_AUTO", $auto);
     alert("✅ انجام شد");
     // بازگشت به منو
-    sendMessage("برای ادامه:", json_encode(['inline_keyboard'=>[
-        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
-    ]], JSON_UNESCAPED_UNICODE));
-    exit();
-}
-
-if($data == "cleanOldConfigsToggleBasis" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
-    $basis = ($basis == "date") ? "expire_date" : "date";
-    farid_setSettingValue("CLEAN_OLD_CONFIGS_BASIS", $basis);
-    alert("✅ معیار تغییر کرد");
     sendMessage("برای ادامه:", json_encode(['inline_keyboard'=>[
         [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE));
@@ -3868,15 +3859,14 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
     if($days <= 0) $days = 10;
 
-    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
-    if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
-
-    // پیش‌نمایش کاملاً سبک: اینجا هیچ درخواستی به پنل زده نمی‌شود تا ربات هنگ نکند.
-    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, $basis) : 0;
-    $candidates = function_exists('v2raystore_quickCleanOldConfigCandidates') ? v2raystore_quickCleanOldConfigCandidates($days, $basis, 15) : [];
+    // پیش‌نمایش سبک: اینجا همه پنل‌ها اسکن نمی‌شوند؛ worker لیست را مرحله‌ای از خود پنل می‌سازد.
+    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
+    $candidates = function_exists('v2raystore_quickCleanOldConfigCandidates') ? v2raystore_quickCleanOldConfigCandidates($days, 'panel_expiry', 15) : [];
+    $lastScan = function_exists('v2raystore_cleanSettingGet') ? intval(v2raystore_cleanSettingGet('CLEAN_OLD_PANEL_SCAN_LAST') ?? 0) : 0;
 
     if($total <= 0){
-        editText($message_id, "✅ موردی برای حذف پیدا نشد.\n\n⚡️ این بررسی سبک است و برای جلوگیری از هنگ، هنگام کلیک به پنل وصل نمی‌شود. اگر داخل پنل مورد منقضی داری ولی اینجا نمی‌آید، اول به‌روزرسانی کانفیگ‌ها/Sync را اجرا کن یا معیار را روی «تاریخ ایجاد» بگذار.", json_encode(['inline_keyboard'=>[
+        editText($message_id, "✅ فعلاً موردی در لیست پاکسازی نیست.\n\n📌 معیار فقط خود پنل است: اگر زمان یا حجم کانفیگ تمام شود، worker آن را به لیست اضافه می‌کند؛ اگر تمدید شود، از لیست حذف می‌شود.\n\n🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\nاگر داخل پنل کانفیگ تمام‌شده زیاد داری، cron را فعال کن یا چند بار «بررسی سبک از پنل» را بزن تا مرحله‌ای شناسایی شوند و به سرور فشار نیاید.", json_encode(['inline_keyboard'=>[
+            [['text'=>"🔄 بررسی سبک از پنل",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']],
             [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
             [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
         ]], JSON_UNESCAPED_UNICODE));
@@ -3889,25 +3879,29 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
         $uid = intval($row['userid']);
         $rm  = trim((string)($row['remark'] ?? '-'));
         if($rm === '') $rm = '-';
-        $cd  = intval($row['date'] ?? 0) > 0 ? jdate("Y-m-d", intval($row['date'])) : '-';
-        $expRaw = intval($row['expire_date'] ?? 0);
-        if($expRaw > 9999999999) $expRaw = intval($expRaw / 1000);
-        $ed  = $expRaw > 0 ? jdate("Y-m-d", $expRaw) : '-';
-        $lines[] = "#$oid | $uid | $rm | ایجاد:$cd | انقضا:$ed";
+        $finished = intval($row['clean_finished_at'] ?? 0);
+        $finishedTxt = $finished > 0 ? jdate("Y-m-d", $finished) : '-';
+        $reasonRaw = (string)($row['clean_reason'] ?? '');
+        $reason = ($reasonRaw == 'volume') ? 'حجم' : (($reasonRaw == 'time_volume') ? 'زمان+حجم' : 'زمان');
+        $used = intval($row['clean_used'] ?? 0);
+        $totalBytes = intval($row['clean_total'] ?? 0);
+        $usageTxt = ($totalBytes > 0 && function_exists('sumerize')) ? (sumerize($used) . ' / ' . sumerize($totalBytes)) : '-';
+        $lines[] = "#$oid | $uid | $rm | علت:$reason | اتمام:$finishedTxt | مصرف:$usageTxt";
     }
 
-    $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
     $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : [];
     $jobLine = (!empty($job['state'])) ? "\n\n⚠️ یک صف پاکسازی فعال است. اول وضعیتش را ببین یا متوقفش کن." : "";
 
-    $msg = "🔍 پیش‌نمایش پاکسازی سبک\n\n".
-           "📌 معیار: $basisTitle\n".
-           "⏱ بازه: بیشتر از $days روز\n".
-           "🔢 تعداد قابل حذف: $total\n\n".
+    $msg = "🔍 پیش‌نمایش پاکسازی از روی پنل\n\n".
+           "📌 معیار: فقط اتمام واقعی زمان/حجم در پنل\n".
+           "⏱ بازه: بیشتر از $days روز از اتمام\n".
+           "🔢 تعداد آماده حذف: $total\n".
+           "🔄 آخرین بررسی پنل: " . ($lastScan > 0 ? date('Y-m-d H:i:s', $lastScan) : '-') . "\n\n".
            "نمونه (حداکثر 15 مورد):\n" . implode("\n", $lines) . "\n\n".
-           "⚡️ حذف‌ها مستقیم داخل کلیک اجرا نمی‌شوند؛ فقط داخل صف ثبت می‌شوند و فایل cron مرحله‌ای پاک می‌کند تا به سرور فشار نیاید." . $jobLine;
+           "قبل از حذف نهایی، worker همان کانفیگ را دوباره از پنل چک می‌کند؛ اگر تمدید شده باشد حذف نمی‌شود." . $jobLine;
 
     $buttons = [];
+    $buttons[] = [['text'=>"🔄 بررسی سبک از پنل",'callback_data'=>"cleanOldConfigsScanRunOnce", 'style'=>'success']];
     if(!empty($job['state'])){
         $buttons[] = [['text'=>"📊 وضعیت صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStatus", 'style'=>'primary']];
         $buttons[] = [['text'=>"⛔️ توقف صف پاکسازی",'callback_data'=>"cleanOldConfigsQueueStop", 'style'=>'danger']];
@@ -3921,14 +3915,29 @@ if($data == "cleanOldConfigsPreview" && ($from_id == $admin || $userInfo['isAdmi
     exit();
 }
 
+if($data == "cleanOldConfigsScanRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $res = function_exists('v2raystore_refreshCleanOldExpiredIndex') ? v2raystore_refreshCleanOldExpiredIndex(5, 12) : ['processed'=>0];
+    $txt = "🔄 یک مرحله بررسی سبک از پنل انجام شد.\n\n".
+           "بررسی‌شده: " . intval($res['processed'] ?? 0) . "\n".
+           "پیدا شده تمام‌شده: " . intval($res['finished'] ?? 0) . "\n".
+           "فعال/تمدید و حذف از لیست: " . intval($res['active_or_renewed'] ?? 0) . "\n".
+           "پیدا نشد در پنل: " . intval($res['not_found'] ?? 0) . "\n\n".
+           "برای اسکن کامل بدون فشار، cron هر دقیقه اجرا شود.";
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>[
+        [['text'=>"🔍 پیش‌نمایش لیست",'callback_data'=>"cleanOldConfigsPreview", 'style'=>'primary']],
+        [['text'=>"🗑 منوی پاکسازی",'callback_data'=>"cleanOldConfigsMenu"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+
 if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     global $connection;
 
     $days = intval(farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10);
     if($days <= 0) $days = 10;
 
-    $basis = farid_getSettingValue("CLEAN_OLD_CONFIGS_BASIS") ?? "expire_date";
-    if($basis != "expire_date" && $basis != "date") $basis = "expire_date";
+    $basis = 'panel_expiry';
 
     $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, $basis) : 0;
     if($total <= 0){
@@ -3945,12 +3954,11 @@ if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdm
         $job = ['state'=>0];
     }
 
-    $basisTitle = ($basis == "date") ? "تاریخ ایجاد" : "تاریخ انقضا";
     $txt = "✅ صف پاکسازی ثبت شد.\n\n".
-           "📌 معیار: $basisTitle\n".
-           "⏱ بازه: بیشتر از $days روز\n".
+           "📌 معیار: فقط وضعیت واقعی پنل؛ اتمام زمان یا حجم\n".
+           "⏱ بازه: بیشتر از $days روز از اتمام واقعی\n".
            "🔢 تعداد اولیه: $total\n\n".
-           "از این به بعد حذف‌ها مرحله‌ای انجام می‌شود تا ربات و سرور هنگ نکنند.\n".
+           "از این به بعد حذف‌ها مرحله‌ای انجام می‌شود تا ربات و سرور هنگ نکنند. قبل از حذف هم دوباره از پنل چک می‌شود که اگر تمدید شده بود حذف نشود.\n".
            "فایل cron را هر ۱ دقیقه اجرا کن:\n".
            "<code>settings/cleanOldConfigsWorker.php</code>";
 
