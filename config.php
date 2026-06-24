@@ -9272,7 +9272,14 @@ function changeClientState($server_id, $inbound_id, $uuid){
         v2raystore_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
         $response = curl_exec($curl);
         curl_close($curl);
-        return json_decode($response);
+        $decodedResponse = json_decode($response);
+        // در حالت تمدید ریست، آپدیت کلاینت فقط limit/time را عوض می‌کند؛ برای اینکه حجم واقعاً از نو شروع شود،
+        // بعد از موفقیت پنل باید مصرف کلاینت هم ریست شود. فقط همین مسیر renew دست‌کاری می‌شود.
+        if(($editType == "renew") && is_object($decodedResponse) && !empty($decodedResponse->success) && isset($email)){
+            resetClientTraffic($server_id, $email, $inbound_id);
+        }
+        resetIpLog($server_id, $email);
+        return $decodedResponse;
     }
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
@@ -14357,6 +14364,11 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
             if(($result['type'] ?? '') === 'INCREASE_VOLUME' && !empty($result['increase_volume'])) $lines[] = '• 🚘 ترافیک افزوده‌شده : ' . v2raystore_h($result['increase_volume']) . ' گیگ';
             elseif(($result['type'] ?? '') === 'INCREASE_DAY' && !empty($result['increase_day'])) $lines[] = '• 🗓 زمان افزوده‌شده : ' . v2raystore_h($result['increase_day']) . ' روز';
             else $lines[] = '• 🚘 ترافیک : ' . v2raystore_formatGbForReport($volume);
+            if(($result['type'] ?? '') === 'RENEW_ACCOUNT' && ($result['renew_mode'] ?? '') === 'reset'){
+                if(!empty($result['renew_previous_volume'])) $lines[] = '• 📦 حجم قبل تمدید : ' . v2raystore_h($result['renew_previous_volume']);
+                if(!empty($result['renew_previous_days'])) $lines[] = '• 📆 روز قبل تمدید : ' . v2raystore_h($result['renew_previous_days']);
+                $lines[] = '• 🔄 حالت تمدید : ریست کامل';
+            }
             $lines[] = '• ⌛️ زمان ساخت : ' . v2raystore_h($duration);
             if($serverTitle !== '') $lines[] = '• 💎 لوکیشن : ' . v2raystore_h($serverTitle);
             if($link !== ''){
@@ -16093,6 +16105,24 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     $resetMode = ($renewSettings['mode'] === 'reset');
     $appliedDays = $days;
     $newExpire = $now + ($days * 86400);
+
+    // فقط برای حالت تمدید ریست: مقدار حجم/روز قبل از تمدید را قبل از تغییر پنل ذخیره کن تا در گزارش گروه بیاید.
+    $renewPreviousVolumeText = '';
+    $renewPreviousDaysText = '';
+    if($resetMode && function_exists('v2raystore_getOrderRemainingSummary')){
+        $previousRemain = v2raystore_getOrderRemainingSummary($order);
+        if(is_array($previousRemain)){
+            $prevVolume = trim((string)($previousRemain['remaining_gb_text'] ?? ''));
+            if($prevVolume !== '') $renewPreviousVolumeText = ($prevVolume === 'نامحدود') ? 'نامحدود' : ($prevVolume . ' گیگ');
+            $renewPreviousDaysText = trim((string)($previousRemain['remaining_days_text'] ?? ''));
+        }
+    }
+    if($renewPreviousVolumeText === ''){
+        $oldAmountBytes = max(0, intval($order['amount'] ?? 0));
+        $renewPreviousVolumeText = $oldAmountBytes > 0 ? v2raystore_formatGbForReport($oldAmountBytes / 1073741824) : 'نامحدود';
+    }
+    if($renewPreviousDaysText === '') $renewPreviousDaysText = v2raystore_formatRemainingDaysText($currentExpire);
+
     if(!$resetMode){
         $appliedDays = v2raystore_calculateRenewAddDays($currentExpire, $days, $renewSettings['max_days']);
         $baseExpire = max($currentExpire, $now);
@@ -16158,6 +16188,8 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
         'renew_mode'=>$renewSettings['mode'],
         'renew_days'=>$finalDaysText,
         'renew_volume'=>$finalVolumeText,
+        'renew_previous_volume'=>$resetMode ? $renewPreviousVolumeText : '',
+        'renew_previous_days'=>$resetMode ? $renewPreviousDaysText : '',
         'type'=>'RENEW_ACCOUNT',
         'pay_hash'=>$hashId,
         'pay_state_before'=>$previousState
