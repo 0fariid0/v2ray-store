@@ -29,17 +29,19 @@ $delete = ['processed'=>0, 'local_deleted'=>0, 'failed'=>0, 'skipped_renewed'=>0
 $auto = function_exists('v2raystore_cleanSettingGet') ? (string)v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_AUTO') : 'off';
 $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : ['state'=>0];
 
-// حذف مرحله‌ای فقط وقتی صف حذف دستی فعال باشد یا حذف خودکار روشن باشد.
-// این بخش هم سبک است تا به webhook/سرور فشار نیاید.
+// حذف مرحله‌ای فقط وقتی دکمه «شروع حذف» زده شده باشد یا حذف خودکار روشن باشد.
+// کانفیگ‌های شناسایی‌شده قبلاً داخل جدول آماده حذف هستند؛ اینجا فقط چند مورد را سبک حذف می‌کنیم.
 if((is_array($job) && intval($job['state'] ?? 0) === 1) || $auto === 'on'){
     if(!is_array($job) || intval($job['state'] ?? 0) !== 1){
         $days = intval(function_exists('v2raystore_cleanSettingGet') ? (v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_DAYS') ?? 10) : 10);
         if($days <= 0) $days = 10;
-        if(function_exists('v2raystore_startCleanOldConfigsJob')){
-            v2raystore_startCleanOldConfigsJob($days, 'panel_expiry', 0, null);
+        $ready = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
+        if($ready > 0 && function_exists('v2raystore_startCleanOldConfigsJob')){
+            v2raystore_startCleanOldConfigsJob($days, 'panel_expiry', 0, $ready);
+            $job = v2raystore_getCleanOldConfigsJob();
         }
     }
-    if(function_exists('v2raystore_processCleanOldConfigsJob')){
+    if(is_array($job) && intval($job['state'] ?? 0) === 1 && function_exists('v2raystore_processCleanOldConfigsJob')){
         $delete = v2raystore_processCleanOldConfigsJob(2, 12, true);
     }
 }
