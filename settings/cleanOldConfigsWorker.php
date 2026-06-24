@@ -1,7 +1,7 @@
 <?php
 // اجرای سبک پاکسازی/بررسی کانفیگ‌های تمام‌شده از روی خود پنل
 // Cron پیشنهادی توسط v2raystore.sh نصب می‌شود:
-// هر دقیقه 3 بار اجرا می‌شود: ثانیه 0، 20 و 40. هر بار 10 کانفیگ بررسی می‌شود و اگر حذف فعال باشد، هر 10 ثانیه 5 کانفیگ حذف می‌کند.
+// هر دقیقه 3 بار اجرا می‌شود: ثانیه 0، 20 و 40. هر بار 20 کانفیگ بررسی می‌شود و اگر حذف فعال باشد، هر 10 ثانیه 5 کانفیگ حذف می‌کند.
 
 $root = dirname(__DIR__);
 chdir($root);
@@ -23,7 +23,7 @@ if($lock && !@flock($lock, LOCK_EX | LOCK_NB)){
 // بررسی پنل فقط وقتی انجام می‌شود که:
 // 1) بررسی دستی فعال شده باشد، یا
 // 2) ساعت 4 صبح ایران بررسی روزانه شروع شود.
-$scan = v2raystore_runCleanOldPanelScanStep(10, 17, true);
+$scan = v2raystore_runCleanOldPanelScanStep(20, 18, true);
 
 $delete = ['processed'=>0, 'local_deleted'=>0, 'failed'=>0, 'skipped_renewed'=>0];
 $auto = function_exists('v2raystore_cleanSettingGet') ? (string)v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_AUTO') : 'off';
