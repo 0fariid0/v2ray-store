@@ -3495,6 +3495,427 @@ function v2raystore_cleanupOrderIfMissingOnPanel($order, $syncInfo = null, $noti
     return $deleted;
 }
 
+
+function v2raystore_orderFetchById($orderId){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return null;
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : null;
+    $stmt->close();
+    return is_array($row) ? $row : null;
+}
+
+function v2raystore_orderOwnerInfo($userId){
+    global $connection;
+    $userId = trim((string)$userId);
+    $fallback = ['userid'=>$userId, 'name'=>'-', 'username'=>'-'];
+    if($userId === '') return $fallback;
+    $stmt = $connection->prepare("SELECT `userid`,`name`,`username` FROM `users` WHERE `userid` = ? LIMIT 1");
+    if(!$stmt) return $fallback;
+    $stmt->bind_param('s', $userId);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $row = ($res && $res->num_rows > 0) ? $res->fetch_assoc() : $fallback;
+    $stmt->close();
+    if(!is_array($row)) $row = $fallback;
+    if(trim((string)($row['name'] ?? '')) === '') $row['name'] = '-';
+    if(trim((string)($row['username'] ?? '')) === '') $row['username'] = '-';
+    return $row;
+}
+
+function v2raystore_orderServerConfig($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0) return null;
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return is_array($row) ? $row : null;
+}
+
+function v2raystore_orderPlanInfo($order){
+    global $connection;
+    $info = ['title'=>'-', 'volume'=>'نامشخص', 'days'=>'نامشخص'];
+    if(!is_array($order)) return $info;
+    $fileId = intval($order['fileid'] ?? 0);
+    if($fileId > 0){
+        $stmt = $connection->prepare("SELECT `title`,`volume`,`days` FROM `server_plans` WHERE `id` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $fileId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if(is_array($row)){
+                if(trim((string)($row['title'] ?? '')) !== '') $info['title'] = trim((string)$row['title']);
+                if(isset($row['volume']) && trim((string)$row['volume']) !== '') $info['volume'] = (float)$row['volume'];
+                if(isset($row['days']) && trim((string)$row['days']) !== '') $info['days'] = (float)$row['days'];
+            }
+        }
+    }
+    return $info;
+}
+
+function v2raystore_orderPanelUsage($order){
+    if(is_numeric($order)) $order = v2raystore_orderFetchById($order);
+    if(!is_array($order)) return ['checked'=>false, 'found'=>false, 'source'=>'no_order'];
+
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $remark = trim((string)($order['remark'] ?? ''));
+    $server = v2raystore_orderServerConfig($serverId);
+    if(!$server) return ['checked'=>false, 'found'=>false, 'source'=>'no_server'];
+    $serverType = (string)($server['type'] ?? '');
+
+    $empty = [
+        'checked'=>false, 'found'=>false, 'source'=>'', 'server_type'=>$serverType,
+        'total'=>0, 'up'=>0, 'down'=>0, 'remaining'=>null, 'expiryTime'=>0, 'enable'=>null,
+        'email'=>$remark, 'id'=>$uuid,
+    ];
+
+    if($serverType === 'marzban'){
+        if(!function_exists('getMarzbanUser')) return $empty;
+        $info = getMarzbanUser($serverId, $remark);
+        $res = $empty;
+        $res['checked'] = true;
+        $res['source'] = 'marzban';
+        if(is_object($info) && (isset($info->username) || isset($info->data_limit) || isset($info->used_traffic) || isset($info->expire))){
+            $total = intval(v2raystore_arrayValue($info, 'data_limit', 0));
+            $used = intval(v2raystore_arrayValue($info, 'used_traffic', 0));
+            $res['found'] = true;
+            $res['total'] = $total;
+            $res['up'] = $used;
+            $res['down'] = 0;
+            $res['remaining'] = ($total > 0) ? max(0, $total - $used) : 0;
+            $res['expiryTime'] = v2raystore_panelExpiryToSeconds(v2raystore_arrayValue($info, 'expire', 0));
+            $res['enable'] = v2raystore_arrayValue($info, 'status', null);
+        }
+        return $res;
+    }
+
+    $json = function_exists('getJson') ? getJson($serverId) : null;
+    $res = $empty;
+    $res['checked'] = (bool)($json && (!isset($json->success) || $json->success));
+    $res['source'] = 'xui';
+    $rows = v2raystore_panelListFromGetJson($json);
+
+    foreach($rows as $row){
+        $rowId = intval(v2raystore_arrayValue($row, 'id', 0));
+        if($inboundId > 0 && $rowId !== $inboundId) continue;
+
+        $settings = v2raystore_decodeMaybeJson(v2raystore_arrayValue($row, 'settings', '{}'), true);
+        $clients = $settings['clients'] ?? [];
+        if(is_object($clients)) $clients = [$clients];
+        if(!is_array($clients)) $clients = [];
+
+        foreach($clients as $client){
+            $clientId = v2raystore_panelClientIdentity($client);
+            $email = v2raystore_panelClientEmail($client);
+            $match = false;
+            if($uuid !== '' && $clientId !== '' && $clientId === $uuid) $match = true;
+            if(!$match && $remark !== '' && $email !== '' && $email === $remark) $match = true;
+            if(!$match) continue;
+
+            $stat = v2raystore_panelFindClientStat(v2raystore_arrayValue($row, 'clientStats', []), $email);
+            $total = intval($stat ? v2raystore_arrayValue($stat, 'total', 0) : 0);
+            $up = intval($stat ? v2raystore_arrayValue($stat, 'up', 0) : 0);
+            $down = intval($stat ? v2raystore_arrayValue($stat, 'down', 0) : 0);
+            if($total <= 0){
+                $total = intval(v2raystore_arrayValue($client, 'totalGB', v2raystore_arrayValue($client, 'total', 0)));
+            }
+            $expiry = v2raystore_panelExpiryToSeconds(v2raystore_arrayValue($client, 'expiryTime', 0));
+            if($expiry <= 0 && $stat) $expiry = v2raystore_panelExpiryToSeconds(v2raystore_arrayValue($stat, 'expiryTime', 0));
+            if($expiry <= 0) $expiry = v2raystore_panelExpiryToSeconds(v2raystore_arrayValue($row, 'expiryTime', 0));
+            $enable = v2raystore_arrayValue($client, 'enable', null);
+            if($enable === null && $stat) $enable = v2raystore_arrayValue($stat, 'enable', null);
+
+            $res['found'] = true;
+            $res['total'] = $total;
+            $res['up'] = $up;
+            $res['down'] = $down;
+            $res['remaining'] = ($total > 0) ? max(0, $total - $up - $down) : 0;
+            $res['expiryTime'] = $expiry;
+            $res['enable'] = $enable;
+            $res['email'] = $email ?: $remark;
+            $res['id'] = $clientId ?: $uuid;
+            return $res;
+        }
+
+        // کانفیگ‌های قدیمی که هر inbound فقط یک کلاینت دارد.
+        if($inboundId <= 0 && count($clients) > 0){
+            $first = $clients[0];
+            $clientId = v2raystore_panelClientIdentity($first);
+            $email = v2raystore_panelClientEmail($first);
+            if(($uuid !== '' && $clientId === $uuid) || ($remark !== '' && $email === $remark)){
+                $total = intval(v2raystore_arrayValue($row, 'total', 0));
+                $up = intval(v2raystore_arrayValue($row, 'up', 0));
+                $down = intval(v2raystore_arrayValue($row, 'down', 0));
+                $res['found'] = true;
+                $res['total'] = $total;
+                $res['up'] = $up;
+                $res['down'] = $down;
+                $res['remaining'] = ($total > 0) ? max(0, $total - $up - $down) : 0;
+                $res['expiryTime'] = v2raystore_panelExpiryToSeconds(v2raystore_arrayValue($row, 'expiryTime', 0));
+                $res['enable'] = v2raystore_arrayValue($row, 'enable', null);
+                $res['email'] = $email ?: $remark;
+                $res['id'] = $clientId ?: $uuid;
+                return $res;
+            }
+        }
+    }
+    return $res;
+}
+
+function v2raystore_formatTrafficForReport($bytes, $total = null){
+    if($bytes === null) return 'نامشخص';
+    if($total !== null && intval($total) <= 0) return 'نامحدود';
+    if(function_exists('sumerize')) return sumerize(max(0, intval($bytes)));
+    $gb = intval($bytes) / 1073741824;
+    if($gb >= 1) return round($gb, 2) . ' گیگابایت';
+    return round($gb * 1024, 2) . ' مگابایت';
+}
+
+function v2raystore_daysTextFromExpiry($expiry){
+    $expiry = v2raystore_panelExpiryToSeconds($expiry);
+    if($expiry <= 0) return 'نامحدود';
+    $days = floor(($expiry - time()) / 86400);
+    if($days < 0) $days = 0;
+    return $days . ' روز';
+}
+
+function v2raystore_orderConfiguredVolumeText($plan, $usage){
+    $v = $plan['volume'] ?? 'نامشخص';
+    if(is_numeric($v) && floatval($v) > 0) return rtrim(rtrim(number_format((float)$v, 2, '.', ''), '0'), '.') . ' گیگ';
+    $total = intval($usage['total'] ?? 0);
+    if($total > 0) return rtrim(rtrim(number_format($total / 1073741824, 2, '.', ''), '0'), '.') . ' گیگ';
+    if(is_numeric($v) && floatval($v) == 0) return 'نامحدود';
+    return 'نامشخص';
+}
+
+function v2raystore_orderConfiguredDaysText($order, $plan, $usage){
+    $d = $plan['days'] ?? 'نامشخص';
+    if(is_numeric($d) && floatval($d) > 0) return rtrim(rtrim(number_format((float)$d, 2, '.', ''), '0'), '.') . ' روز';
+    $created = intval($order['date'] ?? 0);
+    $exp = intval($order['expire_date'] ?? 0);
+    if($exp <= 0 && !empty($usage['expiryTime'])) $exp = v2raystore_panelExpiryToSeconds($usage['expiryTime']);
+    if($created > 0 && $exp > $created){
+        return max(1, (int)ceil(($exp - $created) / 86400)) . ' روز';
+    }
+    if($exp <= 0) return 'نامحدود';
+    return 'نامشخص';
+}
+
+function v2raystore_buildDeleteConfigReport($result, $actorUserId = null, $actorName = null, $actorUsername = null){
+    $order = $result['order'] ?? [];
+    $owner = $result['owner'] ?? [];
+    $plan = $result['plan'] ?? [];
+    $usage = $result['usage'] ?? [];
+    $uid = $owner['userid'] ?? ($order['userid'] ?? $actorUserId ?? '-');
+    $name = $owner['name'] ?? $actorName ?? '-';
+    $uname = $owner['username'] ?? $actorUsername ?? '-';
+    $uname = trim((string)$uname);
+    if($uname === '') $uname = '-';
+    $remark = trim((string)($order['remark'] ?? '')) ?: '-';
+    $serviceTitle = trim((string)($plan['title'] ?? ''));
+    if($serviceTitle === '' || $serviceTitle === '-') $serviceTitle = $remark;
+    $left = v2raystore_formatTrafficForReport($usage['remaining'] ?? null, $usage['total'] ?? null);
+    $expireDays = v2raystore_daysTextFromExpiry($usage['expiryTime'] ?? ($order['expire_date'] ?? 0));
+    $volumeText = v2raystore_orderConfiguredVolumeText($plan, $usage);
+    $daysText = v2raystore_orderConfiguredDaysText($order, $plan, $usage);
+    $panelState = !empty($result['panel_ok']) ? 'حذف شد/وجود نداشت ✅' : 'نامشخص ⚠️';
+    $localState = !empty($result['local_deleted']) ? 'حذف شد ✅' : 'حذف نشد ⚠️';
+
+    return "🔋|💰 حذف کانفیگ\n\n" .
+           "▫️آیدی کاربر: <code>" . v2raystore_h($uid) . "</code>\n" .
+           "👨‍💼اسم کاربر: " . v2raystore_h($name) . "\n" .
+           "⚡️ نام کاربری: " . v2raystore_h($uname) . "\n" .
+           "🎈 نام سرویس: " . v2raystore_h($serviceTitle) . "\n" .
+           "🔖 ریمارک: " . v2raystore_h($remark) . "\n" .
+           "🔋حجم سرویس: " . v2raystore_h($volumeText) . "\n" .
+           "⏰ مدت زمان سرویس: " . v2raystore_h($daysText) . "\n" .
+           "❌ حجم باقی مانده: " . v2raystore_h($left) . "\n" .
+           "📆 روز باقیمانده: " . v2raystore_h($expireDays) . "\n" .
+           "🖥 پنل: " . v2raystore_h($panelState) . "\n" .
+           "🤖 ربات: " . v2raystore_h($localState);
+}
+
+function v2raystore_deleteOrderEverywhere($orderOrId, $deleteLocal = true, $incrementServerCount = true){
+    global $connection;
+    $order = is_array($orderOrId) ? $orderOrId : v2raystore_orderFetchById($orderOrId);
+    if(!is_array($order)){
+        return ['ok'=>false, 'message'=>'سفارش داخل ربات پیدا نشد.', 'panel_ok'=>false, 'local_deleted'=>false];
+    }
+
+    $serverId = intval($order['server_id'] ?? 0);
+    $inboundId = intval($order['inbound_id'] ?? 0);
+    $uuid = trim((string)($order['uuid'] ?? '0'));
+    $remark = trim((string)($order['remark'] ?? ''));
+    $server = v2raystore_orderServerConfig($serverId);
+    $serverType = (string)($server['type'] ?? '');
+    $usage = v2raystore_orderPanelUsage($order);
+    $plan = v2raystore_orderPlanInfo($order);
+    $owner = v2raystore_orderOwnerInfo($order['userid'] ?? '');
+
+    $panelOk = false;
+    $panelMessage = '';
+    $deleteResponse = null;
+
+    if(!empty($usage['checked']) && empty($usage['found'])){
+        $panelOk = true; // از پنل حذف شده یا وجود ندارد؛ ربات باید تمیز شود.
+        $panelMessage = 'کانفیگ از قبل داخل پنل وجود نداشت.';
+    }else{
+        if($serverType === 'marzban'){
+            $deleteResponse = function_exists('deleteMarzban') ? deleteMarzban($serverId, $remark) : null;
+            $panelOk = ($deleteResponse !== null && $deleteResponse !== false);
+        }else{
+            if($inboundId > 0 && function_exists('deleteClient')) $deleteResponse = deleteClient($serverId, $inboundId, $uuid, 1);
+            elseif(function_exists('deleteInbound')) $deleteResponse = deleteInbound($serverId, $uuid, 1);
+
+            if(is_array($deleteResponse)){
+                $panelOk = !isset($deleteResponse['success']) || $deleteResponse['success'] !== false || !empty($deleteResponse['not_found']);
+            }elseif(is_object($deleteResponse)){
+                $panelOk = !isset($deleteResponse->success) || !empty($deleteResponse->success);
+            }elseif($deleteResponse === true){
+                $panelOk = true;
+            }
+        }
+
+        if(!$panelOk){
+            // یک بار بعد از تلاش حذف چک می‌کنیم؛ اگر دیگر در پنل نبود، حذف پنل موفق محسوب می‌شود.
+            $after = v2raystore_orderPanelUsage($order);
+            if(!empty($after['checked']) && empty($after['found'])){
+                $panelOk = true;
+                $panelMessage = 'بعد از تلاش حذف، کانفیگ در پنل پیدا نشد.';
+            }
+        }
+    }
+
+    $localDeleted = false;
+    if($deleteLocal && $panelOk){
+        $orderId = intval($order['id'] ?? 0);
+        if($orderId > 0){
+            $stmt = $connection->prepare("DELETE FROM `orders_list` WHERE `id` = ? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $orderId);
+                $stmt->execute();
+                $localDeleted = $stmt->affected_rows > 0;
+                $stmt->close();
+            }
+        }
+        if($localDeleted && $incrementServerCount && $serverId > 0){
+            $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` + 1 WHERE `id` = ?");
+            if($stmt){
+                $stmt->bind_param('i', $serverId);
+                $stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+
+    return [
+        'ok' => ($panelOk && ($localDeleted || !$deleteLocal)),
+        'panel_ok' => $panelOk,
+        'local_deleted' => $localDeleted,
+        'message' => $panelMessage,
+        'order' => $order,
+        'usage' => $usage,
+        'plan' => $plan,
+        'owner' => $owner,
+        'delete_response' => $deleteResponse,
+    ];
+}
+
+function v2raystore_syncBroadCleanupCandidates($days, $basis = 'expire_date', $max = 300){
+    global $connection;
+    if(!function_exists('v2raystore_syncOrderExpiryFromPanel')) return 0;
+    $days = max(1, intval($days));
+    $basis = ($basis === 'date') ? 'date' : 'expire_date';
+    $max = max(1, min(1000, intval($max)));
+    $now = time();
+    $threshold = $now - ($days * 86400);
+
+    // فقط یک بخش محدود را sync می‌کنیم تا منوی پاکسازی هنگ نکند، اما برخلاف قبل فقط به expire_date دیتابیس وابسته نیست.
+    if($basis === 'date'){
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND CAST(`date` AS UNSIGNED) < ? ORDER BY `id` ASC LIMIT ?");
+        if(!$stmt) return 0;
+        $stmt->bind_param('ii', $threshold, $max);
+    }else{
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND ((`expire_date` > 0 AND `expire_date` <= ?) OR `expire_date` = 0 OR CAST(`date` AS UNSIGNED) < ?) ORDER BY `expire_date` ASC, `id` ASC LIMIT ?");
+        if(!$stmt) return 0;
+        $stmt->bind_param('iii', $now, $threshold, $max);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+    $synced = 0;
+    while($order = $res->fetch_assoc()){
+        $info = v2raystore_syncOrderExpiryFromPanel($order, true);
+        if(is_array($info) && !empty($info['checked'])) $synced++;
+    }
+    return $synced;
+}
+
+function v2raystore_getCleanOldConfigCandidates($days, $basis = 'expire_date', $limit = 300, $syncPanel = true){
+    global $connection;
+    $days = max(1, intval($days));
+    $basis = ($basis === 'date') ? 'date' : 'expire_date';
+    $limit = max(1, min(1000, intval($limit)));
+    $now = time();
+    $threshold = $now - ($days * 86400);
+    if($syncPanel) v2raystore_syncBroadCleanupCandidates($days, $basis, min(500, $limit));
+
+    if($basis === 'date'){
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `expire_date` > 0 AND `expire_date` < ? AND CAST(`date` AS UNSIGNED) < ? ORDER BY `expire_date` ASC, `id` ASC LIMIT ?");
+        if(!$stmt) return [];
+        $stmt->bind_param('iii', $now, $threshold, $limit);
+    }else{
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND `expire_date` > 0 AND `expire_date` < ? ORDER BY `expire_date` ASC, `id` ASC LIMIT ?");
+        if(!$stmt) return [];
+        $stmt->bind_param('ii', $threshold, $limit);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = [];
+    $seen = [];
+    while($row = $res->fetch_assoc()){
+        $rows[] = $row;
+        $seen[intval($row['id'] ?? 0)] = true;
+    }
+    $stmt->close();
+
+    // موردهایی که در پنل از قبل حذف شده‌اند ولی هنوز در دیتابیس مانده‌اند هم باید در پاکسازی دیده شوند.
+    $missingLimit = min(500, max(100, $limit));
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status` = 1 AND (CAST(`date` AS UNSIGNED) < ? OR `expire_date` = 0 OR (`expire_date` > 0 AND `expire_date` <= ?)) ORDER BY `id` ASC LIMIT ?");
+    if($stmt){
+        $stmt->bind_param('iii', $threshold, $now, $missingLimit);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while($row = $res->fetch_assoc()){
+            $oid = intval($row['id'] ?? 0);
+            if($oid <= 0 || isset($seen[$oid])) continue;
+            if(function_exists('v2raystore_syncOrderExpiryFromPanel')){
+                $sync = v2raystore_syncOrderExpiryFromPanel($row, false);
+                if(is_array($sync) && !empty($sync['checked']) && empty($sync['found'])){
+                    $rows[] = $row;
+                    $seen[$oid] = true;
+                    if(count($rows) >= $limit) break;
+                }
+            }
+        }
+        $stmt->close();
+    }
+
+    return $rows;
+}
+
 function v2raystore_panelExpiryToSeconds($value){
     if($value === null) return 0;
     if(is_string($value)){
@@ -7113,34 +7534,57 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
     $serverType = $server_info['type'];
 
     $response = getJson($server_id);
-    if(!$response) return null;
-    $response = $response->obj;
-    $old_data = []; $oldclientstat = [];
-    foreach($response as $row){
-        if($row->id == $inbound_id) {
-            $settings = json_decode($row->settings);
-            $clients = $settings->clients;
+    if(!$response || !isset($response->obj)) return null;
+    $response = is_array($response->obj) ? $response->obj : [$response->obj];
 
-            $clientsStates = $row->clientStats;
-            foreach($clients as $key => $client){
-                if($client->id == $uuid || $client->password == $uuid){
-                    $old_data = $client;
-                    unset($clients[$key]);
-                    $email = $client->email;
-                    $emails = array_column($clientsStates,'email');
-                    $emailKey = array_search($email,$emails);
-                    
-                    $total = $clientsStates[$emailKey]->total;
-                    $up = $clientsStates[$emailKey]->up;
-                    $enable = $clientsStates[$emailKey]->enable;
-                    $down = $clientsStates[$emailKey]->down; 
-                    break;
+    $old_data = (object)['id'=>$uuid, 'expiryTime'=>0, 'limitIp'=>0, 'flow'=>''];
+    $clients = [];
+    $settings = (object)['clients'=>[]];
+    $row = null;
+    $email = '';
+    $total = 0;
+    $up = 0;
+    $down = 0;
+    $foundClient = false;
+
+    foreach($response as $panelRow){
+        if(!is_object($panelRow) || intval($panelRow->id ?? 0) != intval($inbound_id)) continue;
+        $row = $panelRow;
+        $settings = json_decode((string)($row->settings ?? '{}'));
+        if(!is_object($settings)) $settings = (object)['clients'=>[]];
+        $clients = isset($settings->clients) && is_array($settings->clients) ? $settings->clients : [];
+        $clientsStates = isset($row->clientStats) && is_array($row->clientStats) ? $row->clientStats : [];
+        foreach($clients as $key => $client){
+            if(!is_object($client)) continue;
+            $clientId = $client->id ?? ($client->password ?? '');
+            if($clientId == $uuid){
+                $foundClient = true;
+                $old_data = $client;
+                unset($clients[$key]);
+                $email = (string)($client->email ?? '');
+                $emails = array_map(function($item){ return is_object($item) ? (string)($item->email ?? '') : ''; }, $clientsStates);
+                $emailKey = array_search($email, $emails, true);
+                if($emailKey !== false && isset($clientsStates[$emailKey]) && is_object($clientsStates[$emailKey])){
+                    $stat = $clientsStates[$emailKey];
+                    $total = intval($stat->total ?? 0);
+                    $up = intval($stat->up ?? 0);
+                    $down = intval($stat->down ?? 0);
+                }else{
+                    $total = intval($client->totalGB ?? ($client->total ?? 0));
+                    $up = 0;
+                    $down = 0;
                 }
+                break 2;
             }
         }
     }
-    $settings->clients = $clients;
-    $settings = json_encode($settings);
+
+    if(!$foundClient || !$row){
+        return ['success'=>true, 'not_found'=>true, 'id'=>$uuid, 'expiryTime'=>0, 'limitIp'=>0, 'flow'=>'', 'total'=>0, 'up'=>0, 'down'=>0];
+    }
+
+    $settings->clients = array_values($clients);
+    $settings = json_encode($settings, JSON_UNESCAPED_UNICODE);
 	
     if($delete == 1){
         $dataArr = array('up' => $row->up,'down' => $row->down,'total' => $row->total,'remark' => $row->remark,'enable' => 'true',
@@ -8451,29 +8895,42 @@ function deleteInbound($server_id, $uuid, $delete = 0){
     $serverType = $server_info['type'];
 
     $response = getJson($server_id);
-    if(!$response) return null;
-    $response = $response->obj;
+    if(!$response || !isset($response->obj)) return null;
+    $response = is_array($response->obj) ? $response->obj : [$response->obj];
+    $oldData = ['success'=>true, 'not_found'=>true, 'total'=>0, 'up'=>0, 'down'=>0, 'volume'=>0, 'expiryTime'=>0, 'uniqid'=>$uuid];
+    $inbound_id = 0;
+    $foundInbound = false;
     foreach($response as $row){
-        $clients = json_decode($row->settings)->clients;
-        if($clients[0]->id == $uuid || $clients[0]->password == $uuid) {
-            $inbound_id = $row->id;
-            $protocol = $row->protocol;
-            $uniqid = ($protocol == 'trojan') ? json_decode($row->settings)->clients[0]->password : json_decode($row->settings)->clients[0]->id;
-            $netType = json_decode($row->streamSettings)->network;
+        if(!is_object($row)) continue;
+        $settingsObj = json_decode((string)($row->settings ?? '{}'));
+        $clients = (is_object($settingsObj) && isset($settingsObj->clients) && is_array($settingsObj->clients)) ? $settingsObj->clients : [];
+        if(count($clients) == 0 || !is_object($clients[0])) continue;
+        $firstId = $clients[0]->id ?? ($clients[0]->password ?? '');
+        if($firstId == $uuid) {
+            $foundInbound = true;
+            $inbound_id = intval($row->id ?? 0);
+            $protocol = $row->protocol ?? '';
+            $uniqid = ($protocol == 'trojan') ? ($clients[0]->password ?? $uuid) : ($clients[0]->id ?? $uuid);
+            $stream = json_decode((string)($row->streamSettings ?? '{}'));
+            $netType = is_object($stream) ? ($stream->network ?? '') : '';
             $oldData = [
-                'total' => $row->total,
-                'up' => $row->up,
-                'down' => $row->down,
-                'volume' => ((int)$row->total - (int)$row->up - (int)$row->down),
-                'port' => $row->port,
+                'success' => true,
+                'total' => intval($row->total ?? 0),
+                'up' => intval($row->up ?? 0),
+                'down' => intval($row->down ?? 0),
+                'volume' => max(0, intval($row->total ?? 0) - intval($row->up ?? 0) - intval($row->down ?? 0)),
+                'port' => $row->port ?? 0,
                 'protocol' => $protocol,
-                'expiryTime' => $row->expiryTime,
+                'expiryTime' => $row->expiryTime ?? 0,
                 'uniqid' => $uniqid,
                 'netType' => $netType,
-                'security' => json_decode($row->streamSettings)->security,
+                'security' => is_object($stream) ? ($stream->security ?? '') : '',
             ];
             break;
         }
+    }
+    if(!$foundInbound || $inbound_id <= 0){
+        return $oldData;
     }
     if($delete == 1){
         $serverName = $server_info['username'];
