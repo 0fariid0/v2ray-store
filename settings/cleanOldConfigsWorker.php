@@ -1,7 +1,7 @@
 <?php
 // اجرای سبک پاکسازی/بررسی کانفیگ‌های تمام‌شده از روی خود پنل
 // Cron پیشنهادی توسط v2raystore.sh نصب می‌شود:
-// هر دقیقه 3 بار اجرا می‌شود: ثانیه 0، 20 و 40. هر بار فقط 5 کانفیگ بررسی می‌شود.
+// هر دقیقه 3 بار اجرا می‌شود: ثانیه 0، 20 و 40. هر بار 10 کانفیگ بررسی می‌شود و اگر حذف فعال باشد، هر 10 ثانیه 5 کانفیگ حذف می‌کند.
 
 $root = dirname(__DIR__);
 chdir($root);
@@ -23,7 +23,7 @@ if($lock && !@flock($lock, LOCK_EX | LOCK_NB)){
 // بررسی پنل فقط وقتی انجام می‌شود که:
 // 1) بررسی دستی فعال شده باشد، یا
 // 2) ساعت 4 صبح ایران بررسی روزانه شروع شود.
-$scan = v2raystore_runCleanOldPanelScanStep(5, 17, true);
+$scan = v2raystore_runCleanOldPanelScanStep(10, 17, true);
 
 $delete = ['processed'=>0, 'local_deleted'=>0, 'failed'=>0, 'skipped_renewed'=>0];
 $auto = function_exists('v2raystore_cleanSettingGet') ? (string)v2raystore_cleanSettingGet('CLEAN_OLD_CONFIGS_AUTO') : 'off';
@@ -42,7 +42,20 @@ if((is_array($job) && intval($job['state'] ?? 0) === 1) || $auto === 'on'){
         }
     }
     if(is_array($job) && intval($job['state'] ?? 0) === 1 && function_exists('v2raystore_processCleanOldConfigsJob')){
-        $delete = v2raystore_processCleanOldConfigsJob(2, 12, true);
+        $delete = v2raystore_processCleanOldConfigsJob(5, 8, true);
+        // اگر هنوز صف فعال است، ۱۰ ثانیه بعد ۵ مورد دیگر حذف می‌شود؛ بنابراین حذف تقریباً هر ۱۰ ثانیه ۵ تا جلو می‌رود.
+        $jobAfter = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : ['state'=>0];
+        if(is_array($jobAfter) && intval($jobAfter['state'] ?? 0) === 1){
+            sleep(10);
+            $delete2 = v2raystore_processCleanOldConfigsJob(5, 8, true);
+            if(is_array($delete2)){
+                foreach(['processed','panel_ok','local_deleted','failed','skipped_renewed'] as $k){
+                    $delete[$k] = intval($delete[$k] ?? 0) + intval($delete2[$k] ?? 0);
+                }
+                $delete['remaining'] = intval($delete2['remaining'] ?? ($delete['remaining'] ?? 0));
+                $delete['message'] = (string)($delete2['message'] ?? ($delete['message'] ?? ''));
+            }
+        }
     }
 }
 
