@@ -4388,7 +4388,7 @@ function v2raystore_startCleanOldConfigsJob($days, $basis = 'expire_date', $star
         'failed' => 0,
         'skip_ids' => [],
         'last_errors' => [],
-        'last_message' => 'صف ثبت شد؛ worker قبل از حذف، هر کانفیگ را دوباره از پنل بررسی می‌کند.',
+        'last_message' => 'حذف مرحله‌ای شروع شد؛ worker قبل از حذف، هر کانفیگ را دوباره از پنل بررسی می‌کند.',
     ];
     v2raystore_setCleanOldConfigsJob($job);
     return $job;
@@ -4665,7 +4665,7 @@ function v2raystore_cleanOldControlPanelKeyboard(){
         ['text'=>'⛔ توقف بررسی','callback_data'=>'cleanOldConfigsScanStop','style'=>'danger']
     ];
     $rows[] = [
-        ['text'=>($jobActive ? '▶️ اجرای یک مرحله حذف' : '🗑 ثبت صف حذف'),'callback_data'=>($jobActive ? 'cleanOldConfigsQueueRunOnce' : 'cleanOldConfigsDoDelete'),'style'=>'danger'],
+        ['text'=>($jobActive ? '▶️ ادامه حذف مرحله‌ای' : '🗑 شروع حذف'),'callback_data'=>'cleanOldConfigsQueueRunOnce','style'=>'danger'],
         ['text'=>'⛔ توقف حذف','callback_data'=>'cleanOldConfigsQueueStop','style'=>'danger']
     ];
     $rows[] = [
@@ -4745,6 +4745,7 @@ function v2raystore_buildCleanOldControlPanelText($lastResult = null){
            $notice .
            "\n<b>⚙️ تنظیمات</b>\n".
            "معیار حذف: فقط وضعیت واقعی خود پنل؛ اتمام زمان یا حجم\n".
+           "کانفیگ‌های تمام‌شده بعد از شناسایی، خودکار داخل لیست آماده حذف قرار می‌گیرند.\n".
            "حذف بعد از: بیشتر از <b>$days</b> روز از اتمام واقعی\n".
            "حذف خودکار: " . ($auto === 'on' ? 'روشن ✅' : 'خاموش 🚫') . "\n".
            "آماده حذف داخل لیست: <b>$ready</b>\n".
@@ -4786,6 +4787,7 @@ function v2raystore_buildCleanOldControlPanelText($lastResult = null){
     }
 
     $txt .= "\n<b>📋 نمونه لیست آماده حذف</b>\n<pre>" . v2raystore_cleanOldH(v2raystore_cleanOldCandidatesLines($days, 10)) . "</pre>";
+    $txt .= "\nوقتی بررسی پنل مورد تمام‌شده پیدا کند، همان لحظه به همین لیست اضافه می‌شود؛ برای حذف فقط دکمه شروع حذف را بزن.";
     $txt .= "\nبرای فشار نیامدن به سرور، worker هر ۲۰ ثانیه فقط ۵ کانفیگ را از پنل بررسی می‌کند.";
 
     // محدودیت تلگرام برای editMessageText حدود 4096 کاراکتر است.

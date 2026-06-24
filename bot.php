@@ -3858,29 +3858,32 @@ if($data == "cleanOldConfigsScanStop" && ($from_id == $admin || $userInfo['isAdm
     exit();
 }
 
-if($data == "cleanOldConfigsDoDelete" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(in_array($data ?? '', ["cleanOldConfigsDoDelete", "cleanOldConfigsQueueRunOnce"], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    // دکمه «ثبت صف حذف» حذف شده؛ کانفیگ‌های شناسایی‌شده خودکار داخل لیست آماده حذف می‌آیند.
+    // این دکمه فقط حذف مرحله‌ای را شروع/ادامه می‌دهد و همان پیام پنل را edit می‌کند.
+    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+
     $days = intval(function_exists('v2raystore_cleanSettingGet') ? (v2raystore_cleanSettingGet("CLEAN_OLD_CONFIGS_DAYS") ?? 10) : (farid_getSettingValue("CLEAN_OLD_CONFIGS_DAYS") ?? 10));
     if($days <= 0) $days = 10;
-    $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
-    if($total <= 0){
-        if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
-        $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'فعلاً مورد آماده حذف در لیست نیست. برای ساخت لیست، بررسی دستی را شروع کن.']) : "✅ موردی برای حذف نیست.";
-        $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
-        editText($message_id, $txt, $keys, 'HTML');
-        exit();
-    }
-    if(function_exists('v2raystore_startCleanOldConfigsJob')) v2raystore_startCleanOldConfigsJob($days, 'panel_expiry', $from_id, $total);
-    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
-    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'صف حذف ثبت شد؛ از این به بعد همان پیام مرحله‌ای آپدیت می‌شود.']) : "✅ صف ثبت شد.";
-    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
-    editText($message_id, $txt, $keys, 'HTML');
-    exit();
-}
 
-if($data == "cleanOldConfigsQueueRunOnce" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
+    $job = function_exists('v2raystore_getCleanOldConfigsJob') ? v2raystore_getCleanOldConfigsJob() : ['state'=>0];
+    if(empty($job['state']) || intval($job['state']) !== 1){
+        $total = function_exists('v2raystore_quickCountCleanOldConfigCandidates') ? v2raystore_quickCountCleanOldConfigCandidates($days, 'panel_expiry') : 0;
+        if($total <= 0){
+            $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['notice'=>'فعلاً مورد آماده حذف داخل لیست نیست. اول بررسی پنل را شروع کن تا کانفیگ‌های تمام‌شده خودکار وارد لیست شوند.']) : "✅ موردی برای حذف نیست.";
+            $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
+            editText($message_id, $txt, $keys, 'HTML');
+            exit();
+        }
+        if(function_exists('v2raystore_startCleanOldConfigsJob')){
+            v2raystore_startCleanOldConfigsJob($days, 'panel_expiry', $from_id, $total);
+        }
+    }
+
     $deleteRes = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 12, true) : ['processed'=>0];
-    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['delete'=>$deleteRes, 'notice'=>'یک مرحله حذف سبک اجرا شد.']) : "یک مرحله حذف اجرا شد.";
+    $notice = 'حذف مرحله‌ای شروع/ادامه پیدا کرد. از این به بعد worker همان پیام را بروزرسانی می‌کند.';
+    if(is_array($deleteRes) && !empty($deleteRes['message'])) $notice = (string)$deleteRes['message'];
+    $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['delete'=>$deleteRes, 'notice'=>$notice]) : "یک مرحله حذف اجرا شد.";
     $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
     editText($message_id, $txt, $keys, 'HTML');
     exit();
