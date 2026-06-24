@@ -1504,6 +1504,88 @@ function v2raystore_isAgentUser($user = null){
     return is_array($user) && !empty($user['is_agent']) && intval($user['is_agent']) === 1;
 }
 
+function v2raystore_agentPricingDecode($raw){
+    $data = is_array($raw) ? $raw : json_decode((string)$raw, true);
+    if(!is_array($data)) $data = [];
+    if(!isset($data['normal'])) $data['normal'] = 0;
+    if(!isset($data['plans']) || !is_array($data['plans'])) $data['plans'] = [];
+    if(!isset($data['servers']) || !is_array($data['servers'])) $data['servers'] = [];
+    return $data;
+}
+
+function v2raystore_agentPricingRule($rule){
+    if(is_array($rule)){
+        $mode = strtolower((string)($rule['mode'] ?? $rule['type'] ?? 'percent'));
+        if(in_array($mode, ['gb', 'per_gb', 'gb_price', 'price_per_gb'], true)) $mode = 'gb';
+        else $mode = 'percent';
+        $value = floatval($rule['value'] ?? $rule['amount'] ?? 0);
+    }else{
+        $mode = 'percent';
+        $value = is_numeric($rule) ? floatval($rule) : 0;
+    }
+    if($value < 0) $value = 0;
+    if($mode === 'percent' && $value > 100) $value = 100;
+    return ['mode'=>$mode, 'value'=>$value];
+}
+
+function v2raystore_makeAgentPricingRule($mode, $value){
+    $mode = strtolower((string)$mode);
+    if(in_array($mode, ['gb', 'per_gb', 'gb_price', 'price_per_gb'], true)) $mode = 'gb';
+    else $mode = 'percent';
+    $value = floatval($value);
+    if($value < 0) $value = 0;
+    if($mode === 'percent' && $value > 100) $value = 100;
+    return ['mode'=>$mode, 'value'=>$value];
+}
+
+function v2raystore_agentPricingLabel($rule){
+    $rule = v2raystore_agentPricingRule($rule);
+    $value = $rule['value'];
+    if(floor($value) == $value) $value = intval($value);
+    if($rule['mode'] === 'gb') return number_format($value) . ' تومان/گیگ';
+    return $value . '%';
+}
+
+function v2raystore_getAgentPricingRule($user = null, $planId = 0, $serverId = 0){
+    global $botState;
+    if($user === null) $user = $GLOBALS['userInfo'] ?? null;
+    $discounts = v2raystore_agentPricingDecode($user['discount_percent'] ?? null);
+    $planId = (string)intval($planId);
+    $serverId = (string)intval($serverId);
+    if(($botState['agencyPlanDiscount'] ?? 'on') === 'on'){
+        if($planId !== '0' && array_key_exists($planId, $discounts['plans'])) return v2raystore_agentPricingRule($discounts['plans'][$planId]);
+    }else{
+        if($serverId !== '0' && array_key_exists($serverId, $discounts['servers'])) return v2raystore_agentPricingRule($discounts['servers'][$serverId]);
+    }
+    return v2raystore_agentPricingRule($discounts['normal'] ?? 0);
+}
+
+function v2raystore_isAgentPricingPerGb($user = null, $planId = 0, $serverId = 0){
+    $rule = v2raystore_getAgentPricingRule($user, $planId, $serverId);
+    return ($rule['mode'] ?? 'percent') === 'gb';
+}
+
+function v2raystore_applyAgentPricing($basePrice, $user = null, $planId = 0, $serverId = 0, $volumeGb = 0, $quantity = 1){
+    $basePrice = max(0, floatval($basePrice));
+    $quantity = max(1, intval($quantity));
+    if(!v2raystore_isAgentUser($user)) return (int)round($basePrice);
+    $rule = v2raystore_getAgentPricingRule($user, $planId, $serverId);
+    if(($rule['mode'] ?? 'percent') === 'gb'){
+        $volumeGb = floatval($volumeGb);
+        if($volumeGb > 0) return (int)round($volumeGb * floatval($rule['value']) * $quantity);
+        return (int)round($basePrice);
+    }
+    $percent = max(0, min(100, floatval($rule['value'])));
+    return (int)max(0, floor($basePrice - floor($basePrice * $percent / 100)));
+}
+
+function v2raystore_agentNormalPercentValue($user = null){
+    if($user === null) $user = $GLOBALS['userInfo'] ?? null;
+    $discounts = v2raystore_agentPricingDecode($user['discount_percent'] ?? null);
+    $rule = v2raystore_agentPricingRule($discounts['normal'] ?? 0);
+    return $rule['mode'] === 'percent' ? floatval($rule['value']) : 0;
+}
+
 function v2raystore_effectiveRoleState($state, $baseKey, $agentKey, $user = null){
     if(!is_array($state)) $state = [];
     if(v2raystore_isAgentUser($user)){
@@ -6637,7 +6719,7 @@ function getAgentsList($offset = 0){
     }
     
     if($offset == 0) $keys[] = [['text'=>'➕ افزودن نماینده دستی', 'callback_data'=>'addAgentManual', 'style'=>'success']];
-    $keys[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"درصد تخفیف",'callback_data'=>"v2raystore"],['text'=>"تاریخ نمایندگی",'callback_data'=>"v2raystore"],['text'=>"اسم نماینده",'callback_data'=>"v2raystore"],['text'=>"آیدی عددی",'callback_data'=>"v2raystore"]];
+    $keys[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت/تخفیف",'callback_data'=>"v2raystore"],['text'=>"تاریخ نمایندگی",'callback_data'=>"v2raystore"],['text'=>"اسم نماینده",'callback_data'=>"v2raystore"],['text'=>"آیدی عددی",'callback_data'=>"v2raystore"]];
     if($agentList->num_rows > 0){
         while($row = $agentList->fetch_assoc()){
             $userId = $row['userid'];
@@ -6677,20 +6759,21 @@ function getAgentDiscounts($agentId){
     $stmt->close();
     $keys = array();
     
-    $discounts = json_decode($agentInfo['discount_percent'],true);
+    $discounts = v2raystore_agentPricingDecode($agentInfo['discount_percent'] ?? null);
 
-    $normal = $discounts['normal'];
+    $normal = $discounts['normal'] ?? 0;
     $keys[] = [['text'=>" ",'callback_data'=>"v2raystore"],
-    ['text'=>$normal . "%",'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
+    ['text'=>v2raystore_agentPricingLabel($normal),'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
     ['text'=>"عمومی",'callback_data'=>"v2raystore"]];            
     
-    if($botState['agencyPlanDiscount']=="on"){
-        foreach($discounts['plans'] as $planId=>$discount){
+    if(($botState['agencyPlanDiscount'] ?? 'on')=="on"){
+        foreach(($discounts['plans'] ?? []) as $planId=>$discount){
             $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ?");
             $stmt->bind_param('i', $planId);
             $stmt->execute();
             $info = $stmt->get_result()->fetch_assoc();
             $stmt->close();
+            if(!$info) continue;
             
             $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `id` = ?");
             $stmt->bind_param("i", $info['catid']);
@@ -6699,26 +6782,27 @@ function getAgentDiscounts($agentId){
             $stmt->close();
             
             $keys[] = [['text'=>"❌",'callback_data'=>"removePercentOfAgentPlan" . $agentId . "_" . $planId],
-            ['text'=>$discount . "%",'callback_data'=>"editAgentDiscountPlan" . $agentId . "_" . $planId],
-            ['text'=>$info['title'] . " " . $catInfo['title'],'callback_data'=>"v2raystore"]];            
+            ['text'=>v2raystore_agentPricingLabel($discount),'callback_data'=>"editAgentDiscountPlan" . $agentId . "_" . $planId],
+            ['text'=>($info['title'] ?? '') . " " . ($catInfo['title'] ?? ''),'callback_data'=>"v2raystore"]];            
         }
     }else{
-        foreach($discounts['servers'] as $serverId=>$discount){
+        foreach(($discounts['servers'] ?? []) as $serverId=>$discount){
             $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `id` = ?");
             $stmt->bind_param('i', $serverId);
             $stmt->execute();
             $info = $stmt->get_result()->fetch_assoc();
             $stmt->close();
+            if(!$info) continue;
             
             $keys[] = [['text'=>"❌",'callback_data'=>"removePercentOfAgentServer" . $agentId . "_" . $serverId],
-            ['text'=>$discount . "%",'callback_data'=>"editAgentDiscountServer" . $agentId . "_" . $serverId],
+            ['text'=>v2raystore_agentPricingLabel($discount),'callback_data'=>"editAgentDiscountServer" . $agentId . "_" . $serverId],
             ['text'=>$info['title'],'callback_data'=>"v2raystore"]];            
         }                
     }
-    if($botState['agencyPlanDiscount']=="on")$keys[] = [['text' => "افزودن تخفیف پلن", 'callback_data' => "addDiscountPlanAgent" . $agentId]];
-    else $keys[] = [['text' => "افزودن تخفیف سرور", 'callback_data' => "addDiscountServerAgent" . $agentId]];
+    if(($botState['agencyPlanDiscount'] ?? 'on')=="on")$keys[] = [['text' => "افزودن قیمت/تخفیف پلن", 'callback_data' => "addDiscountPlanAgent" . $agentId]];
+    else $keys[] = [['text' => "افزودن قیمت/تخفیف سرور", 'callback_data' => "addDiscountServerAgent" . $agentId]];
     $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "agentsList"]];
-    return json_encode(['inline_keyboard'=>$keys]);
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 function NOWPayments($method, $endpoint, $datas = []){
     global $paymentKeys;

@@ -1403,7 +1403,7 @@ if(preg_match('/^addAgentManualDiscount_(\d+)$/', $userInfo['step'], $m) && $tex
     }
     $discountValue = (string)(0 + $text);
     v2raystore_ensureBasicUserRecord($targetId);
-    $discount = json_encode(['normal'=>$discountValue], JSON_UNESCAPED_UNICODE);
+    $discount = json_encode(['normal'=> (function_exists('v2raystore_makeAgentPricingRule') ? v2raystore_makeAgentPricingRule('percent', $discountValue) : $discountValue), 'plans'=>[], 'servers'=>[]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $now = time();
     $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 1, `discount_percent` = ?, `agent_date` = ?, `step` = 'none' WHERE `userid` = ?");
     $stmt->bind_param('sii', $discount, $now, $targetId);
@@ -1461,7 +1461,7 @@ if(preg_match('/^addDiscount(Server|Plan)Agent(\d+)/',$data,$match) && ($from_id
         $offset = 0;
         $limit = 20;
         
-        $condition = array_values(array_keys(json_decode($info['discount_percent'],true)['plans']??array()));
+        $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['plans'] ?? array()));
         $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
         $stmt = $connection->prepare("SELECT * FROM `server_plans` $condition LIMIT ? OFFSET ?");
         $stmt->bind_param("ii", $limit, $offset);
@@ -1490,7 +1490,7 @@ if(preg_match('/^addDiscount(Server|Plan)Agent(\d+)/',$data,$match) && ($from_id
             editText($message_id,"لطفاً سرور مورد نظر را برای افزودن تخفیف به نماینده $userName انتخاب کنید",$keys);
         }else alert("سروری باقی نمانده است");
     }else{
-        $condition = array_values(array_keys(json_decode($info['discount_percent'],true)['servers']??array()));
+        $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['servers'] ?? array()));
         $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
         $stmt = $connection->prepare("SELECT * FROM `server_info` $condition");
         $stmt->execute();
@@ -1521,7 +1521,7 @@ if(preg_match('/^nextAgentDiscountPlan(?<agentId>\d+)_(?<offset>\d+)/',$data,$ma
     $offset = $match['offset'];
     $limit = 20;
     
-    $condition = array_values(array_keys(json_decode($info['discount_percent'],true)['plans']??array()));
+    $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['plans'] ?? array()));
     $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
     $stmt = $connection->prepare("SELECT * FROM `server_plans` $condition LIMIT ? OFFSET ?");
     $stmt->bind_param("ii", $limit, $offset);
@@ -1568,11 +1568,11 @@ if(preg_match('/^removePercentOfAgent(?<type>Server|Plan)(?<agentId>\d+)_(?<serv
     $info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     
-    $discounts = json_decode($info['discount_percent'],true);
+    $discounts = function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'],true) ?: []);
     if($match['type'] == "Server") unset($discounts['servers'][$match['serverId']]);
     elseif($match['type'] == "Plan") unset($discounts['plans'][$match['serverId']]);
     
-    $discounts = json_encode($discounts,488);
+    $discounts = json_encode($discounts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $stmt = $connection->prepare("UPDATE `users` SET `discount_percent` = ? WHERE `userid` = ?");
     $stmt->bind_param("si", $discounts, $match['agentId']);
     $stmt->execute();
@@ -1582,33 +1582,66 @@ if(preg_match('/^removePercentOfAgent(?<type>Server|Plan)(?<agentId>\d+)_(?<serv
     editText($message_id, str_replace("AGENT-NAME", $userName, $mainValues['agent_discount_settings']), getAgentDiscounts($match['agentId']));
 }
 if(preg_match('/^editAgentDiscount(Server|Plan|Normal)(\d+)_(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    delMessage();
-    sendMessage($mainValues['send_agent_discount_percent'], $cancelKey);
-    setUser($data);
+    $typeFa = $match[1] == 'Normal' ? 'عمومی' : ($match[1] == 'Plan' ? 'پلن' : 'سرور');
+    $keys = json_encode(['inline_keyboard'=>[
+        [['text'=>'درصد تخفیف', 'callback_data'=>'chooseAgentPricing_percent_' . $match[1] . '_' . $match[2] . '_' . $match[3]]],
+        [['text'=>'قیمت هر گیگ', 'callback_data'=>'chooseAgentPricing_gb_' . $match[1] . '_' . $match[2] . '_' . $match[3]]],
+        [['text'=>$buttonValues['back_button'], 'callback_data'=>'agentPercentDetails' . $match[2]]]
+    ]], JSON_UNESCAPED_UNICODE);
+    editText($message_id, "برای تنظیم {$typeFa} نماینده، نوع محاسبه را انتخاب کنید:", $keys, 'HTML');
 }
-if(preg_match('/^editAgentDiscount(Server|Plan|Normal)(\d+)_(.*)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    if(is_numeric($text)){
-        $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
-        $stmt->bind_param('i',$match[2]);
-        $stmt->execute();
-        $info = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        
-        $discountInfo = json_decode($info['discount_percent'],true);
-        if($match[1] == "Server") $discountInfo['servers'][$match[3]] = $text;
-        elseif($match[1] == "Plan") $discountInfo['plans'][$match[3]] = $text;
-        elseif($match[1] == "Normal") $discountInfo['normal'] = $text;
-        $text = json_encode($discountInfo);
-        
-        sendMessage($mainValues['saved_successfuly'],$removeKeyboard);
-        
-        $stmt = $connection->prepare("UPDATE `users` SET `discount_percent` = ? WHERE `userid` = ?");
-        $stmt->bind_param("si", $text, $match[2]);
-        $stmt->execute();
-        $stmt->close();
-        sendMessage(str_replace("AGENT-NAME", $userName, $mainValues['agent_discount_settings']), getAgentDiscounts($match[2]));
-        setUser();
-    }else sendMessage($mainValues['send_only_number']);
+if(preg_match('/^chooseAgentPricing_(percent|gb)_(Server|Plan|Normal)_(\d+)_(.*)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    if($match[1] === 'gb'){
+        sendMessage("لطفاً قیمت هر گیگ را به تومان وارد کنید.\nمثال: اگر <code>6000</code> وارد کنید، سرویس ۵ گیگ برای نماینده <code>30000</code> تومان حساب می‌شود.", $cancelKey, 'HTML');
+    }else{
+        sendMessage("لطفاً درصد تخفیف نماینده را وارد کنید.\nمثال: <code>10</code> یعنی ۱۰٪ تخفیف از قیمت اصلی.", $cancelKey, 'HTML');
+    }
+    setUser('saveAgentPricing_' . $match[1] . '_' . $match[2] . '_' . $match[3] . '_' . $match[4]);
+}
+if(preg_match('/^saveAgentPricing_(percent|gb)_(Server|Plan|Normal)_(\d+)_(.*)$/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $value = str_replace([',','٬',' '], '', trim((string)$text));
+    if(!is_numeric($value)){
+        sendMessage($mainValues['send_only_number']);
+        exit();
+    }
+    $value = floatval($value);
+    if($value < 0){
+        sendMessage("عدد نمی‌تواند منفی باشد.", $cancelKey);
+        exit();
+    }
+    if($match[1] === 'percent' && $value > 100){
+        sendMessage("درصد باید بین 0 تا 100 باشد.", $cancelKey);
+        exit();
+    }
+    if($match[1] === 'gb' && $value <= 0){
+        sendMessage("قیمت هر گیگ باید بیشتر از صفر باشد.", $cancelKey);
+        exit();
+    }
+
+    $agentId = intval($match[3]);
+    $targetId = (string)$match[4];
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
+    $stmt->bind_param('i',$agentId);
+    $stmt->execute();
+    $info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $discountInfo = function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'],true) ?: []);
+    $rule = function_exists('v2raystore_makeAgentPricingRule') ? v2raystore_makeAgentPricingRule($match[1], $value) : ['mode'=>$match[1], 'value'=>$value];
+    if($match[2] == "Server") $discountInfo['servers'][$targetId] = $rule;
+    elseif($match[2] == "Plan") $discountInfo['plans'][$targetId] = $rule;
+    elseif($match[2] == "Normal") $discountInfo['normal'] = $rule;
+    $encodedDiscount = json_encode($discountInfo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    $stmt = $connection->prepare("UPDATE `users` SET `discount_percent` = ? WHERE `userid` = ?");
+    $stmt->bind_param("si", $encodedDiscount, $agentId);
+    $stmt->execute();
+    $stmt->close();
+
+    sendMessage($mainValues['saved_successfuly'],$removeKeyboard);
+    sendMessage(str_replace("AGENT-NAME", $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId));
+    setUser();
 }
 if($data=="editRewardTime" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
@@ -4573,11 +4606,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
             $name = $file['title'];
             $price = $file['price'];
             if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much")){
-                $discounts = json_decode($userInfo['discount_percent'],true);
-                if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$id]?? $discounts['normal'];
-                else $discount = $discounts['servers'][$sid]?? $discounts['normal'];
-                
-                $price -= floor($price * $discount / 100);
+                $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $sid, $file['volume'] ?? 0, 1) : $price;
             }
             $price = ($price == 0) ? 'رایگان' : number_format($price).' تومان ';
             $keyboard[] = ['text' => "$name - $price", 'callback_data' => "selectPlan{$id}_{$call_id}_{$match['buyType']}"];
@@ -4621,10 +4650,11 @@ if(preg_match('/selectCustomePlan(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\w
         $serverId = $stmt->get_result()->fetch_assoc()['server_id'];
         $stmt->close();
 
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$match[1]]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$serverId]?? $discounts['normal'];
-        $price -= floor($price * $discount / 100);
+        if(function_exists('v2raystore_isAgentPricingPerGb') && v2raystore_isAgentPricingPerGb($userInfo, $match[1], $serverId)){
+            $price = v2raystore_applyAgentPricing($price, $userInfo, $match[1], $serverId, 1, 1);
+        }else{
+            $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $match[1], $serverId, 0, 1) : $price;
+        }
 	}
 	sendMessage(str_replace("VOLUME-PRICE", $price, $mainValues['customer_custome_plan_volume']),$cancelKey);
 	setUser("selectCustomPlanGB" . $match[1] . "_" . $match[2] . "_" . $match['buyType']);
@@ -4656,10 +4686,11 @@ if(preg_match('/selectCustomPlanGB(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\
         $serverId = $stmt->get_result()->fetch_assoc()['server_id'];
         $stmt->close();
 
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$id]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$serverId]?? $discounts['normal'];
-        $price -= floor($price * $discount / 100);
+        if(function_exists('v2raystore_isAgentPricingPerGb') && v2raystore_isAgentPricingPerGb($userInfo, $id, $serverId)){
+            $price = 0;
+        }else{
+            $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $serverId, 0, 1) : $price;
+        }
 	}
     
 	sendMessage(str_replace("DAY-PRICE", $price, $mainValues['customer_custome_plan_day']));
@@ -4796,12 +4827,13 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
             $serverId = $stmt->get_result()->fetch_assoc()['server_id'];
             $stmt->close();
             
-            $discounts = json_decode($userInfo['discount_percent'],true);
-            if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$id]?? $discounts['normal'];
-            else $discount = $discounts['servers'][$sid]?? $discounts['normal'];
-            
-            $gbPrice -= floor($gbPrice * $discount /100);
-            $dayPrice -= floor($dayPrice * $discount / 100);
+            if(function_exists('v2raystore_isAgentPricingPerGb') && v2raystore_isAgentPricingPerGb($userInfo, $id, $sid)){
+                $gbPrice = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($gbPrice, $userInfo, $id, $sid, 1, 1) : $gbPrice;
+                $dayPrice = 0;
+            }else{
+                $gbPrice = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($gbPrice, $userInfo, $id, $sid, 0, 1) : $gbPrice;
+                $dayPrice = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($dayPrice, $userInfo, $id, $sid, 0, 1) : $dayPrice;
+            }
         }
         
         $agentBought = false;
@@ -5018,10 +5050,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     
     $agentBought = false;
     if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much")){
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$id]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$sid]?? $discounts['normal'];
-        $price -= floor($price * $discount / 100);
+        $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $sid, $respd['volume'] ?? 0, $accountCount ?? 1) : $price;
 
         $agentBought = true;
     }
@@ -6454,7 +6483,7 @@ if(preg_match('/^agencyApprove(\d+)_(\d+)/',$userInfo['step'],$match) && $text !
             ]]), $match[2]);
         sendMessage($mainValues['saved_successfuly']);
         setUser();
-        $discount = json_encode(['normal'=>$text]);
+        $discount = json_encode(['normal'=> (function_exists('v2raystore_makeAgentPricingRule') ? v2raystore_makeAgentPricingRule('percent', $text) : $text), 'plans'=>[], 'servers'=>[]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 1, `discount_percent` = ?, `agent_date` = ? WHERE `userid` = ?");
         $stmt->bind_param("sii", $discount, $time, $match[1]);
         $stmt->execute();
@@ -8046,12 +8075,12 @@ if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin 
 if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $id = $match[1];
  
-    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
+    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
         $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo) : 1;
         $limit = function_exists('v2raystore_getTestAccountLimitText') ? v2raystore_getTestAccountLimitText($userInfo) : '1 بار';
         alert("⚠️ شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}");
         exit;
-    }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && json_decode($userInfo['discount_percent'],true)['normal'] != "100"){
+    }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
         alert('⚠️شما قبلا هدیه رایگان خود را دریافت کردید');
         exit;
     }
@@ -8086,10 +8115,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $agentBought = true;
         
         
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$id]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$server_id]?? $discounts['normal'];
-        $price -= floor($price * $discount / 100);
+        $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $server_id, $volume ?? 0, 1) : $price;
     }
     
     if($acount == 0 and $inbound_id != 0){
@@ -10709,10 +10735,7 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
     $stmt->close();
     $price = $respd['price'];
     if($agentBought == true){
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$fid]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$serverId]?? $discounts['normal'];
-        $price -= floor($price * $discount / 100);
+        $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $fid, $serverId, $respd['volume'] ?? 0, 1) : $price;
     }
     if(!preg_match('/^discountRenew/', $userInfo['step'])){
         $hash_id = RandomString();
@@ -11567,15 +11590,12 @@ if(preg_match('/increaseADay(.*)/', $data, $match)){
     while ($cat = $res->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
-        $price = number_format($cat['price']);
+        $price = intval($cat['price']);
         if($agentBought == true){
-            $discounts = json_decode($userInfo['discount_percent'],true);
-            if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$orderInfo['fileid']]?? $discounts['normal'];
-            else $discount = $discounts['servers'][$orderInfo['server_id']]?? $discounts['normal'];
-            $price -= floor($price * $discount / 100);
+            $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], 0, 1) : $price;
         }
         if($price == 0) $price = "رایگان";
-        else $price .= " تومان";
+        else $price = number_format($price) . " تومان";
         $keyboard[] = ['text' => "$title روز $price", 'callback_data' => "selectPlanDayIncrease{$match[1]}_$id"];
     }
     $keyboard = array_chunk($keyboard,2);
@@ -11602,11 +11622,7 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     $agentBought = $orderInfo['agent_bought'];
     
     if($agentBought == true){
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$orderInfo['fileid']]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$orderInfo['server_id']]?? $discounts['normal'];
-
-        $planprice -= floor($planprice * $discount / 100);
+        $planprice = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($planprice, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], 0, 1) : $planprice;
     }
     
     
@@ -11882,15 +11898,12 @@ if(preg_match('/^increaseAVolume(.*)/', $data, $match)){
     while($cat = $res->fetch_assoc()){
         $id = $cat['id'];
         $title = $cat['volume'];
-        $price = number_format($cat['price']);
+        $price = intval($cat['price']);
         if($agentBought == true){
-            $discounts = json_decode($userInfo['discount_percent'],true);
-            if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$orderInfo['fileid']]?? $discounts['normal'];
-            else $discount = $discounts['servers'][$orderInfo['server_id']]?? $discounts['normal'];
-            $price -= floor($price * $discount / 100);
+            $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], $cat['volume'] ?? 0, 1) : $price;
         }
         if($price == 0) $price = "رایگان";
-        else $price .=  ' تومان';
+        else $price = number_format($price) . ' تومان';
         
         $keyboard[] = ['text' => "$title گیگ $price", 'callback_data' => "increaseVolumePlan{$match[1]}_{$id}"];
     }
@@ -11918,11 +11931,7 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
     $agentBought = $orderInfo['agent_bought'];
  
     if($agentBought == true){
-        $discounts = json_decode($userInfo['discount_percent'],true);
-        if($botState['agencyPlanDiscount']=="on") $discount = $discounts['plans'][$orderInfo['fileid']]?? $discounts['normal'];
-        else $discount = $discounts['servers'][$orderInfo['server_id']]?? $discounts['normal'];
-        
-        $planprice -= floor($planprice * $discount / 100);
+        $planprice = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($planprice, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], $plangb ?? 0, 1) : $planprice;
     }
 
     $hash_id = RandomString();
