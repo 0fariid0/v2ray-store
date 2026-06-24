@@ -3842,7 +3842,7 @@ if($data == "cleanOldConfigsScanRunOnce" && ($from_id == $admin || $userInfo['is
             v2raystore_startCleanOldPanelScan('manual', true);
         }
     }
-    $scanRes = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(5, 17, false) : ['processed'=>0];
+    $scanRes = function_exists('v2raystore_runCleanOldPanelScanStep') ? v2raystore_runCleanOldPanelScanStep(10, 17, false) : ['processed'=>0];
     $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['scan'=>$scanRes, 'notice'=>'یک مرحله بررسی پنل انجام شد.']) : "یک مرحله اجرا شد.";
     $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : null;
     editText($message_id, $txt, $keys, 'HTML');
@@ -3880,7 +3880,7 @@ if(in_array($data ?? '', ["cleanOldConfigsDoDelete", "cleanOldConfigsQueueRunOnc
         }
     }
 
-    $deleteRes = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(2, 12, true) : ['processed'=>0];
+    $deleteRes = function_exists('v2raystore_processCleanOldConfigsJob') ? v2raystore_processCleanOldConfigsJob(5, 9, true) : ['processed'=>0];
     $notice = 'حذف مرحله‌ای شروع/ادامه پیدا کرد. از این به بعد worker همان پیام را بروزرسانی می‌کند.';
     if(is_array($deleteRes) && !empty($deleteRes['message'])) $notice = (string)$deleteRes['message'];
     $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText(['delete'=>$deleteRes, 'notice'=>$notice]) : "یک مرحله حذف اجرا شد.";
