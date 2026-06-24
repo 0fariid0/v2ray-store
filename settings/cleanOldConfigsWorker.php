@@ -44,6 +44,11 @@ if((is_array($job) && intval($job['state'] ?? 0) === 1) || $auto === 'on'){
     }
 }
 
+// اگر ادمین پنل پاکسازی را باز کرده باشد، همان پیام قبلی ویرایش می‌شود؛ پیام تکراری ارسال نمی‌شود.
+if(function_exists('v2raystore_updateCleanOldUiMessage')){
+    v2raystore_updateCleanOldUiMessage(['scan'=>$scan, 'delete'=>$delete], false);
+}
+
 if($lock){
     @flock($lock, LOCK_UN);
     @fclose($lock);
