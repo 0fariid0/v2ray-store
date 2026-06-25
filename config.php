@@ -9764,6 +9764,33 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
     return $response = json_decode($response);
 
 }
+
+function v2raystore_panelActionSucceeded($response){
+    if(is_object($response)){
+        if(isset($response->success)) return !empty($response->success);
+        if(isset($response->ok)) return !empty($response->ok);
+        if(isset($response->status) && in_array(strtolower((string)$response->status), ['ok','success'], true)) return true;
+        return true;
+    }
+    if(is_array($response)){
+        if(isset($response['success'])) return !empty($response['success']);
+        if(isset($response['ok'])) return !empty($response['ok']);
+        if(isset($response['status']) && in_array(strtolower((string)$response['status']), ['ok','success'], true)) return true;
+        return true;
+    }
+    return false;
+}
+
+function v2raystore_panelActionErrorMessage($response, $fallback = 'نامشخص'){
+    if(is_object($response)){
+        foreach(['msg','message','error','detail'] as $k){ if(isset($response->$k) && trim((string)$response->$k) !== '') return (string)$response->$k; }
+    }
+    if(is_array($response)){
+        foreach(['msg','message','error','detail'] as $k){ if(isset($response[$k]) && trim((string)$response[$k]) !== '') return (string)$response[$k]; }
+    }
+    return $fallback;
+}
+
 function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $editType = null){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -9887,7 +9914,19 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         v2raystore_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
         $response = curl_exec($curl);
         curl_close($curl);
-        return json_decode($response);
+        $decodedResponse = json_decode($response);
+
+        // فقط در حالت تمدید ریست: بعد از اینکه حجم و زمان جدید روی پنل نشست، مصرف هم ریست شود.
+        // این شاخه قبلاً قبل از resetClientTraffic برمی‌گشت و باعث باقی‌ماندن مصرف قبلی می‌شد.
+        if(($editType == "renew") && is_object($decodedResponse) && !empty($decodedResponse->success) && isset($email)){
+            $resetResponse = resetClientTraffic($server_id, $email, $inbound_id);
+            if(function_exists('v2raystore_panelActionSucceeded') && !v2raystore_panelActionSucceeded($resetResponse)){
+                $msg = function_exists('v2raystore_panelActionErrorMessage') ? v2raystore_panelActionErrorMessage($resetResponse, 'ریست مصرف انجام نشد') : 'ریست مصرف انجام نشد';
+                return (object)['success'=>false, 'msg'=>'زمان و حجم روی پنل ثبت شد، اما ریست مصرف انجام نشد: ' . $msg];
+            }
+            resetIpLog($server_id, $email);
+        }
+        return $decodedResponse;
     }
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
@@ -10235,8 +10274,47 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
     }
 
     $response = curl_exec($curl);
+    $decodedResponse = json_decode($response);
+
+    // بعضی نسخه‌های 3x-ui جدید روی endpoint جدید resetTraffic جواب نامعتبر/ناموفق می‌دهند،
+    // ولی endpoint قدیمی inbound هنوز کار می‌کند. فقط برای ریست مصرف تمدید از همین fallback استفاده می‌شود.
+    if($serverType == "sanaei_new" && !v2raystore_panelActionSucceeded($decodedResponse) && !empty($inboundId)){
+        $fallbackUrls = [
+            "$panel_url/panel/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark),
+            "$panel_url/xui/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark),
+        ];
+        foreach($fallbackUrls as $fallbackUrl){
+            curl_setopt_array($curl, array(
+                CURLOPT_URL => $fallbackUrl,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_ENCODING => '',
+                CURLOPT_MAXREDIRS => 10,
+                CURLOPT_CONNECTTIMEOUT => 6,
+                CURLOPT_TIMEOUT => 6,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                CURLOPT_CUSTOMREQUEST => 'POST',
+                CURLOPT_POSTFIELDS => '',
+                CURLOPT_HEADER => false,
+                CURLOPT_HTTPHEADER => array(
+                    'User-Agent:  Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0',
+                    'Accept:  application/json, text/plain, */*',
+                    'Accept-Language:  en-US,en;q=0.5',
+                    'Accept-Encoding:  gzip, deflate',
+                    'X-Requested-With:  XMLHttpRequest',
+                    'Cookie: ' . $session
+                )
+            ));
+            $fallbackResponse = curl_exec($curl);
+            $fallbackDecoded = json_decode($fallbackResponse);
+            if(v2raystore_panelActionSucceeded($fallbackDecoded)){
+                $decodedResponse = $fallbackDecoded;
+                break;
+            }
+        }
+    }
     curl_close($curl);
-    return $response = json_decode($response);
+    return $decodedResponse;
 }
 function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $remark, $volume, $limitip = 1, $newarr = '', $planId = null){
     global $connection;
@@ -16254,9 +16332,11 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     $renewedOrderForLive = $order;
     $renewedOrderForLive['fileid'] = $renewPlanId;
     $renewedOrderForLive['expire_date'] = $newExpire;
-    $liveRemain = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($renewedOrderForLive) : null;
-    $finalVolumeText = (is_array($liveRemain) && isset($liveRemain['remaining_gb_text']) && $liveRemain['remaining_gb_text'] !== '') ? $liveRemain['remaining_gb_text'] : $volumeText;
-    $finalDaysText = (is_array($liveRemain) && isset($liveRemain['remaining_days']) && $liveRemain['remaining_days'] !== '') ? $liveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($newExpire);
+    $liveRemain = $resetMode ? null : (function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($renewedOrderForLive) : null);
+    // در حالت ریست، گزارش باید دقیقاً مقدار پلنی را نشان دهد که تمدید شده، نه باقی‌مانده لحظه‌ای پنل.
+    // چون بعضی پنل‌ها resetTraffic را با چند ثانیه تأخیر در clientStats نشان می‌دهند.
+    $finalVolumeText = $resetMode ? $volumeText : ((is_array($liveRemain) && isset($liveRemain['remaining_gb_text']) && $liveRemain['remaining_gb_text'] !== '') ? $liveRemain['remaining_gb_text'] : $volumeText);
+    $finalDaysText = $resetMode ? strval(intval($days)) : ((is_array($liveRemain) && isset($liveRemain['remaining_days']) && $liveRemain['remaining_days'] !== '') ? $liveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($newExpire));
     sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $finalVolumeText, $finalDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
 
     $result = [
