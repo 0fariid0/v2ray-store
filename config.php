@@ -1510,6 +1510,11 @@ function v2raystore_agentPricingDecode($raw){
     if(!isset($data['normal'])) $data['normal'] = 0;
     if(!isset($data['plans']) || !is_array($data['plans'])) $data['plans'] = [];
     if(!isset($data['servers']) || !is_array($data['servers'])) $data['servers'] = [];
+    if(!isset($data['links']) || !is_array($data['links'])) $data['links'] = [];
+    $data['links'] = [
+        'config' => in_array(($data['links']['config'] ?? 'default'), ['default','on','off'], true) ? $data['links']['config'] : 'default',
+        'sub' => in_array(($data['links']['sub'] ?? 'default'), ['default','on','off'], true) ? $data['links']['sub'] : 'default',
+    ];
     return $data;
 }
 
@@ -1544,6 +1549,81 @@ function v2raystore_agentPricingLabel($rule){
     if(floor($value) == $value) $value = intval($value);
     if($rule['mode'] === 'gb') return number_format($value) . ' تومان/گیگ';
     return $value . '%';
+}
+
+function v2raystore_agentLinkSettingsNormalize($links){
+    if(!is_array($links)) $links = [];
+    $config = $links['config'] ?? 'default';
+    $sub = $links['sub'] ?? 'default';
+    if(!in_array($config, ['default','on','off'], true)) $config = 'default';
+    if(!in_array($sub, ['default','on','off'], true)) $sub = 'default';
+    return ['config'=>$config, 'sub'=>$sub];
+}
+
+function v2raystore_agentLinkNextState($state){
+    $state = in_array($state, ['default','on','off'], true) ? $state : 'default';
+    if($state === 'default') return 'on';
+    if($state === 'on') return 'off';
+    return 'default';
+}
+
+function v2raystore_agentLinkStateLabel($state){
+    $state = in_array($state, ['default','on','off'], true) ? $state : 'default';
+    if($state === 'on') return 'روشن ✅';
+    if($state === 'off') return 'خاموش 🚫';
+    return 'پیش‌فرض عمومی ⚙️';
+}
+
+function v2raystore_agentLinkSettingsLabel($raw){
+    $discounts = v2raystore_agentPricingDecode($raw);
+    $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
+    return 'عادی: ' . v2raystore_agentLinkStateLabel($links['config']) . ' | ساب: ' . v2raystore_agentLinkStateLabel($links['sub']);
+}
+
+function v2raystore_getUserRowById($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return null;
+    static $cache = [];
+    if(array_key_exists($userId, $cache)) return $cache[$userId];
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ? LIMIT 1");
+    if(!$stmt){ $cache[$userId] = null; return null; }
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $cache[$userId] = $row ?: null;
+    return $cache[$userId];
+}
+
+function v2raystore_normalizeDeliveryLinkOptions($options = null){
+    global $botState;
+    $defaultConfig = (($botState['configLinkState'] ?? 'on') != 'off');
+    $defaultSub = (($botState['subLinkState'] ?? 'off') == 'on');
+    if(!is_array($options)) $options = [];
+    $config = array_key_exists('config', $options) ? (bool)$options['config'] : $defaultConfig;
+    $sub = array_key_exists('sub', $options) ? (bool)$options['sub'] : $defaultSub;
+    if(!$config && !$sub) $config = true; // کانفیگ بدون لینک به کاربر نرسد.
+    return ['config'=>$config, 'sub'=>$sub];
+}
+
+function v2raystore_getAgentDeliveryLinkOptions($agentUserOrId = null, $agentBought = false){
+    global $botState;
+    $global = v2raystore_normalizeDeliveryLinkOptions(null);
+    if(!$agentBought) return $global;
+    $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
+    if(!v2raystore_isAgentUser($agent)) return $global;
+    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
+    $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
+    $config = ($links['config'] === 'default') ? $global['config'] : ($links['config'] === 'on');
+    $sub = ($links['sub'] === 'default') ? $global['sub'] : ($links['sub'] === 'on');
+    if(!$config && !$sub) $config = true;
+    return ['config'=>$config, 'sub'=>$sub];
+}
+
+function v2raystore_getAgentDeliveryLinkOptionsForOrder($order){
+    if(!is_array($order)) return v2raystore_normalizeDeliveryLinkOptions(null);
+    return v2raystore_getAgentDeliveryLinkOptions(intval($order['userid'] ?? 0), !empty($order['agent_bought']));
 }
 
 function v2raystore_getAgentPricingRule($user = null, $planId = 0, $serverId = 0){
@@ -6762,9 +6842,14 @@ function getAgentDiscounts($agentId){
     $discounts = v2raystore_agentPricingDecode($agentInfo['discount_percent'] ?? null);
 
     $normal = $discounts['normal'] ?? 0;
+    $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
     $keys[] = [['text'=>" ",'callback_data'=>"v2raystore"],
     ['text'=>v2raystore_agentPricingLabel($normal),'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
-    ['text'=>"عمومی",'callback_data'=>"v2raystore"]];            
+    ['text'=>"عمومی",'callback_data'=>"v2raystore"]];
+    $keys[] = [
+        ['text'=>'لینک عادی: ' . v2raystore_agentLinkStateLabel($links['config']), 'callback_data'=>'toggleAgentLink_config_' . $agentId],
+        ['text'=>'لینک ساب: ' . v2raystore_agentLinkStateLabel($links['sub']), 'callback_data'=>'toggleAgentLink_sub_' . $agentId]
+    ];            
     
     if(($botState['agencyPlanDiscount'] ?? 'on')=="on"){
         foreach(($discounts['plans'] ?? []) as $planId=>$discount){
@@ -7712,11 +7797,13 @@ function v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink = ''
 }
 
 if(!function_exists('v2raystore_sendMultiDomainConfigMessage')){
-function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subLink = '', $serverType = '', $keyboard = null, $heading = null, $extraLines = ''){
+function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subLink = '', $serverType = '', $keyboard = null, $heading = null, $extraLines = '', $linkOptions = null){
     global $botState, $buttonValues;
+    $linkOptions = v2raystore_normalizeDeliveryLinkOptions($linkOptions);
     $links = v2raystore_normalizeConfigLinksArray($links);
     if(count($links) <= 1) return false;
-    if(($botState['configLinkState'] ?? '') == 'off') return false;
+    if(!$linkOptions['config']) return false;
+    if(!$linkOptions['sub']) $subLink = '';
     if($serverType === 'marzban') return false;
 
     if($heading === null || trim((string)$heading) === '') $heading = '✅ کانفیگ‌های سرویس شما آماده شد';
@@ -7944,7 +8031,8 @@ function getUserOrderDetailKeys($id, $offset = 0){
             $pagedLinks[] = $accLink;
             if($count >= $offset + $limit) break;
         }
-        if($botState['configLinkState'] != "off"){
+        $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null);
+        if($linkOptions['config']){
             $configLinks = v2raystore_formatConfigLinksBlock($pagedLinks);
         }
 
@@ -8105,7 +8193,8 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $stmt->close();
         
         $customerSubLink = v2raystore_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
-        $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
+        $linkOptions = $linkOptions ?? (function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null));
+        $subLink = ($linkOptions['sub'] && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         
         $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
@@ -8277,7 +8366,8 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
             $pagedLinks[] = $accLink;
             if($count >= $offset + $limit) break;
         }
-        if($botState['configLinkState'] != "off"){
+        $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null);
+        if($linkOptions['config']){
             $configLinks = v2raystore_formatConfigLinksBlock($pagedLinks);
         }
         $keyboard = array();
@@ -8447,7 +8537,8 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $stmt->close();
         
         $customerSubLink = v2raystore_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
-        $subLink = ($botState['subLinkState'] == "on" && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
+        $linkOptions = $linkOptions ?? (function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null));
+        $subLink = ($linkOptions['sub'] && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         $msg = v2raystore_buildConfigDetailsMessage($enable, $remark, $configLinks, $subLink, $configNote);
         if(function_exists('v2raystore_pro_last_online_line_for_order')){
@@ -15760,14 +15851,29 @@ function v2raystore_plainTextFromHtml($text){
     return html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 }
 
-function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType){
+function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType, $linkOptions = null){
     global $botUrl, $buttonValues, $botState;
+    $linkOptions = v2raystore_normalizeDeliveryLinkOptions($linkOptions);
+    if(!$linkOptions['sub']) $subLink = '';
     if(!is_array($links)) $links = [$links];
     $keyboard = json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'] ?? 'بازگشت', 'callback_data'=>'mainMenu']]]], JSON_UNESCAPED_UNICODE);
 
     // دقیقاً مثل خرید عادی/کیف پول: اگر چند دامنه وجود داشته باشد همه لینک‌ها در یک پیام ارسال می‌شوند.
-    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($uid, $remark, $links, $subLink, $serverType, $keyboard)){
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($uid, $remark, $links, $subLink, $serverType, $keyboard, null, '', $linkOptions)){
         return true;
+    }
+
+    if(!$linkOptions['config']){
+        $acc_text = "😍 سفارش جدید شما
+📡 پروتکل: $protocol
+🔮 نام سرویس: $remark
+🔋حجم سرویس: $volume گیگ
+⏰ مدت سرویس: $days روز";
+        if($subLink != '') $acc_text .= "
+
+🌐 subscription : <code>$subLink</code>";
+        $res = sendMessage($acc_text, $keyboard, 'HTML', $uid);
+        return function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
     }
 
     if(!class_exists('QRcode') && file_exists('phpqrcode/qrlib.php')) @include_once 'phpqrcode/qrlib.php';
@@ -15779,8 +15885,8 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
         $link = (string)$link;
         if(trim($link) === '') continue;
         $acc_text = "😍 سفارش جدید شما\n📡 پروتکل: $protocol\n🔮 نام سرویس: $remark\n🔋حجم سرویس: $volume گیگ\n⏰ مدت سرویس: $days روز\n" .
-            (($botState['configLinkState'] ?? 'on') != 'off' && $serverType != 'marzban' ? "\n💝 config : <code>$link</code>" : '');
-        if(($botState['subLinkState'] ?? 'off') == 'on' && $subLink != '') $acc_text .= "\n\n🌐 subscription : <code>$subLink</code>";
+            (($linkOptions['config'] ?? true) && $serverType != 'marzban' ? "\n💝 config : <code>$link</code>" : '');
+        if(($linkOptions['sub'] ?? false) && $subLink != '') $acc_text .= "\n\n🌐 subscription : <code>$subLink</code>";
 
         $sendOk = false;
         if(class_exists('QRcode')){
@@ -16499,6 +16605,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
     $expire_date = $now + (86400 * $days);
     $agentBought = intval($payInfo['agent_bought'] ?? 0);
+    $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptions') ? v2raystore_getAgentDeliveryLinkOptions($uid, $agentBought) : v2raystore_normalizeDeliveryLinkOptions(null);
     $deliveryFailed = false;
     $deliveryFailedRemarks = [];
 
@@ -16550,19 +16657,19 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
 
         if($serverType == 'marzban'){
             $uniqid = $token = str_replace('/sub/', '', $response->sub_link);
-            $subLink = (($botState['subLinkState'] ?? 'off') == 'on') ? $panelUrl . $response->sub_link : '';
+            $subLink = ($linkOptions['sub'] ?? false) ? $panelUrl . $response->sub_link : '';
             $vraylink = [$subLink];
             $vray_link = json_encode($response->vray_links, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }else{
             $token = RandomString(30);
-            $subLink = (($botState['subLinkState'] ?? 'off') == 'on') ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : '';
+            $subLink = ($linkOptions['sub'] ?? false) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : '';
             $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
-        $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType);
+        $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType, $linkOptions);
         if(!$sendOk){
             @usleep(300000);
-            $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType);
+            $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType, $linkOptions);
         }
         if(!$sendOk){
             $deliveryFailed = true;

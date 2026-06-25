@@ -1581,6 +1581,47 @@ if(preg_match('/^removePercentOfAgent(?<type>Server|Plan)(?<agentId>\d+)_(?<serv
     alert('با موفقیت حذف شد');
     editText($message_id, str_replace("AGENT-NAME", $userName, $mainValues['agent_discount_settings']), getAgentDiscounts($match['agentId']));
 }
+if(preg_match('/^toggleAgentLink_(config|sub)_(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $key = $match[1];
+    $agentId = intval($match[2]);
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ? LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$info){
+        alert('نماینده پیدا نشد');
+        exit();
+    }
+    $discountInfo = function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'] ?? '', true) ?: []);
+    $links = function_exists('v2raystore_agentLinkSettingsNormalize') ? v2raystore_agentLinkSettingsNormalize($discountInfo['links'] ?? []) : ['config'=>'default','sub'=>'default'];
+    $current = $links[$key] ?? 'default';
+    $next = function_exists('v2raystore_agentLinkNextState') ? v2raystore_agentLinkNextState($current) : ($current === 'default' ? 'on' : ($current === 'on' ? 'off' : 'default'));
+    $links[$key] = $next;
+
+    // جلوی ذخیره حالتی که هیچ لینکی به نماینده نرسد گرفته می‌شود.
+    $globalConfig = (($botState['configLinkState'] ?? 'on') != 'off');
+    $globalSub = (($botState['subLinkState'] ?? 'off') == 'on');
+    $resolvedConfig = ($links['config'] === 'default') ? $globalConfig : ($links['config'] === 'on');
+    $resolvedSub = ($links['sub'] === 'default') ? $globalSub : ($links['sub'] === 'on');
+    if(!$resolvedConfig && !$resolvedSub){
+        alert('حداقل یکی از لینک عادی یا لینک ساب باید برای نماینده فعال باشد.');
+        exit();
+    }
+
+    $discountInfo['links'] = $links;
+    $encoded = json_encode($discountInfo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("UPDATE `users` SET `discount_percent` = ? WHERE `userid` = ?");
+    $stmt->bind_param('si', $encoded, $agentId);
+    $stmt->execute();
+    $stmt->close();
+
+    $label = ($key === 'config') ? 'لینک عادی' : 'لینک ساب';
+    $stateLabel = function_exists('v2raystore_agentLinkStateLabel') ? v2raystore_agentLinkStateLabel($next) : $next;
+    alert($label . ' نماینده: ' . $stateLabel);
+    editText($message_id, str_replace("AGENT-NAME", $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId));
+    exit();
+}
 if(preg_match('/^editAgentDiscount(Server|Plan|Normal)(\d+)_(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $typeFa = $match[1] == 'Normal' ? 'عمومی' : ($match[1] == 'Plan' ? 'پلن' : 'سرور');
     $keys = json_encode(['inline_keyboard'=>[
