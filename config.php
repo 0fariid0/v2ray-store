@@ -1516,15 +1516,39 @@ function v2raystore_isAgentUser($user = null){
 }
 
 function v2raystore_agentPricingDecode($raw){
-    $data = is_array($raw) ? $raw : json_decode((string)$raw, true);
-    if(!is_array($data)) $data = [];
+    // ستون discount_percent در نسخه‌های قدیمی گاهی فقط عدد ساده بوده، نه JSON.
+    // اگر همان عدد ساده باشد باید به‌عنوان تخفیف عمومی حفظ شود؛ وگرنه با روشن/خاموش کردن لینک ساب،
+    // تنظیمات قدیمی بعضی نماینده‌ها صفر می‌شد و رفتار لینک‌ها هم درست اعمال نمی‌شد.
+    if(is_array($raw)){
+        $data = $raw;
+    }else{
+        $rawString = trim((string)$raw);
+        $decoded = json_decode($rawString, true);
+        if(is_array($decoded)){
+            $data = $decoded;
+        }elseif(is_numeric($rawString)){
+            $data = ['normal' => floatval($rawString)];
+        }else{
+            $data = [];
+        }
+    }
     if(!isset($data['normal'])) $data['normal'] = 0;
     if(!isset($data['plans']) || !is_array($data['plans'])) $data['plans'] = [];
     if(!isset($data['servers']) || !is_array($data['servers'])) $data['servers'] = [];
     if(!isset($data['links']) || !is_array($data['links'])) $data['links'] = [];
+
+    $normalizeLinkState = function($value){
+        if(is_bool($value)) return $value ? 'on' : 'off';
+        if(is_int($value) || is_float($value)) return intval($value) === 1 ? 'on' : (intval($value) === 0 ? 'off' : 'default');
+        $value = strtolower(trim((string)$value));
+        if(in_array($value, ['on','enable','enabled','true','yes','1'], true)) return 'on';
+        if(in_array($value, ['off','disable','disabled','false','no','0'], true)) return 'off';
+        return 'default';
+    };
+
     $data['links'] = [
-        'config' => in_array(($data['links']['config'] ?? 'default'), ['default','on','off'], true) ? $data['links']['config'] : 'default',
-        'sub' => in_array(($data['links']['sub'] ?? 'default'), ['default','on','off'], true) ? $data['links']['sub'] : 'default',
+        'config' => $normalizeLinkState($data['links']['config'] ?? 'default'),
+        'sub' => $normalizeLinkState($data['links']['sub'] ?? 'default'),
     ];
     return $data;
 }
@@ -1621,9 +1645,13 @@ function v2raystore_normalizeDeliveryLinkOptions($options = null){
 function v2raystore_getAgentDeliveryLinkOptions($agentUserOrId = null, $agentBought = false){
     global $botState;
     $global = v2raystore_normalizeDeliveryLinkOptions(null);
-    if(!$agentBought) return $global;
+
+    // تنظیم لینک نماینده باید بر اساس خود کاربر نماینده اعمال شود، نه فقط فلگ agent_bought.
+    // بعضی سفارش‌های قدیمی یا خریدهای تکی نماینده‌ها agent_bought=0 دارند؛ قبلاً در این حالت
+    // تنظیم «لینک ساب روشن» نادیده گرفته می‌شد و در جستجو/نمایش کانفیگ لینک ساب نمی‌آمد.
     $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
     if(!v2raystore_isAgentUser($agent)) return $global;
+
     $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
     $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
     $config = ($links['config'] === 'default') ? $global['config'] : ($links['config'] === 'on');
