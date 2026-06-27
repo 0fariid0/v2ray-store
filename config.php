@@ -1626,6 +1626,25 @@ function v2raystore_getAgentDeliveryLinkOptionsForOrder($order){
     return v2raystore_getAgentDeliveryLinkOptions(intval($order['userid'] ?? 0), !empty($order['agent_bought']));
 }
 
+function v2raystore_getRuntimeDeliveryLinkOptions($uid = 0, $agentBought = null, $payInfo = null, $order = null){
+    if(is_array($order)) return v2raystore_getAgentDeliveryLinkOptionsForOrder($order);
+    if($agentBought === null){
+        $agentBought = false;
+        if(is_array($payInfo) && !empty($payInfo['agent_bought'])) $agentBought = true;
+    }
+    return v2raystore_getAgentDeliveryLinkOptions(intval($uid), !empty($agentBought));
+}
+
+function v2raystore_runtimeWantsSub($uid = 0, $agentBought = null, $payInfo = null, $order = null){
+    $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order);
+    return !empty($opts['sub']);
+}
+
+function v2raystore_runtimeWantsConfig($uid = 0, $agentBought = null, $payInfo = null, $order = null){
+    $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order);
+    return !empty($opts['config']);
+}
+
 function v2raystore_getAgentPricingRule($user = null, $planId = 0, $serverId = 0){
     global $botState;
     if($user === null) $user = $GLOBALS['userInfo'] ?? null;
@@ -2330,133 +2349,6 @@ function v2raystore_sanaeiNewJsonPost($curl, $url, $session, $payload = null){
         CURLOPT_HEADER => false,
         CURLOPT_HTTPHEADER => v2raystore_sanaeiNewHeaders($curl, $url, $session, true)
     ));
-}
-
-
-function v2raystore_sanaeiNewJsonPostRaw($curl, $url, $session, $payload = null){
-    // Some 3x-ui endpoints (notably /panel/api/inbounds/addClient and updateClient)
-    // require the `settings` field to remain a JSON string. The generic helper
-    // decodes JSON-like fields for inbound update endpoints, so keep this raw
-    // sender for client add/update compatibility across 3.2.x through 3.4.x.
-    $body = $payload === null ? '' : json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    curl_setopt_array($curl, array(
-        CURLOPT_URL => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_ENCODING => '',
-        CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 6,
-        CURLOPT_TIMEOUT => 8,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-        CURLOPT_POST => true,
-        CURLOPT_CUSTOMREQUEST => 'POST',
-        CURLOPT_POSTFIELDS => $body,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_HEADER => false,
-        CURLOPT_HTTPHEADER => v2raystore_sanaeiNewHeaders($curl, $url, $session, true)
-    ));
-}
-
-function v2raystore_sanaeiNewClientIdFromPayload($client, $fallback = ''){
-    if(is_object($client)) $client = json_decode(json_encode($client), true);
-    if(!is_array($client)) return (string)$fallback;
-    foreach(array('id','password','email') as $field){
-        if(isset($client[$field]) && trim((string)$client[$field]) !== '') return (string)$client[$field];
-    }
-    return (string)$fallback;
-}
-
-function v2raystore_sanaeiNewClientEnvelope($inbound_id, $client){
-    $client = v2raystore_sanaeiNewNormalizeClientPayload($client);
-    return array(
-        'id' => (int)$inbound_id,
-        'settings' => json_encode(array('clients' => array($client)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
-    );
-}
-
-function v2raystore_sanaeiNewDecodedFromRaw($raw){
-    $decoded = json_decode((string)$raw);
-    if(is_object($decoded) || is_array($decoded)) return $decoded;
-    $trim = trim((string)$raw);
-    if($trim === '') return (object)array('success'=>false, 'msg'=>'پاسخ خالی از پنل دریافت شد.');
-    return (object)array('success'=>false, 'msg'=>$trim);
-}
-
-function v2raystore_sanaeiNewIsHardClientError($decoded){
-    if(!is_object($decoded) && !is_array($decoded)) return false;
-    $msg = '';
-    if(is_object($decoded)) $msg = (string)($decoded->msg ?? $decoded->message ?? '');
-    else $msg = (string)($decoded['msg'] ?? $decoded['message'] ?? '');
-    $msg = strtolower($msg);
-    if($msg === '') return false;
-    foreach(array('not found','record not found','empty client id','invalid client','client not found') as $needle){
-        if(strpos($msg, $needle) !== false) return true;
-    }
-    return false;
-}
-
-function v2raystore_sanaeiNewUpdateClientCompat($curl, $panel_url, $session, $inbound_id, $client_id, $email, $client){
-    $panel_url = rtrim((string)$panel_url, '/');
-    $client = v2raystore_sanaeiNewNormalizeClientPayload($client);
-    $clientId = v2raystore_sanaeiNewClientIdFromPayload($client, $client_id);
-    $email = trim((string)$email);
-    $lastDecoded = null;
-
-    // Official and stable route documented for 3x-ui. This route preserves the
-    // existing UUID/password and works on 3.2.x while avoiding the 3.3/3.4
-    // /clients/update behaviour that can regenerate client credentials.
-    if($inbound_id > 0 && $clientId !== ''){
-        $url = $panel_url . '/panel/api/inbounds/updateClient/' . rawurlencode($clientId);
-        v2raystore_sanaeiNewJsonPostRaw($curl, $url, $session, v2raystore_sanaeiNewClientEnvelope($inbound_id, $client));
-        $lastDecoded = v2raystore_sanaeiNewDecodedFromRaw(curl_exec($curl));
-        if(v2raystore_panelActionSucceeded($lastDecoded)) return $lastDecoded;
-        // If the client id is really missing on this panel, try email based API below.
-    }
-
-    // New clients API fallback. Keep it as fallback only, because some 3.x
-    // versions have changed UUID/password when updating through this endpoint.
-    if($email !== ''){
-        $url = $panel_url . '/panel/api/clients/update/' . rawurlencode($email);
-        v2raystore_sanaeiNewJsonPost($curl, $url, $session, $client);
-        $lastDecoded = v2raystore_sanaeiNewDecodedFromRaw(curl_exec($curl));
-        if(v2raystore_panelActionSucceeded($lastDecoded)) return $lastDecoded;
-    }
-    return $lastDecoded ?: (object)array('success'=>false, 'msg'=>'آپدیت کلاینت روی پنل ناموفق بود.');
-}
-
-function v2raystore_sanaeiNewAddClientCompat($curl, $panel_url, $session, $inbound_id, $client){
-    $panel_url = rtrim((string)$panel_url, '/');
-    $client = v2raystore_sanaeiNewNormalizeClientPayload($client);
-    $lastDecoded = null;
-
-    // Prefer the classic inbounds addClient route so a UUID/password generated
-    // by the bot is kept unchanged on newer 3x-ui releases too.
-    if($inbound_id > 0){
-        $url = $panel_url . '/panel/api/inbounds/addClient';
-        v2raystore_sanaeiNewJsonPostRaw($curl, $url, $session, v2raystore_sanaeiNewClientEnvelope($inbound_id, $client));
-        $lastDecoded = v2raystore_sanaeiNewDecodedFromRaw(curl_exec($curl));
-        if(v2raystore_panelActionSucceeded($lastDecoded)) return $lastDecoded;
-    }
-
-    // Multi-inbound clients API fallback for panels/forks that need it.
-    $url = $panel_url . '/panel/api/clients/add';
-    v2raystore_sanaeiNewJsonPost($curl, $url, $session, array('client' => $client, 'inboundIds' => array((int)$inbound_id)));
-    $lastDecoded = v2raystore_sanaeiNewDecodedFromRaw(curl_exec($curl));
-    return $lastDecoded;
-}
-
-function v2raystore_sanaeiNewPostEndpointCompat($curl, $panel_url, $session, $endpoints){
-    $panel_url = rtrim((string)$panel_url, '/');
-    $lastDecoded = null;
-    foreach((array)$endpoints as $endpoint){
-        if(trim((string)$endpoint) === '') continue;
-        $url = (strpos((string)$endpoint, 'http') === 0) ? (string)$endpoint : $panel_url . (string)$endpoint;
-        v2raystore_sanaeiNewJsonPostRaw($curl, $url, $session, null);
-        $lastDecoded = v2raystore_sanaeiNewDecodedFromRaw(curl_exec($curl));
-        if(v2raystore_panelActionSucceeded($lastDecoded)) return $lastDecoded;
-    }
-    return $lastDecoded ?: (object)array('success'=>false, 'msg'=>'درخواست پنل ناموفق بود.');
 }
 
 
@@ -5450,6 +5342,153 @@ function v2raystore_findPanelSubId($server_id, $token = '', $uuid = '', $inbound
     return '';
 }
 
+
+function v2raystore_normalizeFullSubLinkCandidate($value, $subId = ''){
+    $value = trim(str_replace('\\/', '/', (string)$value));
+    if($value === '' || !preg_match('#^https?://#i', $value)) return '';
+    if(preg_match('#^(vmess|vless|trojan|ss|hysteria2?|hy2)://#i', $value)) return '';
+    $subId = trim((string)$subId);
+    $plain = html_entity_decode($value, ENT_QUOTES, 'UTF-8');
+    if($subId !== '' && strpos($plain, $subId) === false) return '';
+    // A real subscription URL in 3x-ui contains either the client's subId or a subscription route.
+    if($subId === '' && stripos($plain, '/sub/') === false && stripos($plain, '/json/') === false && stripos($plain, 'sub=') === false && stripos($plain, 'subscription') === false) return '';
+    return $plain;
+}
+
+function v2raystore_findFullSubLinkInData($data, $subId = '', $keyPath = ''){
+    if(is_object($data)) $data = json_decode(json_encode($data), true);
+    if(is_string($data)){
+        $link = v2raystore_normalizeFullSubLinkCandidate($data, $subId);
+        if($link !== '') return $link;
+        $decoded = json_decode($data, true);
+        if(json_last_error() === JSON_ERROR_NONE && is_array($decoded)) return v2raystore_findFullSubLinkInData($decoded, $subId, $keyPath);
+        return '';
+    }
+    if(!is_array($data)) return '';
+
+    // Prefer fields that explicitly look like subscription URLs before scanning all strings.
+    foreach($data as $key => $value){
+        $k = strtolower((string)$key);
+        if(strpos($k, 'sub') !== false || strpos($k, 'subscription') !== false){
+            $link = v2raystore_findFullSubLinkInData($value, $subId, $keyPath . '.' . $k);
+            if($link !== '') return $link;
+        }
+    }
+    foreach($data as $key => $value){
+        $link = v2raystore_findFullSubLinkInData($value, $subId, $keyPath . '.' . (string)$key);
+        if($link !== '') return $link;
+    }
+    return '';
+}
+
+function v2raystore_findSubIdInData($data, $uuid = '', $remark = ''){
+    if(is_object($data)) $data = json_decode(json_encode($data), true);
+    if(is_string($data)){
+        $decoded = json_decode($data, true);
+        if(json_last_error() === JSON_ERROR_NONE && is_array($decoded)) return v2raystore_findSubIdInData($decoded, $uuid, $remark);
+        return '';
+    }
+    if(!is_array($data)) return '';
+
+    $uuid = trim((string)$uuid);
+    $remark = trim((string)$remark);
+    if(isset($data['subId']) || isset($data['subid']) || isset($data['sub_id'])){
+        $candidate = trim((string)($data['subId'] ?? $data['subid'] ?? $data['sub_id']));
+        if($candidate !== ''){
+            $cid = trim((string)($data['id'] ?? $data['uuid'] ?? $data['password'] ?? ''));
+            $pwd = trim((string)($data['password'] ?? ''));
+            $email = trim((string)($data['email'] ?? $data['remark'] ?? ''));
+            if($uuid === '' && $remark === '') return $candidate;
+            if($uuid !== '' && ($cid === $uuid || $pwd === $uuid)) return $candidate;
+            if($remark !== '' && $email === $remark) return $candidate;
+            // If the API endpoint was already /clients/get/{email}, obj may be only that client.
+            if($email === '' && count($data) < 30) return $candidate;
+        }
+    }
+    foreach($data as $value){
+        $found = v2raystore_findSubIdInData($value, $uuid, $remark);
+        if($found !== '') return $found;
+    }
+    return '';
+}
+
+function v2raystore_getPanelClientSubData($server_id, $token = '', $uuid = '', $inbound_id = 0, $remark = ''){
+    global $connection;
+    $server_id = intval($server_id);
+    $token = trim((string)$token);
+    $uuid = trim((string)$uuid);
+    $remark = trim((string)$remark);
+    $result = ['subId' => '', 'subLink' => ''];
+
+    if($server_id <= 0) return $result;
+    $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return $result;
+    $stmt->bind_param('i', $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$server_info || !v2raystore_isPanelSubscriptionServer($server_info['type'] ?? '')) return $result;
+
+    $email = $remark;
+    if(function_exists('v2raystore_sanaeiNewFindClientEmail')){
+        $foundEmail = v2raystore_sanaeiNewFindClientEmail($server_id, $uuid, $inbound_id, $remark);
+        if($foundEmail !== '') $email = $foundEmail;
+    }
+
+    $responses = [];
+    if(($server_info['type'] ?? '') === 'sanaei_new' && $email !== ''){
+        $resp = v2raystore_sanaeiRequestJson($server_info, '/panel/api/clients/get/' . rawurlencode($email), 'GET');
+        if(is_array($resp)) $responses[] = $resp;
+        // Some 3x-ui versions return richer client data from POST too.
+        $resp = v2raystore_sanaeiRequestJson($server_info, '/panel/api/clients/get/' . rawurlencode($email), 'POST');
+        if(is_array($resp)) $responses[] = $resp;
+    }
+    if(($server_info['type'] ?? '') === 'sanaei_new' && intval($inbound_id) > 0){
+        $resp = v2raystore_sanaeiRequestJson($server_info, '/panel/api/inbounds/get/' . intval($inbound_id), 'GET');
+        if(is_array($resp)) $responses[] = $resp;
+    }
+
+    foreach($responses as $resp){
+        $subId = v2raystore_findSubIdInData($resp, $uuid, $email ?: $remark);
+        if($subId !== '' && $result['subId'] === '') $result['subId'] = $subId;
+        $link = v2raystore_findFullSubLinkInData($resp, $subId ?: $result['subId']);
+        if($link !== ''){
+            $result['subLink'] = $link;
+            if($result['subId'] === '') $result['subId'] = $subId;
+            return $result;
+        }
+    }
+
+    $json = getJson($server_id);
+    if($json && isset($json->obj) && is_array($json->obj)){
+        foreach($json->obj as $row){
+            if($inbound_id != 0 && intval($row->id ?? 0) != intval($inbound_id)) continue;
+            $settings = v2raystore_decodeMaybeJson($row->settings ?? '{}', true);
+            $clients = $settings['clients'] ?? [];
+            if(!is_array($clients)) continue;
+            foreach($clients as $client){
+                if(!is_array($client)) continue;
+                $cid = trim((string)($client['id'] ?? ''));
+                $pwd = trim((string)($client['password'] ?? ''));
+                $clientEmail = trim((string)($client['email'] ?? ''));
+                $match = false;
+                if($token !== '' && trim((string)($client['subId'] ?? '')) === $token) $match = true;
+                if(!$match && $uuid !== '' && ($cid === $uuid || $pwd === $uuid)) $match = true;
+                if(!$match && $remark !== '' && $clientEmail === $remark) $match = true;
+                if(!$match) continue;
+                $subId = trim((string)($client['subId'] ?? ''));
+                if($subId !== '') $result['subId'] = $subId;
+                $link = v2raystore_findFullSubLinkInData($client, $subId);
+                if($link !== '') $result['subLink'] = $link;
+                return $result;
+            }
+        }
+    }
+
+    if($result['subId'] === '' && $token !== '' && !preg_match('/^[A-Za-z0-9]{30}$/', $token)) $result['subId'] = $token;
+    return $result;
+}
+
 function v2raystore_panelLoginHeaders($curl, $loginUrl){
     $headers = array(
         'Content-Type: application/x-www-form-urlencoded',
@@ -5615,6 +5654,15 @@ function v2raystore_arrayGetDeep($array, $keys){
     foreach($keys as $key){
         if(array_key_exists($key, $array)) return $array[$key];
     }
+    // 3x-ui versions/forks sometimes return settings as SubPort/SubURI instead of subPort/subURI.
+    $lowerMap = [];
+    foreach($array as $k => $v){
+        if(is_string($k)) $lowerMap[strtolower($k)] = $k;
+    }
+    foreach($keys as $key){
+        $lk = strtolower((string)$key);
+        if(isset($lowerMap[$lk])) return $array[$lowerMap[$lk]];
+    }
     foreach($array as $value){
         if(is_array($value)){
             $found = v2raystore_arrayGetDeep($value, $keys);
@@ -5677,19 +5725,19 @@ function v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, $form
     $settings = is_array($settings) ? $settings : [];
     $parts = v2raystore_panelUrlParts($server_info);
     $scheme = $parts['scheme'];
-    $host = trim((string)v2raystore_arrayGetDeep($settings, ['subDomain','subHost','subscriptionDomain','subscriptionHost']));
+    $host = trim((string)v2raystore_arrayGetDeep($settings, ['subDomain','subHost','subscriptionDomain','subscriptionHost','sub_host','subscription_host','subscribeDomain','subscribeHost']));
     if($host === '') $host = $parts['host'];
 
     // مهم: اگر subPort وجود داشته باشد، باید از خودش استفاده شود و نباید subURI ساخته شده با آدرس پنل ادمین
     // مثل http://domain:1030/wolf/sub/ را برگردانیم. ساب 3x-ui روی سرور جدا و معمولا بدون webBasePath پنل است.
-    $subPortRaw = v2raystore_arrayGetDeep($settings, ['subPort','sub_port','subscriptionPort','subscription_port','subListenPort']);
+    $subPortRaw = v2raystore_arrayGetDeep($settings, ['subPort','sub_port','subscriptionPort','subscription_port','subListenPort','sub_listen_port','subscribePort','subscribe_port','subscriptionListenPort']);
     $subPort = is_numeric($subPortRaw) ? intval($subPortRaw) : 0;
     if($subPort > 0 && $host !== ''){
         if($format === 'json'){
-            $path = v2raystore_arrayGetDeep($settings, ['subJsonPath','subJsonURIPath','jsonPath','json_path','subscriptionJsonPath']);
+            $path = v2raystore_arrayGetDeep($settings, ['subJsonPath','subJsonURIPath','jsonPath','json_path','subscriptionJsonPath','subJsonURI','sub_json_uri']);
             $path = v2raystore_normalizeSubPath($path, '/json/');
         }else{
-            $path = v2raystore_arrayGetDeep($settings, ['subPath','sub_path','subscriptionPath','subscription_path']);
+            $path = v2raystore_arrayGetDeep($settings, ['subPath','sub_path','subscriptionPath','subscription_path','subURIPath','sub_uri_path']);
             $path = v2raystore_normalizeSubPath($path, '/sub/');
         }
         return v2raystore_originWithPort($scheme, $host, $subPort) . $path;
@@ -5763,13 +5811,16 @@ function v2raystore_getPanelSubscriptionUris($server_id){
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
+    $isPanelSubServer = ($server_info && v2raystore_isPanelSubscriptionServer($server_info['type'] ?? ''));
     $result = [
-        'subURI' => v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'sub'),
-        'subJsonURI' => v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'json'),
+        // For 3x-ui/Sanaei do not blindly reuse admin panel URL/port as subscription URL.
+        // The real base is read from panel subscription settings or from the client payload.
+        'subURI' => $isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'sub'),
+        'subJsonURI' => $isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'json'),
         'subEnable' => true,
     ];
 
-    if(!$server_info || !v2raystore_isPanelSubscriptionServer($server_info['type'] ?? '')){
+    if(!$isPanelSubServer){
         $cache[$server_id] = $result;
         return $result;
     }
@@ -5786,10 +5837,14 @@ function v2raystore_getPanelSubscriptionUris($server_id){
     // the wrong :panelPort/basePath/sub/ URL. Prefer defaultSettings, then fall back to all.
     $settingsDefault = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/setting/defaultSettings');
     $settingsAll = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/setting/all');
+    // 3x-ui v3.x exposes settings under /panel/api/settings/* (OpenAPI). Keep old endpoints as fallback.
+    $settingsApiDefault = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/default');
+    $settingsApiDefaultSettings = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/defaultSettings');
+    $settingsApiAll = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/all');
 
-    foreach([$settingsDefault, $settingsAll] as $settings){
+    foreach([$settingsApiDefault, $settingsApiDefaultSettings, $settingsApiAll, $settingsDefault, $settingsAll] as $settings){
         if(!is_array($settings) || empty($settings)) continue;
-        $hasSubInfo = v2raystore_arrayGetDeep($settings, ['subURI','subJsonURI','subPort','sub_port','subscriptionPort','subscription_port','subPath','sub_path']) !== null;
+        $hasSubInfo = v2raystore_arrayGetDeep($settings, ['subURI','subJsonURI','subPort','sub_port','subscriptionPort','subscription_port','subPath','sub_path','subDomain','subscriptionDomain','subscribePort']) !== null;
         if(!$hasSubInfo) continue;
         $result['subURI'] = v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, 'sub');
         $result['subJsonURI'] = v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, 'json');
@@ -5828,7 +5883,9 @@ function v2raystore_makeCustomerSubLink($server_id, $token = '', $uuid = '', $in
     }
 
     if(v2raystore_isPanelSubscriptionServer($serverType)){
-        $subId = v2raystore_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
+        $clientSub = function_exists('v2raystore_getPanelClientSubData') ? v2raystore_getPanelClientSubData($server_id, $token, $uuid, $inbound_id, $remark) : ['subId'=>'','subLink'=>''];
+        if(!empty($clientSub['subLink'])) return (string)$clientSub['subLink'];
+        $subId = !empty($clientSub['subId']) ? (string)$clientSub['subId'] : v2raystore_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
         return $subId !== '' ? v2raystore_panelSubLinkBySubId($server_id, $subId, $format) : '';
     }
 
@@ -7925,7 +7982,10 @@ function v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink = ''
 
 if(!function_exists('v2raystore_sendMultiDomainConfigMessage')){
 function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subLink = '', $serverType = '', $keyboard = null, $heading = null, $extraLines = '', $linkOptions = null){
-    global $botState, $buttonValues;
+    global $botState, $buttonValues, $agentBought, $payInfo;
+    if($linkOptions === null && function_exists('v2raystore_getRuntimeDeliveryLinkOptions')){
+        $linkOptions = v2raystore_getRuntimeDeliveryLinkOptions($chatId, isset($agentBought) ? $agentBought : null, isset($payInfo) ? $payInfo : null);
+    }
     $linkOptions = v2raystore_normalizeDeliveryLinkOptions($linkOptions);
     $links = v2raystore_normalizeConfigLinksArray($links);
     if(count($links) <= 1) return false;
@@ -8918,9 +8978,7 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
         if($serverType == "sanaei_new"){
             $deleteUrls = [];
             $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
-            if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClientByEmail/" . rawurlencode($email);
             if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($email);
-            if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/clients/del/" . rawurlencode($email) . "?keepTraffic=0";
             if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/clients/del/" . rawurlencode($email);
             $lastDecoded = null;
             foreach(array_values(array_unique($deleteUrls)) as $deleteUrl){
@@ -9572,9 +9630,11 @@ function changeClientState($server_id, $inbound_id, $uuid){
     }
 
     if($serverType == "sanaei_new"){
-        $clientIdForUpdate = v2raystore_sanaeiNewClientIdFromPayload($editedClient, $uuid);
-        $decodedResponse = v2raystore_sanaeiNewUpdateClientCompat($curl, $panel_url, $session, $inbound_id, $clientIdForUpdate, $email, $editedClient);
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
         curl_close($curl);
+        $decodedResponse = json_decode($response);
         // در حالت تمدید ریست، آپدیت کلاینت فقط limit/time را عوض می‌کند؛ برای اینکه حجم واقعاً از نو شروع شود،
         // بعد از موفقیت پنل باید مصرف کلاینت هم ریست شود. فقط همین مسیر renew دست‌کاری می‌شود.
         if(($editType == "renew") && is_object($decodedResponse) && !empty($decodedResponse->success) && isset($email)){
@@ -9736,9 +9796,11 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     }
 
     if($serverType == "sanaei_new"){
-        $clientIdForUpdate = v2raystore_sanaeiNewClientIdFromPayload($editedClient, $uuid);
-        $response = v2raystore_sanaeiNewUpdateClientCompat($curl, $panel_url, $session, $inbound_id, $clientIdForUpdate, $email, $editedClient);
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
         curl_close($curl);
+        $response = json_decode($response);
         if(!is_object($response)) $response = (object)['success'=>false, 'msg'=>'پاسخ پنل بعد از تغییر UUID نامعتبر بود.'];
         $response->newUuid = $newUuid;
         return $response;
@@ -9902,10 +9964,11 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
     } 
 
     if($serverType == "sanaei_new"){
-        $clientIdForUpdate = v2raystore_sanaeiNewClientIdFromPayload($editedClient, $uuid);
-        $response = v2raystore_sanaeiNewUpdateClientCompat($curl, $panel_url, $session, $inbound_id, $clientIdForUpdate, $email, $editedClient);
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
         curl_close($curl);
-        return $response;
+        return json_decode($response);
     }
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         
@@ -10125,9 +10188,11 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     } 
 
     if($serverType == "sanaei_new"){
-        $clientIdForUpdate = v2raystore_sanaeiNewClientIdFromPayload($editedClient, $uuid);
-        $decodedResponse = v2raystore_sanaeiNewUpdateClientCompat($curl, $panel_url, $session, $inbound_id, $clientIdForUpdate, $email, $editedClient);
+        $url = "$panel_url/panel/api/clients/update/" . rawurlencode($email);
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, $editedClient);
+        $response = curl_exec($curl);
         curl_close($curl);
+        $decodedResponse = json_decode($response);
 
         // فقط در حالت تمدید ریست: بعد از اینکه حجم و زمان جدید روی پنل نشست، مصرف هم ریست شود.
         // این شاخه قبلاً قبل از resetClientTraffic برمی‌گشت و باعث باقی‌ماندن مصرف قبلی می‌شد.
@@ -10458,21 +10523,8 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
         curl_close($curl);
         return $loginResponse;
     }
-    if($serverType == "sanaei_new"){
-        $endpoints = [];
-        if(!empty($inboundId)) $endpoints[] = "/panel/api/inbounds/" . intval($inboundId) . "/resetClientTraffic/" . rawurlencode($remark);
-        $endpoints[] = "/panel/api/clients/resetTraffic/" . rawurlencode($remark);
-        if(!empty($inboundId)){
-            // legacy/fork fallbacks
-            $endpoints[] = "/panel/inbound/" . intval($inboundId) . "/resetClientTraffic/" . rawurlencode($remark);
-            $endpoints[] = "/xui/inbound/" . intval($inboundId) . "/resetClientTraffic/" . rawurlencode($remark);
-        }
-        $decodedResponse = v2raystore_sanaeiNewPostEndpointCompat($curl, $panel_url, $session, $endpoints);
-        curl_close($curl);
-        return $decodedResponse;
-    }
-
-    if($serverType == "sanaei") $url = "$panel_url/panel/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark);
+    if($serverType == "sanaei_new") $url = "$panel_url/panel/api/clients/resetTraffic/" . rawurlencode($remark);
+    elseif($serverType == "sanaei") $url = "$panel_url/panel/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark);
     elseif($inboundId == null) $url = "$panel_url/xui/inbound/resetClientTraffic/" . rawurlencode($remark);
     else $url = "$panel_url/xui/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark);
     curl_setopt_array($curl, array(
@@ -10495,9 +10547,50 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
             'Cookie: ' . $session
         )
     ));
+    if($serverType == "sanaei_new"){
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, null);
+    }
 
     $response = curl_exec($curl);
     $decodedResponse = json_decode($response);
+
+    // بعضی نسخه‌های 3x-ui جدید روی endpoint جدید resetTraffic جواب نامعتبر/ناموفق می‌دهند،
+    // ولی endpoint قدیمی inbound هنوز کار می‌کند. فقط برای ریست مصرف تمدید از همین fallback استفاده می‌شود.
+    if($serverType == "sanaei_new" && !v2raystore_panelActionSucceeded($decodedResponse) && !empty($inboundId)){
+        $fallbackUrls = [
+            "$panel_url/panel/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark),
+            "$panel_url/xui/inbound/$inboundId/resetClientTraffic/" . rawurlencode($remark),
+        ];
+        foreach($fallbackUrls as $fallbackUrl){
+            curl_setopt_array($curl, array(
+                CURLOPT_URL => $fallbackUrl,
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_ENCODING => '',
+                CURLOPT_MAXREDIRS => 10,
+                CURLOPT_CONNECTTIMEOUT => 6,
+                CURLOPT_TIMEOUT => 6,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+                CURLOPT_CUSTOMREQUEST => 'POST',
+                CURLOPT_POSTFIELDS => '',
+                CURLOPT_HEADER => false,
+                CURLOPT_HTTPHEADER => array(
+                    'User-Agent:  Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0',
+                    'Accept:  application/json, text/plain, */*',
+                    'Accept-Language:  en-US,en;q=0.5',
+                    'Accept-Encoding:  gzip, deflate',
+                    'X-Requested-With:  XMLHttpRequest',
+                    'Cookie: ' . $session
+                )
+            ));
+            $fallbackResponse = curl_exec($curl);
+            $fallbackDecoded = json_decode($fallbackResponse);
+            if(v2raystore_panelActionSucceeded($fallbackDecoded)){
+                $decodedResponse = $fallbackDecoded;
+                break;
+            }
+        }
+    }
     curl_close($curl);
     return $decodedResponse;
 }
@@ -10617,9 +10710,11 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     
     if($serverType == "sanaei_new"){
         $clientToAdd = ($newarr == '') ? $newClient : $newarr;
-        $decodedResponse = v2raystore_sanaeiNewAddClientCompat($curl, $panel_url, $session, $inbound_id, $clientToAdd);
+        $url = "$panel_url/panel/api/clients/add";
+        v2raystore_sanaeiNewJsonPost($curl, $url, $session, array("client" => $clientToAdd, "inboundIds" => array((int)$inbound_id)));
+        $response = curl_exec($curl);
         curl_close($curl);
-        return $decodedResponse;
+        return json_decode($response);
     }
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         $newSetting = array();
@@ -15944,7 +16039,10 @@ function v2raystore_plainTextFromHtml($text){
 }
 
 function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType, $linkOptions = null){
-    global $botUrl, $buttonValues, $botState;
+    global $botUrl, $buttonValues, $botState, $agentBought, $payInfo;
+    if($linkOptions === null && function_exists('v2raystore_getRuntimeDeliveryLinkOptions')){
+        $linkOptions = v2raystore_getRuntimeDeliveryLinkOptions($uid, isset($agentBought) ? $agentBought : null, isset($payInfo) ? $payInfo : null);
+    }
     $linkOptions = v2raystore_normalizeDeliveryLinkOptions($linkOptions);
     if(!$linkOptions['sub']) $subLink = '';
     if(!is_array($links)) $links = [$links];
