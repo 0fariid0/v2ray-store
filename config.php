@@ -5704,53 +5704,126 @@ function v2raystore_originWithPort($scheme, $host, $port = 0){
     return $scheme . '://' . $host . $portPart;
 }
 
-function v2raystore_normalizeDirectSubUri($server_info, $direct, $format = 'sub'){
+function v2raystore_subLinkLooksLikeAdminPanel($server_info, $link){
+    $link = trim((string)$link);
+    $panel = trim((string)($server_info['panel_url'] ?? ''));
+    if($link === '' || $panel === '' || !preg_match('#^https?://#i', $link)) return false;
+    $lp = @parse_url($link);
+    $pp = @parse_url($panel);
+    if(!is_array($lp) || !is_array($pp)) return false;
+    $lh = strtolower((string)($lp['host'] ?? ''));
+    $ph = strtolower((string)($pp['host'] ?? ''));
+    if($lh === '' || $ph === '' || $lh !== $ph) return false;
+    $ls = strtolower((string)($lp['scheme'] ?? 'http'));
+    $ps = strtolower((string)($pp['scheme'] ?? 'http'));
+    $lpPort = isset($lp['port']) ? intval($lp['port']) : (($ls === 'https') ? 443 : 80);
+    $ppPort = isset($pp['port']) ? intval($pp['port']) : (($ps === 'https') ? 443 : 80);
+    $lpath = '/' . ltrim((string)($lp['path'] ?? ''), '/');
+    $ppath = '/' . trim((string)($pp['path'] ?? ''), '/');
+    if($ppath === '/') $ppath = '';
+    // If it points to the exact admin origin and keeps the admin web base path, it is the wrong link.
+    if($lpPort === $ppPort && $ppath !== '' && strpos($lpath, rtrim($ppath, '/') . '/') === 0) return true;
+    return false;
+}
+
+function v2raystore_normalizeDirectSubUri($server_info, $direct, $format = 'sub', $fallbackHost = ''){
     $direct = trim((string)$direct);
     if($direct === '') return '';
     $parts = v2raystore_panelUrlParts($server_info);
     $scheme = $parts['scheme'];
+    $fallbackHost = trim((string)$fallbackHost);
+
     if(preg_match('#^https?://#i', $direct)){
-        return substr($direct, -1) === '/' ? $direct : $direct . '/';
+        $out = substr($direct, -1) === '/' ? $direct : $direct . '/';
+        return $out;
     }
     if(strpos($direct, '//') === 0){
         $direct = $scheme . ':' . $direct;
         return substr($direct, -1) === '/' ? $direct : $direct . '/';
     }
+
+    // Relative subURI/subPath must not be attached to the admin panel URL for Sanaei/3x-ui.
+    // It is only safe when an explicit subscription host/sub-domain is known or when we can use the
+    // public host from the real client link.
+    if($fallbackHost === '') return '';
     $path = v2raystore_normalizeSubPath($direct, ($format === 'json') ? '/json/' : '/sub/');
-    $origin = v2raystore_originWithPort($scheme, $parts['host'], $parts['port']);
-    return $origin !== '' ? $origin . $path : $path;
+    $origin = v2raystore_originWithPort($scheme, $fallbackHost, 0);
+    return $origin !== '' ? $origin . $path : '';
 }
 
-function v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, $format = 'sub'){
+function v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, $format = 'sub', $fallbackHost = ''){
     $settings = is_array($settings) ? $settings : [];
     $parts = v2raystore_panelUrlParts($server_info);
     $scheme = $parts['scheme'];
-    $host = trim((string)v2raystore_arrayGetDeep($settings, ['subDomain','subHost','subscriptionDomain','subscriptionHost','sub_host','subscription_host','subscribeDomain','subscribeHost']));
-    if($host === '') $host = $parts['host'];
-
-    // مهم: اگر subPort وجود داشته باشد، باید از خودش استفاده شود و نباید subURI ساخته شده با آدرس پنل ادمین
-    // مثل http://domain:1030/wolf/sub/ را برگردانیم. ساب 3x-ui روی سرور جدا و معمولا بدون webBasePath پنل است.
-    $subPortRaw = v2raystore_arrayGetDeep($settings, ['subPort','sub_port','subscriptionPort','subscription_port','subListenPort','sub_listen_port','subscribePort','subscribe_port','subscriptionListenPort']);
-    $subPort = is_numeric($subPortRaw) ? intval($subPortRaw) : 0;
-    if($subPort > 0 && $host !== ''){
-        if($format === 'json'){
-            $path = v2raystore_arrayGetDeep($settings, ['subJsonPath','subJsonURIPath','jsonPath','json_path','subscriptionJsonPath','subJsonURI','sub_json_uri']);
-            $path = v2raystore_normalizeSubPath($path, '/json/');
-        }else{
-            $path = v2raystore_arrayGetDeep($settings, ['subPath','sub_path','subscriptionPath','subscription_path','subURIPath','sub_uri_path']);
-            $path = v2raystore_normalizeSubPath($path, '/sub/');
-        }
-        return v2raystore_originWithPort($scheme, $host, $subPort) . $path;
-    }
+    $explicitHost = trim((string)v2raystore_arrayGetDeep($settings, ['subDomain','subHost','subscriptionDomain','subscriptionHost','sub_host','subscription_host','subscribeDomain','subscribeHost','publicSubDomain','public_sub_domain','subUrlHost']));
+    $fallbackHost = trim((string)$fallbackHost);
+    $host = $explicitHost !== '' ? $explicitHost : $fallbackHost;
 
     $directKey = ($format === 'json') ? 'subJsonURI' : 'subURI';
-    $direct = v2raystore_arrayGetDeep($settings, [$directKey]);
-    $normalizedDirect = v2raystore_normalizeDirectSubUri($server_info, $direct, $format);
+    $direct = v2raystore_arrayGetDeep($settings, [$directKey, strtolower($directKey), 'subscriptionUrl', 'subscription_url', 'subUrl', 'sub_url']);
+    if($format === 'json'){
+        $direct = v2raystore_arrayGetDeep($settings, ['subJsonURI','subJsonUrl','subJsonURL','jsonSubscriptionUrl','json_subscription_url']) ?? $direct;
+    }
+    $normalizedDirect = v2raystore_normalizeDirectSubUri($server_info, $direct, $format, $host);
     if($normalizedDirect !== '') return $normalizedDirect;
 
-    $path = ($format === 'json') ? '/json/' : '/sub/';
-    $origin = v2raystore_originWithPort($scheme, $host, $parts['port']);
-    return $origin !== '' ? $origin . $path : rtrim((string)($server_info['panel_url'] ?? ''), '/') . $path;
+    if($host === '') return '';
+
+    $subPortRaw = v2raystore_arrayGetDeep($settings, ['subPort','sub_port','subscriptionPort','subscription_port','subListenPort','sub_listen_port','subscribePort','subscribe_port','subscriptionListenPort']);
+    $subPort = is_numeric($subPortRaw) ? intval($subPortRaw) : 0;
+
+    if($format === 'json'){
+        $path = v2raystore_arrayGetDeep($settings, ['subJsonPath','subJsonURIPath','jsonPath','json_path','subscriptionJsonPath','subJsonURI','sub_json_uri']);
+        $path = v2raystore_normalizeSubPath($path, '/json/');
+    }else{
+        $path = v2raystore_arrayGetDeep($settings, ['subPath','sub_path','subscriptionPath','subscription_path','subURIPath','sub_uri_path','uriPath','uri_path']);
+        $path = v2raystore_normalizeSubPath($path, '/sub/');
+    }
+
+    // Never fall back to the admin panel port. If subPort exists, use it; otherwise rely on the
+    // public subscription host itself (usually reverse-proxied on 443/80).
+    return v2raystore_originWithPort($scheme, $host, $subPort) . $path;
+}
+
+function v2raystore_parseHostFromConfigLink($link){
+    $link = trim((string)$link);
+    if($link === '') return '';
+    if(stripos($link, 'vmess://') === 0){
+        $raw = substr($link, 8);
+        $raw = strtr($raw, '-_', '+/');
+        $pad = strlen($raw) % 4;
+        if($pad) $raw .= str_repeat('=', 4 - $pad);
+        $json = base64_decode($raw, true);
+        $obj = json_decode((string)$json, true);
+        if(is_array($obj)){
+            foreach(['add','host','server','address'] as $k){
+                $v = trim((string)($obj[$k] ?? ''));
+                if($v !== '') return $v;
+            }
+        }
+        return '';
+    }
+    if(!preg_match('#^(vless|trojan|ss|hysteria2?|hy2)://#i', $link)) return '';
+    $p = @parse_url($link);
+    if(is_array($p) && !empty($p['host'])) return trim((string)$p['host']);
+    if(preg_match('#^[a-z0-9+.-]+://(?:[^@/]+@)?\[?([^\]\s:/?#]+)\]?(?::\d+)?#i', $link, $m)) return trim($m[1]);
+    return '';
+}
+
+function v2raystore_getClientPublicHostForSubLink($server_id, $token = '', $uuid = '', $inbound_id = 0, $remark = ''){
+    $links = [];
+    if(function_exists('v2raystore_sanaeiNewClientLinksFromPanel')){
+        $links = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uuid, $inbound_id);
+    }
+    if(empty($links) && function_exists('v2raystore_findPanelSubId') && function_exists('v2raystore_sanaeiNewSubLinksFromPanel')){
+        $subId = v2raystore_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
+        if($subId !== '') $links = v2raystore_sanaeiNewSubLinksFromPanel($server_id, $subId);
+    }
+    foreach((array)$links as $link){
+        $host = v2raystore_parseHostFromConfigLink($link);
+        if($host !== '') return $host;
+    }
+    return '';
 }
 
 function v2raystore_getPanelSettingResponse($server_info, $session, $endpoint){
@@ -5818,6 +5891,7 @@ function v2raystore_getPanelSubscriptionUris($server_id){
         'subURI' => $isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'sub'),
         'subJsonURI' => $isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'json'),
         'subEnable' => true,
+        '_settings' => [],
     ];
 
     if(!$isPanelSubServer){
@@ -5846,6 +5920,7 @@ function v2raystore_getPanelSubscriptionUris($server_id){
         if(!is_array($settings) || empty($settings)) continue;
         $hasSubInfo = v2raystore_arrayGetDeep($settings, ['subURI','subJsonURI','subPort','sub_port','subscriptionPort','subscription_port','subPath','sub_path','subDomain','subscriptionDomain','subscribePort']) !== null;
         if(!$hasSubInfo) continue;
+        $result['_settings'] = $settings;
         $result['subURI'] = v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, 'sub');
         $result['subJsonURI'] = v2raystore_buildPanelSubBaseFromSettings($server_info, $settings, 'json');
         if(array_key_exists('subEnable', $settings)) $result['subEnable'] = (bool)$settings['subEnable'];
@@ -5856,11 +5931,29 @@ function v2raystore_getPanelSubscriptionUris($server_id){
     return $result;
 }
 
-function v2raystore_panelSubLinkBySubId($server_id, $subId, $format = 'sub'){
+function v2raystore_panelSubLinkBySubId($server_id, $subId, $format = 'sub', $fallbackHost = ''){
+    global $connection;
     $subId = trim((string)$subId);
     if($subId === '') return '';
     $uris = v2raystore_getPanelSubscriptionUris($server_id);
     $base = ($format === 'json') ? ($uris['subJsonURI'] ?? '') : ($uris['subURI'] ?? '');
+
+    // If panel settings only include sub path/port but not the public subscription domain,
+    // build the subscription URL from the actual public host found inside the client config link.
+    if($base === '' && trim((string)$fallbackHost) !== ''){
+        $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $sid = intval($server_id);
+            $stmt->bind_param('i', $sid);
+            $stmt->execute();
+            $server_info = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($server_info){
+                $base = v2raystore_buildPanelSubBaseFromSettings($server_info, $uris['_settings'] ?? [], $format, $fallbackHost);
+            }
+        }
+    }
+
     if($base === '') return '';
     return rtrim($base, '/') . '/' . rawurlencode($subId);
 }
@@ -5884,9 +5977,30 @@ function v2raystore_makeCustomerSubLink($server_id, $token = '', $uuid = '', $in
 
     if(v2raystore_isPanelSubscriptionServer($serverType)){
         $clientSub = function_exists('v2raystore_getPanelClientSubData') ? v2raystore_getPanelClientSubData($server_id, $token, $uuid, $inbound_id, $remark) : ['subId'=>'','subLink'=>''];
-        if(!empty($clientSub['subLink'])) return (string)$clientSub['subLink'];
+        if(!empty($clientSub['subLink'])){
+            $link = (string)$clientSub['subLink'];
+            if(!function_exists('v2raystore_subLinkLooksLikeAdminPanel') || !v2raystore_subLinkLooksLikeAdminPanel($server_info, $link)) return $link;
+        }
         $subId = !empty($clientSub['subId']) ? (string)$clientSub['subId'] : v2raystore_findPanelSubId($server_id, $token, $uuid, $inbound_id, $remark);
-        return $subId !== '' ? v2raystore_panelSubLinkBySubId($server_id, $subId, $format) : '';
+        if($subId === '') return '';
+
+        // First use explicit subscription settings. This must not silently become the admin panel URL.
+        $subLink = v2raystore_panelSubLinkBySubId($server_id, $subId, $format);
+        if($subLink !== '' && (!function_exists('v2raystore_subLinkLooksLikeAdminPanel') || !v2raystore_subLinkLooksLikeAdminPanel($server_info, $subLink))) return $subLink;
+
+        // If settings did not contain a real subscription domain, derive the host from the generated client link.
+        // This prevents links like admin-panel-domain:panelPort/webBasePath/sub/<subId>.
+        $clientHost = function_exists('v2raystore_getClientPublicHostForSubLink') ? v2raystore_getClientPublicHostForSubLink($server_id, $token, $uuid, $inbound_id, $remark) : '';
+        if($clientHost !== ''){
+            $subLink = v2raystore_panelSubLinkBySubId($server_id, $subId, $format, $clientHost);
+            if($subLink !== '') return $subLink;
+            $parts = v2raystore_panelUrlParts($server_info);
+            $path = ($format === 'json') ? '/json/' : '/sub/';
+            return v2raystore_originWithPort($parts['scheme'], $clientHost, 0) . $path . rawurlencode($subId);
+        }
+
+        // Do not fall back to panel_url for Sanaei/3x-ui. Returning empty is safer than sending admin URL.
+        return '';
     }
 
     $token = trim((string)$token);
