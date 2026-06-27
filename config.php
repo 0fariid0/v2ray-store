@@ -3929,6 +3929,39 @@ function v2raystore_daysTextFromExpiry($expiry){
     return $days . ' روز';
 }
 
+function v2raystore_remainingDaysTextForDeleteReport($order, $plan, $usage){
+    $expiry = 0;
+    if(is_array($usage)) $expiry = v2raystore_panelExpiryToSeconds($usage['expiryTime'] ?? 0);
+    if($expiry <= 0 && is_array($order)) $expiry = v2raystore_panelExpiryToSeconds($order['expire_date'] ?? 0);
+    if($expiry <= 0 && is_array($order) && is_array($plan)){
+        $created = intval($order['date'] ?? 0);
+        $planDays = $plan['days'] ?? null;
+        if($created > 0 && is_numeric($planDays) && floatval($planDays) > 0){
+            $expiry = $created + (int)ceil(floatval($planDays) * 86400);
+        }
+    }
+    if($expiry > 0) return v2raystore_daysTextFromExpiry($expiry);
+    if(is_array($plan) && isset($plan['days']) && is_numeric($plan['days']) && floatval($plan['days']) > 0) return 'نامشخص';
+    return 'نامحدود';
+}
+
+function v2raystore_mergeUsageForDeleteReport($primary, $fallback){
+    $primary = is_array($primary) ? $primary : [];
+    $fallback = is_array($fallback) ? $fallback : [];
+    foreach(['checked','found','source','server_type','total','up','down','remaining','expiryTime','enable','email','id'] as $key){
+        if(!array_key_exists($key, $primary) || $primary[$key] === null || $primary[$key] === '' || ($key !== 'remaining' && intval($primary[$key] ?? 0) === 0 && isset($fallback[$key]) && intval($fallback[$key]) > 0)){
+            if(array_key_exists($key, $fallback)) $primary[$key] = $fallback[$key];
+        }
+    }
+    $total = intval($primary['total'] ?? 0);
+    $up = intval($primary['up'] ?? 0);
+    $down = intval($primary['down'] ?? 0);
+    if($total > 0 && (!array_key_exists('remaining', $primary) || $primary['remaining'] === null)){
+        $primary['remaining'] = max(0, $total - $up - $down);
+    }
+    return $primary;
+}
+
 function v2raystore_orderConfiguredVolumeText($plan, $usage){
     $v = $plan['volume'] ?? 'نامشخص';
     if(is_numeric($v) && floatval($v) > 0) return rtrim(rtrim(number_format((float)$v, 2, '.', ''), '0'), '.') . ' گیگ';
@@ -3965,7 +3998,7 @@ function v2raystore_buildDeleteConfigReport($result, $actorUserId = null, $actor
     $serviceTitle = trim((string)($plan['title'] ?? ''));
     if($serviceTitle === '' || $serviceTitle === '-') $serviceTitle = $remark;
     $left = v2raystore_formatTrafficForReport($usage['remaining'] ?? null, $usage['total'] ?? null);
-    $expireDays = v2raystore_daysTextFromExpiry($usage['expiryTime'] ?? ($order['expire_date'] ?? 0));
+    $expireDays = v2raystore_remainingDaysTextForDeleteReport($order, $plan, $usage);
     $volumeText = v2raystore_orderConfiguredVolumeText($plan, $usage);
     $daysText = v2raystore_orderConfiguredDaysText($order, $plan, $usage);
     $panelState = !empty($result['panel_ok']) ? 'حذف شد/وجود نداشت ✅' : 'نامشخص ⚠️';
@@ -4654,6 +4687,9 @@ function v2raystore_fastDeleteOrderEverywhere($orderOrId, $deleteLocal = true, $
     $serverType = (string)($server['type'] ?? '');
     $plan = function_exists('v2raystore_orderPlanInfo') ? v2raystore_orderPlanInfo($order) : [];
     $owner = function_exists('v2raystore_orderOwnerInfo') ? v2raystore_orderOwnerInfo($order['userid'] ?? '') : [];
+    // برای گزارش حذف، اطلاعات حجم و زمان باید قبل از حذف از پنل خوانده شود.
+    // اگر بعد از حذف بپرسیم، پنل چیزی برنمی‌گرداند و گزارش نامشخص/نامحدود می‌شود.
+    $preDeleteUsage = function_exists('v2raystore_orderPanelUsage') ? v2raystore_orderPanelUsage($order) : ['checked'=>false];
 
     $panelOk = false;
     $deleteResponse = null;
@@ -4706,7 +4742,7 @@ function v2raystore_fastDeleteOrderEverywhere($orderOrId, $deleteLocal = true, $
         'local_deleted' => $localDeleted,
         'message' => $message,
         'order' => $order,
-        'usage' => v2raystore_deleteResponseToUsage($deleteResponse),
+        'usage' => function_exists('v2raystore_mergeUsageForDeleteReport') ? v2raystore_mergeUsageForDeleteReport($preDeleteUsage, v2raystore_deleteResponseToUsage($deleteResponse)) : (is_array($preDeleteUsage) ? $preDeleteUsage : v2raystore_deleteResponseToUsage($deleteResponse)),
         'plan' => $plan,
         'owner' => $owner,
         'delete_response' => $deleteResponse,
