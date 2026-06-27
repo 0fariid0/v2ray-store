@@ -530,6 +530,17 @@ function v2raystore_ensurePlanCustomDomainColumn(){
 }
 v2raystore_ensurePlanCustomDomainColumn();
 
+function v2raystore_ensureServerSubDomainColumn(){
+    global $connection;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('SERVER_SUB_DOMAIN_V1')) return;
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_config` LIKE 'sub_domain'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `server_config` ADD `sub_domain` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `panel_url`"));
+    }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('SERVER_SUB_DOMAIN_V1');
+}
+v2raystore_ensureServerSubDomainColumn();
+
 function v2raystore_ensureExtraUserColumns(){
     global $connection;
     if(v2raystore_schemaPatchDone('USERS_ACCESS_JOIN_CARD_V2')) return;
@@ -5762,6 +5773,49 @@ function v2raystore_subLinkLooksLikeAdminPanel($server_info, $link){
     return false;
 }
 
+function v2raystore_normalizeManualSubscriptionBase($value, $format = 'sub'){
+    $value = trim((string)$value);
+    if($value === '' || $value === '/empty') return '';
+    if(!preg_match('#^https?://#i', $value)) $value = 'https://' . ltrim($value, '/');
+    $parts = @parse_url($value);
+    if(!is_array($parts) || empty($parts['host'])) return '';
+
+    $scheme = !empty($parts['scheme']) ? strtolower($parts['scheme']) : 'https';
+    $host = trim((string)$parts['host']);
+    $port = isset($parts['port']) ? intval($parts['port']) : 0;
+    $path = isset($parts['path']) ? '/' . trim((string)$parts['path'], '/') : '';
+
+    $want = ($format === 'json') ? '/json/' : '/sub/';
+    if($path === '' || $path === '/'){
+        $path = $want;
+    }else{
+        // اگر ادمین لینک کامل مثل https://domain:port/sub/token را وارد کرد، فقط base نگه داشته شود.
+        if($format === 'json'){
+            if(preg_match('#/json(?:/|$)#i', $path)) $path = preg_replace('#(/json)(?:/.*)?$#i', '$1/', $path);
+            elseif(preg_match('#/sub(?:/|$)#i', $path)) $path = preg_replace('#(/sub)(?:/.*)?$#i', '/json/', $path);
+            else $path = rtrim($path, '/') . '/json/';
+        }else{
+            if(preg_match('#/sub(?:/|$)#i', $path)) $path = preg_replace('#(/sub)(?:/.*)?$#i', '$1/', $path);
+            elseif(preg_match('#/json(?:/|$)#i', $path)) $path = preg_replace('#(/json)(?:/.*)?$#i', '/sub/', $path);
+            else $path = rtrim($path, '/') . '/sub/';
+        }
+    }
+    if(substr($path, -1) !== '/') $path .= '/';
+    $origin = function_exists('v2raystore_originWithPort') ? v2raystore_originWithPort($scheme, $host, $port) : ($scheme . '://' . $host . ($port ? ':' . $port : ''));
+    return $origin . $path;
+}
+
+function v2raystore_serverManualSubBase($server_info, $format = 'sub'){
+    if(!is_array($server_info)) return '';
+    foreach(['sub_domain','subscription_domain','subscription_url','sub_url','sub_base','subscription_base'] as $key){
+        if(!empty($server_info[$key])){
+            $base = v2raystore_normalizeManualSubscriptionBase($server_info[$key], $format);
+            if($base !== '') return $base;
+        }
+    }
+    return '';
+}
+
 function v2raystore_normalizeDirectSubUri($server_info, $direct, $format = 'sub', $fallbackHost = ''){
     $direct = trim((string)$direct);
     if($direct === '') return '';
@@ -5921,16 +5975,19 @@ function v2raystore_getPanelSubscriptionUris($server_id){
     $stmt->close();
 
     $isPanelSubServer = ($server_info && v2raystore_isPanelSubscriptionServer($server_info['type'] ?? ''));
+    $manualSubBase = $server_info ? v2raystore_serverManualSubBase($server_info, 'sub') : '';
+    $manualJsonBase = $server_info ? v2raystore_serverManualSubBase($server_info, 'json') : '';
     $result = [
-        // For 3x-ui/Sanaei do not blindly reuse admin panel URL/port as subscription URL.
-        // The real base is read from panel subscription settings or from the client payload.
-        'subURI' => $isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'sub'),
-        'subJsonURI' => $isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'json'),
+        // اگر برای این سرور دامنه ساب دستی ثبت شده باشد، همان همیشه اولویت دارد.
+        // این جلوی ساخته‌شدن لینک با آدرس/پورت پنل ادمین را می‌گیرد.
+        'subURI' => $manualSubBase !== '' ? $manualSubBase : ($isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'sub')),
+        'subJsonURI' => $manualJsonBase !== '' ? $manualJsonBase : ($isPanelSubServer ? '' : v2raystore_buildPanelSubBaseFromSettings($server_info ?: [], [], 'json')),
         'subEnable' => true,
         '_settings' => [],
+        '_manual' => ($manualSubBase !== '' || $manualJsonBase !== ''),
     ];
 
-    if(!$isPanelSubServer){
+    if(!$isPanelSubServer || $result['_manual']){
         $cache[$server_id] = $result;
         return $result;
     }
@@ -5997,7 +6054,7 @@ function v2raystore_panelSubLinkBySubId($server_id, $subId, $format = 'sub', $fa
 function v2raystore_makeCustomerSubLink($server_id, $token = '', $uuid = '', $inbound_id = 0, $remark = '', $format = 'sub'){
     global $connection, $botUrl;
 
-    $stmt = $connection->prepare("SELECT `type`, `panel_url` FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt = $connection->prepare("SELECT `type`, `panel_url`, `sub_domain` FROM `server_config` WHERE `id`=? LIMIT 1");
     $stmt->bind_param('i', $server_id);
     $stmt->execute();
     $server_info = $stmt->get_result()->fetch_assoc();
@@ -6043,6 +6100,53 @@ function v2raystore_makeCustomerSubLink($server_id, $token = '', $uuid = '', $in
     return $token !== '' ? $botUrl . 'settings/subLink.php?token=' . urlencode($token) : '';
 }
 
+
+function v2raystore_extractSubIdFromResponseValue($value){
+    $value = trim((string)$value);
+    if($value === '') return '';
+    if(preg_match('#/sub/([^/?#\s]+)#i', $value, $m)) return trim($m[1]);
+    if(preg_match('#/json/([^/?#\s]+)#i', $value, $m)) return trim($m[1]);
+    if(preg_match('#^[A-Za-z0-9_-]{6,80}$#', $value)) return $value;
+    return '';
+}
+
+function v2raystore_subLinkFromResponseForMessage($server_id, $response, $userId = 0, $agentBought = null, $payInfo = null, $uuid = '', $inbound_id = 0, $remark = ''){
+    global $botState;
+    $want = function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub($userId, $agentBought, $payInfo) : (($botState['subLinkState'] ?? 'off') == 'on');
+    if(!$want) return '';
+    $server_id = intval($server_id);
+    if($server_id <= 0 || !$response) return '';
+
+    $fullCandidates = [];
+    $tokenCandidates = [];
+    $arr = is_object($response) ? get_object_vars($response) : (is_array($response) ? $response : []);
+    foreach(['subscription_url','sub_link','subLink','sub_url','subUrl','subscription','subscriptionUrl','subscription_url_path'] as $k){
+        if(isset($arr[$k]) && trim((string)$arr[$k]) !== ''){
+            $v = trim((string)$arr[$k]);
+            if(preg_match('#^https?://#i', $v)) $fullCandidates[] = $v;
+            $tid = v2raystore_extractSubIdFromResponseValue($v);
+            if($tid !== '') $tokenCandidates[] = $tid;
+        }
+    }
+
+    // اگر پنل لینک کامل واقعی برگرداند و شبیه پنل ادمین نبود، از همان استفاده کن.
+    if(!empty($fullCandidates)){
+        global $connection;
+        $serverInfo = null;
+        $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+        if($stmt){ $sid = $server_id; $stmt->bind_param('i', $sid); $stmt->execute(); $serverInfo = $stmt->get_result()->fetch_assoc(); $stmt->close(); }
+        foreach($fullCandidates as $link){
+            if(!function_exists('v2raystore_subLinkLooksLikeAdminPanel') || !$serverInfo || !v2raystore_subLinkLooksLikeAdminPanel($serverInfo, $link)) return $link;
+        }
+    }
+
+    $token = '';
+    foreach($tokenCandidates as $c){ if($c !== ''){ $token = $c; break; } }
+    if(function_exists('v2raystore_makeCustomerSubLink')){
+        return v2raystore_makeCustomerSubLink($server_id, $token, $uuid, intval($inbound_id), $remark, 'sub');
+    }
+    return '';
+}
 
 function v2raystore_replyMarkupHasButtonStyle($markup){
     if($markup === null || $markup === '') return false;
@@ -7289,6 +7393,10 @@ function getServerConfigKeys($serverId,$offset = 0){
     $stmt->close();
     $reality = $serverConfig['reality']=="true"?$buttonValues['active']:$buttonValues['deactive'];
     $panelUrl = $serverConfig['panel_url'];
+    $subDomain = trim((string)($serverConfig['sub_domain'] ?? ''));
+    $subDomainText = $subDomain !== '' ? $subDomain : 'ثبت نشده';
+    if(function_exists('mb_strlen') && mb_strlen($subDomainText, 'UTF-8') > 38) $subDomainText = mb_substr($subDomainText, 0, 35, 'UTF-8') . '...';
+    elseif(strlen($subDomainText) > 38) $subDomainText = substr($subDomainText, 0, 35) . '...';
     $sni = !empty($serverConfig['sni'])?$serverConfig['sni']:" ";
     $headerType = !empty($serverConfig['header_type'])?$serverConfig['header_type']:" ";
     $requestHeader = !empty($serverConfig['request_header'])?$serverConfig['request_header']:" ";
@@ -7316,6 +7424,10 @@ function getServerConfigKeys($serverId,$offset = 0){
     return json_encode(['inline_keyboard'=>array_merge([
         [
             ['text'=>$panelUrl,'callback_data'=>"v2raystore"],
+            ],
+        [
+            ['text'=>$subDomainText,'callback_data'=>"changesServerSubDomain$id"],
+            ['text'=>"🌐 دامنه ساب",'callback_data'=>"v2raystore"],
             ],
         [
             ['text'=>$cname,'callback_data'=>"editServerName$id"],

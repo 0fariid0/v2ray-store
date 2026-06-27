@@ -2568,7 +2568,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     
         if($serverType == "marzban"){
             $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-            $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+            $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
             $vraylink = [$subLink];
             $vray_link = json_encode($response->vray_links);
         }
@@ -3008,7 +3008,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
         
         if($serverType == "marzban"){
             $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-            $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+            $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
             $vraylink = [$subLink];
             $vray_link = json_encode($response->vray_links);
         }else{
@@ -5388,7 +5388,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     
     if($serverType == "marzban"){
         $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+        $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
         $vraylink = [$subLink];
         $vray_link = json_encode($response->vray_links);
     }
@@ -5821,7 +5821,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     
     if($serverType == "marzban"){
         $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+        $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
         $vraylink = [$subLink];
         $vray_link= json_encode($response->vray_links);
     }
@@ -6179,7 +6179,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         
             if($serverType == "marzban"){
                 $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+                $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
                 $vraylink = [$subLink];
                 $vray_link= json_encode($response->vray_links);
             }
@@ -6731,7 +6731,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 
             if($serverType == "marzban"){
                 $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+                $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
                 $vraylink = [$subLink];
                 $vray_link = json_encode($response->vray_links);
             }
@@ -8279,7 +8279,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 	
     if($serverType == "marzban"){
         $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+        $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
         $vraylink = [$subLink];
         $vray_link = json_encode($response->vray_links);
     }else{
@@ -11457,7 +11457,7 @@ if(preg_match('/switchServer(.+)_(.+)/',$data,$match)){
                     }
                 }
                 $uniqid = $token = str_replace("/sub/", "", $response->sub_link);
-                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? rtrim($panelUrl, '/') . $response->sub_link : "";
+                $subLink = function_exists('v2raystore_subLinkFromResponseForMessage') ? v2raystore_subLinkFromResponseForMessage((isset($server_id)?$server_id:(isset($serverId)?$serverId:0)), $response, (isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), (isset($uuid)?$uuid:''), (isset($inbound_id)?$inbound_id:0), (isset($remark)?$remark:'')) : "";
                 $vraylink = $response->vray_links;
 
                 $stmt = $connection->prepare("UPDATE `orders_list` SET `token` = ?, `uuid` =? WHERE `id` = ?");
@@ -12423,6 +12423,33 @@ if(preg_match('/^changesServerIp(\d+)/',$userInfo['step'],$match) && ($from_id =
     
     $keys = getServerConfigKeys($match[1]);
     sendMessage("☑️ مدیریت سرور ها: $cname",$keys);
+    exit();
+}
+if(preg_match('/^changesServerSubDomain(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $stmt = $connection->prepare("SELECT `sub_domain` FROM `server_config` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param("i", $match[1]);
+    $stmt->execute();
+    $currentSubDomain = $stmt->get_result()->fetch_assoc()['sub_domain'] ?? '';
+    $stmt->close();
+    delMessage();
+    sendMessage("🌐 آدرس دامنه/بیس لینک ساب این سرور را وارد کنید.\n\nنمونه: https://panel.frahidx.ir:30/sub/\nیا اگر لینک کامل داری همان را بفرست؛ ربات خودش توکن آخر لینک را حذف می‌کند و فقط base را ذخیره می‌کند.\n\nمقدار فعلی:\n" . ($currentSubDomain !== '' ? $currentSubDomain : 'ثبت نشده') . "\n\nبرای خالی کردن /empty را بفرست.", $cancelKey, 'HTML');
+    setUser($data);
+    exit();
+}
+if(preg_match('/^changesServerSubDomain(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $subDomain = trim((string)$text);
+    if($subDomain == '/empty') $subDomain = '';
+    if($subDomain !== '' && function_exists('v2raystore_normalizeManualSubscriptionBase')){
+        $subDomain = v2raystore_normalizeManualSubscriptionBase($subDomain, 'sub');
+    }
+    $stmt = $connection->prepare("UPDATE `server_config` SET `sub_domain`=? WHERE `id`=?");
+    $stmt->bind_param("si", $subDomain, $match[1]);
+    $stmt->execute();
+    $stmt->close();
+    sendMessage($mainValues['saved_successfuly'], $removeKeyboard);
+    setUser();
+    $keys = getServerConfigKeys($match[1]);
+    sendMessage("☑️ مدیریت سرور ها", $keys);
     exit();
 }
 if(preg_match('/^changePortType(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
