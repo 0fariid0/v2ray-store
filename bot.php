@@ -4044,16 +4044,22 @@ if($data == 'inboundMoveRun' && ($from_id == $admin || $userInfo['isAdmin'] == t
     farid_finishWebhookResponse();
 
     $started = microtime(true);
-    $maxRuntime = 22;
+    $maxRuntime = 32;
+    $lastProgressEdit = 0.0;
     while(true){
         $job = farid_inboundMoveGetJob();
         if(intval($job['state'] ?? 0) != 1) break;
-        farid_inboundMoveRunBatch($job, intval($job['batch'] ?? 3));
+        farid_inboundMoveRunBatch($job, intval($job['batch'] ?? 5));
         $job = farid_inboundMoveGetJob();
-        farid_inboundMoveEditProgress($job);
+        $nowProgress = microtime(true);
+        // برای سرعت بیشتر، بعد از هر batch به تلگرام edit نمی‌زنیم؛ هر چند ثانیه یک‌بار کافی است.
+        if(($nowProgress - $lastProgressEdit) >= 2.0 || intval($job['state'] ?? 0) != 1){
+            farid_inboundMoveEditProgress($job);
+            $lastProgressEdit = $nowProgress;
+        }
         if(intval($job['state'] ?? 0) != 1) break;
         if((microtime(true) - $started) >= $maxRuntime) break;
-        usleep(350000);
+        usleep(120000);
     }
     $job = farid_inboundMoveGetJob();
     $job['auto_running'] = 0;
@@ -13565,7 +13571,7 @@ function farid_inboundMoveDefaultJob(){
         'source_inbound'=>0,
         'target_inbound'=>0,
         'offset'=>0,
-        'batch'=>3,
+        'batch'=>5,
         'created_at'=>0,
         'requested_by'=>0,
         'filter_title'=>'',
@@ -13592,7 +13598,7 @@ function farid_inboundMoveGetJob(){
     $job['source_inbound'] = intval($job['source_inbound'] ?? 0);
     $job['target_inbound'] = intval($job['target_inbound'] ?? 0);
     $job['offset'] = max(0, intval($job['offset'] ?? 0));
-    $job['batch'] = max(1, min(8, intval($job['batch'] ?? 3)));
+    $job['batch'] = max(1, min(12, intval($job['batch'] ?? 5)));
     $job['created_at'] = intval($job['created_at'] ?? 0);
     $job['requested_by'] = intval($job['requested_by'] ?? 0);
     $job['status_chat_id'] = intval($job['status_chat_id'] ?? 0);
@@ -13618,7 +13624,7 @@ function farid_inboundMoveCreateJob($ids, $serverId, $sourceInbound, $targetInbo
     $job['server_id'] = intval($serverId);
     $job['source_inbound'] = intval($sourceInbound);
     $job['target_inbound'] = intval($targetInbound);
-    $job['batch'] = count($job['ids']) <= 1 ? 1 : 3;
+    $job['batch'] = count($job['ids']) <= 1 ? 1 : 5;
     $job['created_at'] = time();
     $job['requested_by'] = intval($actorId);
     $job['filter_title'] = trim((string)$title);
@@ -14082,7 +14088,7 @@ function farid_inboundMoveRunBatch($job = null, $batch = 3){
     $ids = is_array($job['ids'] ?? null) ? array_values($job['ids']) : [];
     $total = count($ids);
     $offset = max(0, intval($job['offset'] ?? 0));
-    $batch = max(1, min(8, intval($batch)));
+    $batch = max(1, min(12, intval($batch)));
     $stats = is_array($job['stats'] ?? null) ? $job['stats'] : ['processed'=>0,'moved'=>0,'sent'=>0,'failed'=>0,'skipped'=>0];
     $errors = is_array($job['errors'] ?? null) ? $job['errors'] : [];
     $processed = 0;
@@ -14113,10 +14119,10 @@ function getAdminKeysPlus(){
     global $buttonValues, $from_id, $admin;
 
     // منوی مدیریت بازچینی شده و دسته‌بندی شده است.
-    // فیلد style از Bot API جدید پشتیبانی می‌شود؛ کلاینت‌های قدیمی‌تر آن را نادیده می‌گیرند.
+    // Telegram Bot API رنگ مستقل برای inline keyboard ندارد؛ style فقط برای سازگاری با wrapperهای سفارشی نگه داشته شده است.
     $keys = [];
 
-    $keys[] = [['text'=>'🟧 گزارش‌ها و جستجو', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'📊 گزارش‌ها و جستجو', 'callback_data'=>'v2raystore', 'style'=>'warning']];
     $keys[] = [
         ['text'=>$buttonValues['bot_reports'], 'callback_data'=>'botReports', 'style'=>'primary'],
         ['text'=>$buttonValues['user_reports'], 'callback_data'=>'userReports', 'style'=>'primary']
@@ -14126,7 +14132,7 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['message_to_user'], 'callback_data'=>'messageToSpeceficUser', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🟧 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🧾 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'v2raystore', 'style'=>'warning']];
     $keys[] = [
         ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu', 'style'=>'success'],
         ['text'=>$buttonValues['create_account'], 'callback_data'=>'createMultipleAccounts', 'style'=>'success']
@@ -14145,7 +14151,7 @@ function getAdminKeysPlus(){
         ['text'=>'📊 تنظیمات آمار کانال', 'callback_data'=>'reportChannelSettingsMenu', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🟧 سرورها و فروش', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'v2raystore', 'style'=>'warning']];
     $keys[] = [
         ['text'=>$buttonValues['server_settings'], 'callback_data'=>'serversSetting', 'style'=>'primary'],
         ['text'=>$buttonValues['categories_settings'], 'callback_data'=>'categoriesSetting', 'style'=>'primary']
@@ -14162,7 +14168,7 @@ function getAdminKeysPlus(){
         ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🟧 کاربران و دسترسی‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'v2raystore', 'style'=>'warning']];
     $keys[] = [
         ['text'=>'🔐 قفل و دسترسی اعضای جدید', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary'],
         ['text'=>'🚪 معافیت جوین اجباری', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
@@ -14187,7 +14193,7 @@ function getAdminKeysPlus(){
         ['text'=>'درخواست‌های رد شده', 'callback_data'=>'rejectedAgentList', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🟧 پیام‌ها و پشتیبانی', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'v2raystore', 'style'=>'warning']];
     $keys[] = [
         ['text'=>$buttonValues['tickets_list'], 'callback_data'=>'ticketsList', 'style'=>'primary'],
         ['text'=>$buttonValues['message_to_all'], 'callback_data'=>'message2All', 'style'=>'primary']
