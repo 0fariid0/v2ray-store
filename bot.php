@@ -3895,9 +3895,8 @@ if(preg_match('/^inboundMoveBulk_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id =
     $srcInbound = intval($m[2]);
     $count = farid_inboundMoveSourceCount($serverId, $srcInbound);
     if($count <= 0){ alert('برای این اینباند کانفیگ فعالی در ربات پیدا نشد.', true); exit(); }
-    setUser('bulk|' . $serverId . '|' . $srcInbound, 'temp');
-    setUser('inboundMoveAskTarget');
-    sendMessage("🎯 انتقال گروهی از اینباند <code>$srcInbound</code>\n\nتعداد کانفیگ‌های ثبت‌شده: <b>$count</b>\n\nآیدی inbound مقصد را بفرست.\n\n" . farid_inboundMoveTargetListText($serverId, $srcInbound), $cancelKey, 'HTML');
+    setUser(); setUser('', 'temp');
+    editText($message_id, farid_inboundMoveTargetSelectText('bulk', $serverId, $srcInbound, 0), farid_inboundMoveTargetSelectKeys('bulk', $serverId, $srcInbound, 0), 'HTML');
     exit();
 }
 
@@ -3907,10 +3906,45 @@ if(preg_match('/^inboundMoveOne_(\d+)$/', $data ?? '', $m) && ($from_id == $admi
     if(!$order){ alert('کانفیگ پیدا نشد.', true); exit(); }
     $serverId = intval($order['server_id'] ?? 0);
     $srcInbound = intval($order['inbound_id'] ?? 0);
-    setUser('one|' . $orderId, 'temp');
-    setUser('inboundMoveAskTarget');
-    $remark = htmlspecialchars((string)($order['remark'] ?? '-'), ENT_QUOTES, 'UTF-8');
-    sendMessage("🎯 انتقال تکی کانفیگ\n\n🧾 سفارش: <code>$orderId</code>\n🔮 ریمارک: <b>$remark</b>\n📥 inbound فعلی: <code>$srcInbound</code>\n\nآیدی inbound مقصد را بفرست.\n\n" . farid_inboundMoveTargetListText($serverId, $srcInbound), $cancelKey, 'HTML');
+    setUser(); setUser('', 'temp');
+    editText($message_id, farid_inboundMoveTargetSelectText('one', $serverId, $srcInbound, $orderId), farid_inboundMoveTargetSelectKeys('one', $serverId, $srcInbound, $orderId), 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveTargetBulk_(\d+)_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $serverId = intval($m[1]);
+    $srcInbound = intval($m[2]);
+    $targetInbound = intval($m[3]);
+    $ids = farid_inboundMoveOrderIdsBySource($serverId, $srcInbound, 2000);
+    if($serverId <= 0 || $srcInbound <= 0 || $targetInbound <= 0 || empty($ids)){ alert('موردی برای انتقال پیدا نشد.', true); exit(); }
+    if($targetInbound == $srcInbound){ alert('inbound مقصد با مبدا یکی است.', true); exit(); }
+    $targetInfo = farid_switchFindXuiInboundInfo($serverId, $targetInbound, '');
+    if(!$targetInfo){ alert('inbound مقصد داخل پنل پیدا نشد.', true); exit(); }
+    $title = 'انتقال همه از inbound ' . $srcInbound . ' به ' . $targetInbound;
+    $job = farid_inboundMoveCreateJob($ids, $serverId, $srcInbound, $targetInbound, $from_id, $title);
+    $job['status_chat_id'] = intval($chat_id ?? $from_id);
+    $job['status_message_id'] = intval($message_id ?? 0);
+    farid_inboundMoveSetJob($job);
+    editText($message_id, farid_inboundMoveProgressText($job), farid_inboundMoveProgressKeys($job), 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveTargetOne_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $orderId = intval($m[1]);
+    $targetInbound = intval($m[2]);
+    $order = farid_inboundMoveFetchOrder($orderId);
+    if(!$order){ alert('کانفیگ پیدا نشد.', true); exit(); }
+    $serverId = intval($order['server_id'] ?? 0);
+    $srcInbound = intval($order['inbound_id'] ?? 0);
+    if($targetInbound <= 0 || $serverId <= 0 || $srcInbound <= 0){ alert('اطلاعات اینباند ناقص است.', true); exit(); }
+    if($targetInbound == $srcInbound){ alert('inbound مقصد با مبدا یکی است.', true); exit(); }
+    $targetInfo = farid_switchFindXuiInboundInfo($serverId, $targetInbound, '');
+    if(!$targetInfo){ alert('inbound مقصد داخل پنل پیدا نشد.', true); exit(); }
+    $job = farid_inboundMoveCreateJob([$orderId], $serverId, $srcInbound, $targetInbound, $from_id, 'انتقال تکی #' . $orderId);
+    $job['status_chat_id'] = intval($chat_id ?? $from_id);
+    $job['status_message_id'] = intval($message_id ?? 0);
+    farid_inboundMoveSetJob($job);
+    editText($message_id, farid_inboundMoveProgressText($job), farid_inboundMoveProgressKeys($job), 'HTML');
     exit();
 }
 
@@ -13738,6 +13772,66 @@ function farid_inboundMoveTargetListText($serverId, $sourceInbound = 0){
     return implode("\n", $lines);
 }
 
+function farid_inboundMoveTargetItems($serverId, $sourceInbound = 0){
+    $json = function_exists('getJson') ? getJson(intval($serverId)) : null;
+    $items = [];
+    if(!$json || !isset($json->obj) || !is_array($json->obj)) return $items;
+    foreach($json->obj as $row){
+        $id = intval($row->id ?? 0);
+        if($id <= 0 || $id == intval($sourceInbound)) continue;
+        $remark = trim((string)($row->remark ?? ''));
+        $proto = trim((string)($row->protocol ?? ''));
+        $port = intval($row->port ?? 0);
+        $items[] = ['id'=>$id, 'remark'=>$remark, 'protocol'=>$proto, 'port'=>$port];
+    }
+    return $items;
+}
+
+function farid_inboundMoveTargetSelectText($mode, $serverId, $sourceInbound, $orderId = 0){
+    $serverTitle = function_exists('v2raystore_switchGetServerTitle') ? v2raystore_switchGetServerTitle($serverId) : (string)$serverId;
+    $count = ($mode === 'bulk') ? farid_inboundMoveSourceCount($serverId, $sourceInbound) : 1;
+    $extra = '';
+    if($mode === 'one'){
+        $order = farid_inboundMoveFetchOrder($orderId);
+        $remark = htmlspecialchars((string)($order['remark'] ?? '-'), ENT_QUOTES, 'UTF-8');
+        $extra = "\n🧾 سفارش: <code>" . intval($orderId) . "</code>\n🔮 ریمارک: <b>$remark</b>";
+    }
+    return "🎯 <b>انتخاب inbound مقصد</b>\n\n" .
+           "🖥 سرور: <b>" . htmlspecialchars((string)$serverTitle, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📥 inbound مبدا: <code>" . intval($sourceInbound) . "</code>\n" .
+           "📦 تعداد انتخاب‌شده: <b>" . intval($count) . "</b>" . $extra . "\n\n" .
+           "از دکمه‌های زیر inbound مقصد را انتخاب کن. ربات اول مشخصات کانفیگ را از مبدا می‌خواند، سپس کانفیگ قدیمی را حذف می‌کند و بعد روی مقصد می‌سازد تا خطای نام تکراری پیش نیاید.";
+}
+
+function farid_inboundMoveTargetSelectKeys($mode, $serverId, $sourceInbound, $orderId = 0){
+    global $buttonValues;
+    $serverId = intval($serverId); $sourceInbound = intval($sourceInbound); $orderId = intval($orderId);
+    $rows = [];
+    $items = farid_inboundMoveTargetItems($serverId, $sourceInbound);
+    foreach($items as $it){
+        $id = intval($it['id']);
+        $remark = trim((string)$it['remark']);
+        $proto = trim((string)$it['protocol']);
+        $port = intval($it['port']);
+        $label = '📤 ' . $id;
+        if($proto !== '') $label .= ' | ' . $proto;
+        if($port > 0) $label .= ':' . $port;
+        if($remark !== ''){
+            if(function_exists('mb_substr')) $r = mb_substr($remark, 0, 18, 'UTF-8'); else $r = substr($remark, 0, 18);
+            if($r !== $remark) $r .= '…';
+            $label .= ' | ' . $r;
+        }
+        $cb = ($mode === 'one') ? ('inboundMoveTargetOne_' . $orderId . '_' . $id) : ('inboundMoveTargetBulk_' . $serverId . '_' . $sourceInbound . '_' . $id);
+        $rows[] = [['text'=>$label, 'callback_data'=>$cb]];
+    }
+    if(empty($rows)){
+        $rows[] = [['text'=>'❌ inbound مقصدی غیر از مبدا پیدا نشد', 'callback_data'=>'v2raystore']];
+    }
+    $rows[] = [['text'=>'⬅️ برگشت به لیست همین مبدا', 'callback_data'=>'inboundMoveSrc_' . $serverId . '_' . $sourceInbound . '_0']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
 function farid_inboundMoveSourceText($serverId, $sourceInbound, $page = 0){
     $count = farid_inboundMoveSourceCount($serverId, $sourceInbound);
     $serverTitle = function_exists('v2raystore_switchGetServerTitle') ? v2raystore_switchGetServerTitle($serverId) : (string)$serverId;
@@ -13898,20 +13992,43 @@ function farid_inboundMoveOneOrder($orderId, $targetInboundId, $actorId = 0){
     ];
     if($flow !== '') $client['flow'] = $flow;
 
+    // قبل از حذف کانفیگ قدیمی، لینک مقصد را هم تست می‌کنیم تا اگر تنظیمات مقصد مشکل داشت، سرویس قبلی دست نخورده بماند.
+    $plan = function_exists('v2raystore_switchGetPlan') ? v2raystore_switchGetPlan(intval($order['fileid'] ?? 0)) : null;
+    $custom = function_exists('farid_switchPlanCustomFields') ? farid_switchPlanCustomFields($plan) : ['customPath'=>null,'customPort'=>0,'customSni'=>null,'customDomain'=>null];
+    $preLinks = function_exists('farid_switchBuildInboundLinks') ? farid_switchBuildInboundLinks($serverId, $newUuid, $protocol, $newRemark, $targetInbound, $targetInboundId, $custom) : getConnectionLink($serverId, $newUuid, $protocol, $newRemark, intval($targetInbound['port'] ?? 0), (string)($targetInbound['netType'] ?? ''), $targetInboundId, false, $custom['customPath'] ?? null, $custom['customPort'] ?? 0, $custom['customSni'] ?? null, $custom['customDomain'] ?? null);
+    $preLinks = function_exists('v2raystore_normalizeConfigLinksArray') ? v2raystore_normalizeConfigLinksArray($preLinks) : (is_array($preLinks) ? $preLinks : [$preLinks]);
+    $preLinks = array_values(array_filter(array_map('strval', $preLinks)));
+    if(empty($preLinks)) return ['ok'=>false, 'message'=>'قبل از حذف کانفیگ قبلی، لینک مقصد ساخته نشد؛ انتقال لغو شد.'];
+
+    // سنایی در نسخه‌های جدید email را روی کل پنل یکتا می‌گیرد؛ برای جلوگیری از خطای
+    // email already in use، بعد از خواندن کامل حجم/زمان از مبدا، اول کلاینت قدیمی حذف می‌شود.
+    $deleteOldBefore = function_exists('deleteClient') ? deleteClient($serverId, $sourceInboundId, $oldUuid, 1) : null;
+    if($deleteOldBefore === null){
+        return ['ok'=>false, 'message'=>'تابع حذف کلاینت در دسترس نیست؛ انتقال انجام نشد.'];
+    }
+    usleep(250000);
+
     $response = addInboundAccount($serverId, '', $targetInboundId, 1, $newRemark, 0, $limitIp, $client, intval($order['fileid'] ?? 0));
     $msg = is_object($response) ? (string)($response->msg ?? '') : (string)$response;
-    if((!is_object($response) || empty($response->success)) && stripos($msg, 'duplicate') !== false){
-        $newRemark = $oldRemark . '-' . (function_exists('RandomString') ? RandomString(4, 'small') : rand(1000,9999));
-        $newUuid = function_exists('generateRandomString') ? generateRandomString(42, $protocol) : md5(uniqid('', true));
-        $client[$idLabel] = $newUuid;
-        $client['email'] = $newRemark;
-        $client['subId'] = $subId = (function_exists('RandomString') ? RandomString(16) : substr(md5(uniqid('', true)), 0, 16));
+    if((!is_object($response) || empty($response->success)) && (stripos($msg, 'email already in use') !== false || stripos($msg, 'duplicate') !== false)){
+        // یک بار دیگر حذف بر اساس UUID قبلی را تکرار می‌کنیم؛ بعضی پنل‌ها با کمی تاخیر cache را آزاد می‌کنند.
+        if(function_exists('deleteClient')) deleteClient($serverId, $sourceInboundId, $oldUuid, 1);
+        usleep(600000);
         $response = addInboundAccount($serverId, '', $targetInboundId, 1, $newRemark, 0, $limitIp, $client, intval($order['fileid'] ?? 0));
         $msg = is_object($response) ? (string)($response->msg ?? '') : (string)$response;
     }
-    if($response === null) return ['ok'=>false, 'message'=>'اتصال به پنل برقرار نشد.'];
-    if($response === 'inbound not Found') return ['ok'=>false, 'message'=>'inbound مقصد پیدا نشد.'];
-    if(!is_object($response) || empty($response->success)) return ['ok'=>false, 'message'=>'ساخت کلاینت مقصد ناموفق بود: ' . ($msg !== '' ? $msg : 'پاسخ نامعتبر پنل')];
+    if($response === null || $response === 'inbound not Found' || !is_object($response) || empty($response->success)){
+        // اگر ساخت مقصد شکست خورد، برای خراب نشدن سرویس، تلاش می‌کنیم کانفیگ قبلی را همان inbound مبدا برگردانیم.
+        if(function_exists('addInboundAccount')){
+            $rollbackClient = $client;
+            $rollbackClient[$idLabel] = $oldUuid;
+            $rollbackClient['email'] = $oldRemark;
+            if(isset($rollbackClient['subId'])) $rollbackClient['subId'] = trim((string)($order['token'] ?? $subId));
+            @addInboundAccount($serverId, '', $sourceInboundId, 1, $oldRemark, 0, $limitIp, $rollbackClient, intval($order['fileid'] ?? 0));
+        }
+        if($response === 'inbound not Found') return ['ok'=>false, 'message'=>'inbound مقصد پیدا نشد. کانفیگ قبلی تلاش شد برگردد.'];
+        return ['ok'=>false, 'message'=>'ساخت کلاینت مقصد ناموفق بود: ' . ($msg !== '' ? $msg : 'پاسخ نامعتبر پنل') . ' | کانفیگ قبلی تلاش شد برگردد.'];
+    }
 
     if(($serverConfig['type'] ?? '') === 'sanaei_new' && function_exists('farid_switchClientExistsInInbound') && !farid_switchClientExistsInInbound($serverId, $targetInboundId, $newUuid, $newRemark)){
         if(function_exists('farid_switchSanaeiNewAttachClientToInbound')) farid_switchSanaeiNewAttachClientToInbound($serverId, $targetInboundId, $client);
@@ -13920,16 +14037,13 @@ function farid_inboundMoveOneOrder($orderId, $targetInboundId, $actorId = 0){
         }
     }
 
-    $plan = function_exists('v2raystore_switchGetPlan') ? v2raystore_switchGetPlan(intval($order['fileid'] ?? 0)) : null;
-    $custom = function_exists('farid_switchPlanCustomFields') ? farid_switchPlanCustomFields($plan) : ['customPath'=>null,'customPort'=>0,'customSni'=>null,'customDomain'=>null];
     $targetInboundInfo = farid_switchFindXuiInboundInfo($serverId, $targetInboundId, $newUuid) ?: $targetInbound;
     $links = function_exists('farid_switchBuildInboundLinks') ? farid_switchBuildInboundLinks($serverId, $newUuid, $protocol, $newRemark, $targetInboundInfo, $targetInboundId, $custom) : getConnectionLink($serverId, $newUuid, $protocol, $newRemark, intval($targetInboundInfo['port'] ?? 0), (string)($targetInboundInfo['netType'] ?? ''), $targetInboundId, false, $custom['customPath'] ?? null, $custom['customPort'] ?? 0, $custom['customSni'] ?? null, $custom['customDomain'] ?? null);
     $links = function_exists('v2raystore_normalizeConfigLinksArray') ? v2raystore_normalizeConfigLinksArray($links) : (is_array($links) ? $links : [$links]);
     $links = array_values(array_filter(array_map('strval', $links)));
-    if(empty($links)) return ['ok'=>false, 'message'=>'لینک مقصد ساخته نشد.'];
+    if(empty($links)) $links = $preLinks;
 
-    // فقط بعد از ساخت لینک مقصد، کلاینت قدیمی حذف می‌شود.
-    $deleteOld = function_exists('deleteClient') ? deleteClient($serverId, $sourceInboundId, $oldUuid, 1) : null;
+    $deleteOld = $deleteOldBefore;
 
     $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     $stmt = @$connection->prepare("UPDATE `orders_list` SET `inbound_id`=?, `uuid`=?, `token`=?, `protocol`=?, `link`=?, `remark`=?, `notif`=0 WHERE `id`=?");
@@ -14002,7 +14116,7 @@ function getAdminKeysPlus(){
     // فیلد style از Bot API جدید پشتیبانی می‌شود؛ کلاینت‌های قدیمی‌تر آن را نادیده می‌گیرند.
     $keys = [];
 
-    $keys[] = [['text'=>'📊 گزارش‌ها و جستجو', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🟧 گزارش‌ها و جستجو', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['bot_reports'], 'callback_data'=>'botReports', 'style'=>'primary'],
         ['text'=>$buttonValues['user_reports'], 'callback_data'=>'userReports', 'style'=>'primary']
@@ -14012,20 +14126,16 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['message_to_user'], 'callback_data'=>'messageToSpeceficUser', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🧾 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🟧 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu', 'style'=>'success'],
         ['text'=>$buttonValues['create_account'], 'callback_data'=>'createMultipleAccounts', 'style'=>'success']
     ];
     $keys[] = [
-        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu', 'style'=>'danger'],
-        ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
+        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu', 'style'=>'danger']
     ];
     $keys[] = [
         ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu', 'style'=>'success']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['gift_volume_day'], 'callback_data'=>'giftVolumeAndDay', 'style'=>'success']
     ];
     $keys[] = [
         ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement', 'style'=>'primary'],
@@ -14035,7 +14145,7 @@ function getAdminKeysPlus(){
         ['text'=>'📊 تنظیمات آمار کانال', 'callback_data'=>'reportChannelSettingsMenu', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'🖥 سرورها و فروش', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🟧 سرورها و فروش', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['server_settings'], 'callback_data'=>'serversSetting', 'style'=>'primary'],
         ['text'=>$buttonValues['categories_settings'], 'callback_data'=>'categoriesSetting', 'style'=>'primary']
@@ -14052,7 +14162,7 @@ function getAdminKeysPlus(){
         ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'👥 کاربران و دسترسی‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🟧 کاربران و دسترسی‌ها', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>'🔐 قفل و دسترسی اعضای جدید', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary'],
         ['text'=>'🚪 معافیت جوین اجباری', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
@@ -14077,7 +14187,7 @@ function getAdminKeysPlus(){
         ['text'=>'درخواست‌های رد شده', 'callback_data'=>'rejectedAgentList', 'style'=>'primary']
     ];
 
-    $keys[] = [['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'v2raystore', 'style'=>'primary']];
+    $keys[] = [['text'=>'🟧 پیام‌ها و پشتیبانی', 'callback_data'=>'v2raystore', 'style'=>'primary']];
     $keys[] = [
         ['text'=>$buttonValues['tickets_list'], 'callback_data'=>'ticketsList', 'style'=>'primary'],
         ['text'=>$buttonValues['message_to_all'], 'callback_data'=>'message2All', 'style'=>'primary']
@@ -14085,6 +14195,9 @@ function getAdminKeysPlus(){
     $keys[] = [
         ['text'=>$buttonValues['forward_to_all'], 'callback_data'=>'forwardToAll', 'style'=>'primary'],
         ['text'=>'📊 وضعیت صف همگانی', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
     ];
     $keys[] = [
         ['text'=>'📌 پیام‌های پین‌شده', 'callback_data'=>'broadcastPinsMenu', 'style'=>'primary']
