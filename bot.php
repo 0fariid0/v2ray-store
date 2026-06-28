@@ -3855,6 +3855,180 @@ if($userInfo['step'] == "updateConfigsAfterMessage" && ($from_id == $admin || $u
     exit();
 }
 
+
+/* ======================================================================
+   🔁 پنل تغییر اینباند کانفیگ‌ها (Admin Only)
+   - برای انتقال کانفیگ‌های ثبت‌شده از یک inbound قدیمی به inbound جدید همان سرور
+   - مرحله‌ای و سبک: هر اجرا چند مورد را منتقل می‌کند و همان پیام وضعیت را edit می‌کند.
+   ====================================================================== */
+
+if($data == "inboundMoveMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+    editText($message_id, farid_inboundMoveMenuText(), farid_inboundMoveMenuKeys(0), 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveSourcesPage_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $page = max(0, intval($m[1]));
+    editText($message_id, farid_inboundMoveMenuText(), farid_inboundMoveMenuKeys($page), 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveSrc_(\d+)_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $serverId = intval($m[1]);
+    $srcInbound = intval($m[2]);
+    $page = max(0, intval($m[3]));
+    editText($message_id, farid_inboundMoveSourceText($serverId, $srcInbound, $page), farid_inboundMoveSourceKeys($serverId, $srcInbound, $page), 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveSrcOrders_(\d+)_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $serverId = intval($m[1]);
+    $srcInbound = intval($m[2]);
+    $page = max(0, intval($m[3]));
+    editText($message_id, farid_inboundMoveSourceText($serverId, $srcInbound, $page), farid_inboundMoveSourceKeys($serverId, $srcInbound, $page), 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveBulk_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $serverId = intval($m[1]);
+    $srcInbound = intval($m[2]);
+    $count = farid_inboundMoveSourceCount($serverId, $srcInbound);
+    if($count <= 0){ alert('برای این اینباند کانفیگ فعالی در ربات پیدا نشد.', true); exit(); }
+    setUser('bulk|' . $serverId . '|' . $srcInbound, 'temp');
+    setUser('inboundMoveAskTarget');
+    sendMessage("🎯 انتقال گروهی از اینباند <code>$srcInbound</code>\n\nتعداد کانفیگ‌های ثبت‌شده: <b>$count</b>\n\nآیدی inbound مقصد را بفرست.\n\n" . farid_inboundMoveTargetListText($serverId, $srcInbound), $cancelKey, 'HTML');
+    exit();
+}
+
+if(preg_match('/^inboundMoveOne_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $orderId = intval($m[1]);
+    $order = farid_inboundMoveFetchOrder($orderId);
+    if(!$order){ alert('کانفیگ پیدا نشد.', true); exit(); }
+    $serverId = intval($order['server_id'] ?? 0);
+    $srcInbound = intval($order['inbound_id'] ?? 0);
+    setUser('one|' . $orderId, 'temp');
+    setUser('inboundMoveAskTarget');
+    $remark = htmlspecialchars((string)($order['remark'] ?? '-'), ENT_QUOTES, 'UTF-8');
+    sendMessage("🎯 انتقال تکی کانفیگ\n\n🧾 سفارش: <code>$orderId</code>\n🔮 ریمارک: <b>$remark</b>\n📥 inbound فعلی: <code>$srcInbound</code>\n\nآیدی inbound مقصد را بفرست.\n\n" . farid_inboundMoveTargetListText($serverId, $srcInbound), $cancelKey, 'HTML');
+    exit();
+}
+
+if(($userInfo['step'] ?? '') == 'inboundMoveAskTarget' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $targetInbound = intval(trim((string)$text));
+    if($targetInbound <= 0){
+        sendMessage('❌ فقط آیدی عددی inbound مقصد را بفرست.', $cancelKey, 'HTML');
+        exit();
+    }
+    $temp = (string)($userInfo['temp'] ?? '');
+    $parts = explode('|', $temp);
+    $ids = [];
+    $title = '';
+    $serverId = 0;
+    $srcInbound = 0;
+
+    if(($parts[0] ?? '') === 'one'){
+        $orderId = intval($parts[1] ?? 0);
+        $order = farid_inboundMoveFetchOrder($orderId);
+        if(!$order){
+            setUser(); setUser('', 'temp');
+            sendMessage('❌ کانفیگ پیدا نشد.', $removeKeyboard, 'HTML');
+            exit();
+        }
+        $ids = [$orderId];
+        $serverId = intval($order['server_id'] ?? 0);
+        $srcInbound = intval($order['inbound_id'] ?? 0);
+        $title = 'انتقال تکی #' . $orderId;
+    }elseif(($parts[0] ?? '') === 'bulk'){
+        $serverId = intval($parts[1] ?? 0);
+        $srcInbound = intval($parts[2] ?? 0);
+        $ids = farid_inboundMoveOrderIdsBySource($serverId, $srcInbound, 2000);
+        $title = 'انتقال همه از inbound ' . $srcInbound . ' به ' . $targetInbound;
+    }else{
+        setUser(); setUser('', 'temp');
+        sendMessage('❌ اطلاعات مرحله انتقال از بین رفته؛ دوباره از منو شروع کن.', $removeKeyboard, 'HTML');
+        exit();
+    }
+
+    if($serverId <= 0 || $srcInbound <= 0 || empty($ids)){
+        setUser(); setUser('', 'temp');
+        sendMessage('❌ موردی برای انتقال پیدا نشد.', $removeKeyboard, 'HTML');
+        exit();
+    }
+    if($targetInbound == $srcInbound){
+        sendMessage('❌ inbound مقصد با مبدا یکی است. آیدی دیگری بفرست.', $cancelKey, 'HTML');
+        exit();
+    }
+    $targetInfo = farid_switchFindXuiInboundInfo($serverId, $targetInbound, '');
+    if(!$targetInfo){
+        sendMessage('❌ inbound مقصد داخل پنل پیدا نشد. آیدی را درست وارد کن.', $cancelKey, 'HTML');
+        exit();
+    }
+
+    $job = farid_inboundMoveCreateJob($ids, $serverId, $srcInbound, $targetInbound, $from_id, $title);
+    setUser(); setUser('', 'temp');
+    $sent = sendMessage(farid_inboundMoveProgressText($job), farid_inboundMoveProgressKeys($job), 'HTML');
+    if(is_object($sent) && !empty($sent->ok) && isset($sent->result->message_id)){
+        $job['status_chat_id'] = intval($sent->result->chat->id ?? $from_id);
+        $job['status_message_id'] = intval($sent->result->message_id);
+        farid_inboundMoveSetJob($job);
+    }
+    exit();
+}
+
+if($data == 'inboundMoveStatus' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $job = farid_inboundMoveGetJob();
+    editText($message_id, farid_inboundMoveProgressText($job), farid_inboundMoveProgressKeys($job), 'HTML');
+    exit();
+}
+
+if($data == 'inboundMoveStop' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $job = farid_inboundMoveGetJob();
+    if(intval($job['state'] ?? 0) != 1){ alert('عملیات فعالی وجود ندارد.', true); exit(); }
+    $job['state'] = 0;
+    $job['auto_running'] = 0;
+    $job['stopped_at'] = time();
+    $job['stopped_by'] = $from_id;
+    farid_inboundMoveSetJob($job);
+    farid_inboundMoveEditProgress($job, true);
+    alert('✅ انتقال متوقف شد.');
+    exit();
+}
+
+if($data == 'inboundMoveRun' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $job = farid_inboundMoveGetJob();
+    if(intval($job['state'] ?? 0) != 1){ alert('عملیات فعالی برای اجرا وجود ندارد.', true); exit(); }
+    if(intval($job['auto_running'] ?? 0) == 1){ alert('عملیات در حال اجراست.'); exit(); }
+
+    $job['status_chat_id'] = intval($chat_id ?? $from_id);
+    $job['status_message_id'] = intval($message_id ?? 0);
+    $job['auto_running'] = 1;
+    $job['auto_last_ts'] = time();
+    farid_inboundMoveSetJob($job);
+    alert('✅ انتقال شروع شد.');
+    farid_inboundMoveEditProgress($job);
+    farid_finishWebhookResponse();
+
+    $started = microtime(true);
+    $maxRuntime = 22;
+    while(true){
+        $job = farid_inboundMoveGetJob();
+        if(intval($job['state'] ?? 0) != 1) break;
+        farid_inboundMoveRunBatch($job, intval($job['batch'] ?? 3));
+        $job = farid_inboundMoveGetJob();
+        farid_inboundMoveEditProgress($job);
+        if(intval($job['state'] ?? 0) != 1) break;
+        if((microtime(true) - $started) >= $maxRuntime) break;
+        usleep(350000);
+    }
+    $job = farid_inboundMoveGetJob();
+    $job['auto_running'] = 0;
+    $job['auto_last_ts'] = time();
+    farid_inboundMoveSetJob($job);
+    farid_inboundMoveEditProgress($job, true);
+    exit();
+}
+
 // 🗑 پنل مستقل پاکسازی کانفیگ‌های تمام‌شده
 // این پنل از بخش آپدیت جداست و همه‌ی وضعیت‌ها روی همان پیام قبلی edit می‌شوند.
 if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -13344,6 +13518,483 @@ function farid_updateMainValueInValuesFile($key, $value){
     return 'تابع ذخیره دیتابیسی متن در دسترس نیست.';
 }
 
+
+/* ======================================================================
+   🔁 Helper functions for admin inbound migration
+   ====================================================================== */
+
+function farid_inboundMoveDefaultJob(){
+    return [
+        'state'=>0,
+        'ids'=>[],
+        'server_id'=>0,
+        'source_inbound'=>0,
+        'target_inbound'=>0,
+        'offset'=>0,
+        'batch'=>3,
+        'created_at'=>0,
+        'requested_by'=>0,
+        'filter_title'=>'',
+        'stats'=>['processed'=>0,'moved'=>0,'sent'=>0,'failed'=>0,'skipped'=>0],
+        'errors'=>[],
+        'status_chat_id'=>0,
+        'status_message_id'=>0,
+        'auto_running'=>0,
+        'auto_last_ts'=>0,
+        'stopped_at'=>0,
+        'stopped_by'=>0,
+    ];
+}
+
+function farid_inboundMoveGetJob(){
+    $job = farid_inboundMoveDefaultJob();
+    $raw = function_exists('farid_getSettingValue') ? farid_getSettingValue('INBOUND_MOVE_JOB') : '';
+    if($raw){
+        $data = json_decode((string)$raw, true);
+        if(is_array($data)) $job = array_merge($job, $data);
+    }
+    $job['state'] = intval($job['state'] ?? 0);
+    $job['server_id'] = intval($job['server_id'] ?? 0);
+    $job['source_inbound'] = intval($job['source_inbound'] ?? 0);
+    $job['target_inbound'] = intval($job['target_inbound'] ?? 0);
+    $job['offset'] = max(0, intval($job['offset'] ?? 0));
+    $job['batch'] = max(1, min(8, intval($job['batch'] ?? 3)));
+    $job['created_at'] = intval($job['created_at'] ?? 0);
+    $job['requested_by'] = intval($job['requested_by'] ?? 0);
+    $job['status_chat_id'] = intval($job['status_chat_id'] ?? 0);
+    $job['status_message_id'] = intval($job['status_message_id'] ?? 0);
+    $job['auto_running'] = intval($job['auto_running'] ?? 0);
+    if(!isset($job['ids']) || !is_array($job['ids'])) $job['ids'] = [];
+    $job['ids'] = array_values(array_unique(array_map('intval', $job['ids'])));
+    if(!isset($job['stats']) || !is_array($job['stats'])) $job['stats'] = ['processed'=>0,'moved'=>0,'sent'=>0,'failed'=>0,'skipped'=>0];
+    foreach(['processed','moved','sent','failed','skipped'] as $k) $job['stats'][$k] = intval($job['stats'][$k] ?? 0);
+    if(!isset($job['errors']) || !is_array($job['errors'])) $job['errors'] = [];
+    return $job;
+}
+
+function farid_inboundMoveSetJob($job){
+    if(!function_exists('farid_setSettingValue')) return false;
+    return farid_setSettingValue('INBOUND_MOVE_JOB', json_encode($job, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+function farid_inboundMoveCreateJob($ids, $serverId, $sourceInbound, $targetInbound, $actorId, $title = ''){
+    $job = farid_inboundMoveDefaultJob();
+    $job['state'] = 1;
+    $job['ids'] = array_values(array_unique(array_map('intval', is_array($ids) ? $ids : [])));
+    $job['server_id'] = intval($serverId);
+    $job['source_inbound'] = intval($sourceInbound);
+    $job['target_inbound'] = intval($targetInbound);
+    $job['batch'] = count($job['ids']) <= 1 ? 1 : 3;
+    $job['created_at'] = time();
+    $job['requested_by'] = intval($actorId);
+    $job['filter_title'] = trim((string)$title);
+    farid_inboundMoveSetJob($job);
+    return $job;
+}
+
+function farid_inboundMoveFetchOrder($orderId){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0) return null;
+    $stmt = @$connection->prepare("SELECT * FROM `orders_list` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $orderId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function farid_inboundMoveOrderIdsBySource($serverId, $sourceInbound, $limit = 2000){
+    global $connection;
+    $serverId = intval($serverId); $sourceInbound = intval($sourceInbound); $limit = max(1, min(5000, intval($limit)));
+    if($serverId <= 0 || $sourceInbound <= 0) return [];
+    $stmt = @$connection->prepare("SELECT `id` FROM `orders_list` WHERE `status`=1 AND `server_id`=? AND `inbound_id`=? ORDER BY `id` ASC LIMIT ?");
+    if(!$stmt) return [];
+    $stmt->bind_param('iii', $serverId, $sourceInbound, $limit);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $ids = [];
+    while($row = $res->fetch_assoc()) $ids[] = intval($row['id']);
+    $stmt->close();
+    return $ids;
+}
+
+function farid_inboundMoveSourceCount($serverId, $sourceInbound){
+    global $connection;
+    $serverId = intval($serverId); $sourceInbound = intval($sourceInbound);
+    if($serverId <= 0 || $sourceInbound <= 0) return 0;
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS `cnt` FROM `orders_list` WHERE `status`=1 AND `server_id`=? AND `inbound_id`=?");
+    if(!$stmt) return 0;
+    $stmt->bind_param('ii', $serverId, $sourceInbound);
+    $stmt->execute();
+    $cnt = intval($stmt->get_result()->fetch_assoc()['cnt'] ?? 0);
+    $stmt->close();
+    return $cnt;
+}
+
+function farid_inboundMoveSources($page = 0, $perPage = 10){
+    global $connection;
+    $page = max(0, intval($page)); $perPage = max(1, min(20, intval($perPage))); $offset = $page * $perPage;
+    $sql = "SELECT o.`server_id`, o.`inbound_id`, COUNT(*) AS `cnt`, COALESCE(si.`title`, CONCAT('Server ', o.`server_id`)) AS `server_title`
+            FROM `orders_list` o
+            LEFT JOIN `server_info` si ON si.`id` = o.`server_id`
+            WHERE o.`status`=1 AND o.`inbound_id` > 0
+            GROUP BY o.`server_id`, o.`inbound_id`, si.`title`
+            ORDER BY o.`server_id` ASC, o.`inbound_id` ASC
+            LIMIT ? OFFSET ?";
+    $stmt = @$connection->prepare($sql);
+    if(!$stmt) return [];
+    $stmt->bind_param('ii', $perPage, $offset);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = [];
+    while($row = $res->fetch_assoc()) $rows[] = $row;
+    $stmt->close();
+    return $rows;
+}
+
+function farid_inboundMoveSourcesTotal(){
+    global $connection;
+    $res = @$connection->query("SELECT COUNT(*) AS `cnt` FROM (SELECT `server_id`,`inbound_id` FROM `orders_list` WHERE `status`=1 AND `inbound_id`>0 GROUP BY `server_id`,`inbound_id`) x");
+    if(!$res) return 0;
+    return intval($res->fetch_assoc()['cnt'] ?? 0);
+}
+
+function farid_inboundMoveOrdersPage($serverId, $sourceInbound, $page = 0, $perPage = 8){
+    global $connection;
+    $serverId = intval($serverId); $sourceInbound = intval($sourceInbound); $page = max(0, intval($page)); $perPage = max(1, min(20, intval($perPage))); $offset = $page * $perPage;
+    if($serverId <= 0 || $sourceInbound <= 0) return [];
+    $stmt = @$connection->prepare("SELECT `id`,`userid`,`remark`,`uuid`,`expire_date` FROM `orders_list` WHERE `status`=1 AND `server_id`=? AND `inbound_id`=? ORDER BY `id` ASC LIMIT ? OFFSET ?");
+    if(!$stmt) return [];
+    $stmt->bind_param('iiii', $serverId, $sourceInbound, $perPage, $offset);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $rows = [];
+    while($row = $res->fetch_assoc()) $rows[] = $row;
+    $stmt->close();
+    return $rows;
+}
+
+function farid_inboundMoveMenuText(){
+    $job = farid_inboundMoveGetJob();
+    $active = intval($job['state'] ?? 0) == 1;
+    $txt = "🔁 <b>تغییر اینباند کانفیگ‌ها</b>\n\n" .
+           "از این بخش کانفیگ‌های ثبت‌شده روی inbound قدیمی را به inbound جدید همان سرور منتقل می‌کنی.\n" .
+           "برای هر کانفیگ، ربات کانفیگ جدید می‌سازد، لینک جدید را ذخیره می‌کند، برای کاربر می‌فرستد و بعد کانفیگ قبلی را حذف می‌کند.\n\n";
+    if($active){
+        $txt .= "⚙️ عملیات فعال داری:\n" . farid_inboundMoveProgressText($job, true) . "\n\n";
+    }
+    $txt .= "📌 اول inbound مبدا را انتخاب کن:";
+    return $txt;
+}
+
+function farid_inboundMoveMenuKeys($page = 0){
+    global $buttonValues;
+    $page = max(0, intval($page));
+    $rows = [];
+    $job = farid_inboundMoveGetJob();
+    if(intval($job['state'] ?? 0) == 1){
+        $rows[] = [['text'=>'🚀 ادامه عملیات فعال', 'callback_data'=>'inboundMoveRun'], ['text'=>'📊 وضعیت', 'callback_data'=>'inboundMoveStatus']];
+        $rows[] = [['text'=>'⛔ توقف عملیات فعال', 'callback_data'=>'inboundMoveStop']];
+    }
+    foreach(farid_inboundMoveSources($page, 10) as $src){
+        $serverTitle = trim((string)($src['server_title'] ?? ('Server ' . intval($src['server_id']))));
+        if(function_exists('mb_substr')) $serverTitle = mb_substr($serverTitle, 0, 24, 'UTF-8');
+        else $serverTitle = substr($serverTitle, 0, 24);
+        $rows[] = [[
+            'text' => $serverTitle . ' | inbound ' . intval($src['inbound_id']) . ' | ' . intval($src['cnt']) . ' عدد',
+            'callback_data' => 'inboundMoveSrc_' . intval($src['server_id']) . '_' . intval($src['inbound_id']) . '_0'
+        ]];
+    }
+    $total = farid_inboundMoveSourcesTotal();
+    $maxPage = max(0, (int)ceil($total / 10) - 1);
+    if($maxPage > 0){
+        $nav = [];
+        if($page > 0) $nav[] = ['text'=>'⬅️ قبلی', 'callback_data'=>'inboundMoveSourcesPage_' . ($page - 1)];
+        $nav[] = ['text'=>($page + 1) . '/' . ($maxPage + 1), 'callback_data'=>'v2raystore'];
+        if($page < $maxPage) $nav[] = ['text'=>'بعدی ➡️', 'callback_data'=>'inboundMoveSourcesPage_' . ($page + 1)];
+        $rows[] = $nav;
+    }
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function farid_inboundMoveTargetListText($serverId, $sourceInbound = 0){
+    $json = function_exists('getJson') ? getJson(intval($serverId)) : null;
+    if(!$json || !isset($json->obj) || !is_array($json->obj)) return "لیست inboundهای مقصد از پنل خوانده نشد؛ فقط آیدی مقصد را دستی بفرست.";
+    $lines = ["📋 چند inbound موجود روی همین سرور:"];
+    $shown = 0;
+    foreach($json->obj as $row){
+        $id = intval($row->id ?? 0);
+        if($id <= 0 || $id == intval($sourceInbound)) continue;
+        $remark = trim((string)($row->remark ?? ''));
+        $proto = trim((string)($row->protocol ?? ''));
+        $lines[] = "• <code>$id</code> | " . htmlspecialchars($proto, ENT_QUOTES, 'UTF-8') . " | " . htmlspecialchars($remark, ENT_QUOTES, 'UTF-8');
+        $shown++;
+        if($shown >= 12) break;
+    }
+    if($shown <= 0) $lines[] = 'موردی غیر از inbound مبدا پیدا نشد.';
+    return implode("\n", $lines);
+}
+
+function farid_inboundMoveSourceText($serverId, $sourceInbound, $page = 0){
+    $count = farid_inboundMoveSourceCount($serverId, $sourceInbound);
+    $serverTitle = function_exists('v2raystore_switchGetServerTitle') ? v2raystore_switchGetServerTitle($serverId) : (string)$serverId;
+    $txt = "🔁 <b>انتقال از inbound مبدا</b>\n\n" .
+           "🖥 سرور: <b>" . htmlspecialchars($serverTitle, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "📥 inbound مبدا: <code>" . intval($sourceInbound) . "</code>\n" .
+           "📦 تعداد کانفیگ‌های ثبت‌شده در ربات: <b>$count</b>\n\n" .
+           "می‌توانی همه را یکجا صف کنی یا از لیست پایین تکی منتقل کنی.\n\n" .
+           farid_inboundMoveTargetListText($serverId, $sourceInbound);
+    return $txt;
+}
+
+function farid_inboundMoveSourceKeys($serverId, $sourceInbound, $page = 0){
+    global $buttonValues;
+    $serverId = intval($serverId); $sourceInbound = intval($sourceInbound); $page = max(0, intval($page));
+    $rows = [];
+    $count = farid_inboundMoveSourceCount($serverId, $sourceInbound);
+    if($count > 0){
+        $rows[] = [['text'=>'🚚 انتقال همه این inbound', 'callback_data'=>'inboundMoveBulk_' . $serverId . '_' . $sourceInbound]];
+    }
+    $orders = farid_inboundMoveOrdersPage($serverId, $sourceInbound, $page, 8);
+    foreach($orders as $o){
+        $remark = trim((string)($o['remark'] ?? 'بدون نام'));
+        if(function_exists('mb_substr')) $short = mb_substr($remark, 0, 26, 'UTF-8'); else $short = substr($remark, 0, 26);
+        if($short !== $remark) $short .= '…';
+        $rows[] = [['text'=>'تکی: ' . $short . ' | #' . intval($o['id']), 'callback_data'=>'inboundMoveOne_' . intval($o['id'])]];
+    }
+    $maxPage = max(0, (int)ceil($count / 8) - 1);
+    if($maxPage > 0){
+        $nav = [];
+        if($page > 0) $nav[] = ['text'=>'⬅️ قبلی', 'callback_data'=>'inboundMoveSrcOrders_' . $serverId . '_' . $sourceInbound . '_' . ($page - 1)];
+        $nav[] = ['text'=>($page + 1) . '/' . ($maxPage + 1), 'callback_data'=>'v2raystore'];
+        if($page < $maxPage) $nav[] = ['text'=>'بعدی ➡️', 'callback_data'=>'inboundMoveSrcOrders_' . $serverId . '_' . $sourceInbound . '_' . ($page + 1)];
+        $rows[] = $nav;
+    }
+    $rows[] = [['text'=>'⬅️ برگشت به مبداها', 'callback_data'=>'inboundMoveMenu']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function farid_inboundMoveProgressText($job, $compact = false){
+    $job = is_array($job) ? $job : farid_inboundMoveGetJob();
+    $ids = $job['ids'] ?? [];
+    $total = is_array($ids) ? count($ids) : 0;
+    $offset = intval($job['offset'] ?? 0);
+    $left = max(0, $total - $offset);
+    $stats = is_array($job['stats'] ?? null) ? $job['stats'] : [];
+    $state = intval($job['state'] ?? 0);
+    $status = $state == 1 ? (intval($job['auto_running'] ?? 0) == 1 ? 'در حال اجرا 🟢' : 'آماده اجرا/ادامه ⏸') : ($offset >= $total && $total > 0 ? 'تکمیل شد ✅' : 'متوقف ⛔');
+    $percent = $total > 0 ? round(($offset * 100) / $total) : 0;
+    $title = htmlspecialchars((string)($job['filter_title'] ?? 'تغییر اینباند'), ENT_QUOTES, 'UTF-8');
+    $txt = ($compact ? '' : "🔁 <b>عملیات تغییر اینباند</b>\n\n") .
+           "📌 وضعیت: <b>$status</b>\n" .
+           "🎯 عملیات: <b>$title</b>\n" .
+           "📥 مبدا: <code>" . intval($job['source_inbound'] ?? 0) . "</code> ➜ 📤 مقصد: <code>" . intval($job['target_inbound'] ?? 0) . "</code>\n" .
+           "📦 کل: $total | انجام‌شده: $offset | باقی: $left | $percent%\n" .
+           "✅ منتقل: " . intval($stats['moved'] ?? 0) . " | 📤 ارسال: " . intval($stats['sent'] ?? 0) . " | ⏭ رد: " . intval($stats['skipped'] ?? 0) . " | ❌ خطا: " . intval($stats['failed'] ?? 0);
+    if(!$compact){
+        $errors = $job['errors'] ?? [];
+        if(is_array($errors) && count($errors) > 0){
+            $txt .= "\n\n⚠️ آخرین خطاها:";
+            foreach(array_slice(array_reverse($errors), 0, 4) as $e){
+                $txt .= "\n• " . htmlspecialchars((string)$e, ENT_QUOTES, 'UTF-8');
+            }
+        }
+        $txt .= "\n\nهر بار فقط چند کانفیگ منتقل می‌شود تا پنل و ربات هنگ نکنند.";
+    }
+    return $txt;
+}
+
+function farid_inboundMoveProgressKeys($job){
+    global $buttonValues;
+    $state = intval($job['state'] ?? 0);
+    $rows = [];
+    if($state == 1){
+        $rows[] = [['text'=>'🚀 شروع / ادامه انتقال', 'callback_data'=>'inboundMoveRun'], ['text'=>'📊 بروزرسانی', 'callback_data'=>'inboundMoveStatus']];
+        $rows[] = [['text'=>'⛔ توقف انتقال', 'callback_data'=>'inboundMoveStop']];
+    }else{
+        $rows[] = [['text'=>'🔁 عملیات جدید', 'callback_data'=>'inboundMoveMenu']];
+    }
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function farid_inboundMoveEditProgress($job = null, $force = false){
+    $job = is_array($job) ? $job : farid_inboundMoveGetJob();
+    $chatId = intval($job['status_chat_id'] ?? 0);
+    $msgId = intval($job['status_message_id'] ?? 0);
+    if($chatId <= 0 || $msgId <= 0) return false;
+    if(function_exists('bot')){
+        bot('editMessageText', [
+            'chat_id'=>$chatId,
+            'message_id'=>$msgId,
+            'text'=>farid_inboundMoveProgressText($job),
+            'parse_mode'=>'HTML',
+            'reply_markup'=>farid_inboundMoveProgressKeys($job)
+        ]);
+    }
+    return true;
+}
+
+function farid_inboundMoveNormalizeClientArray($client){
+    if(is_array($client)) return $client;
+    if(is_object($client)) return json_decode(json_encode($client), true) ?: [];
+    return [];
+}
+
+function farid_inboundMoveOneOrder($orderId, $targetInboundId, $actorId = 0){
+    global $connection;
+    $order = farid_inboundMoveFetchOrder($orderId);
+    if(!$order) return ['ok'=>false, 'message'=>'سفارش پیدا نشد.'];
+    if(intval($order['status'] ?? 0) != 1) return ['ok'=>false, 'message'=>'سفارش فعال نیست.', 'skip'=>true];
+
+    $serverId = intval($order['server_id'] ?? 0);
+    $sourceInboundId = intval($order['inbound_id'] ?? 0);
+    $targetInboundId = intval($targetInboundId);
+    if($serverId <= 0 || $sourceInboundId <= 0 || $targetInboundId <= 0) return ['ok'=>false, 'message'=>'سرور یا اینباند نامعتبر است.'];
+    if($sourceInboundId == $targetInboundId) return ['ok'=>false, 'message'=>'مبدا و مقصد یکی است.', 'skip'=>true];
+
+    $serverConfig = function_exists('farid_switchGetServerConfig') ? farid_switchGetServerConfig($serverId) : null;
+    if(!$serverConfig) return ['ok'=>false, 'message'=>'تنظیمات سرور پیدا نشد.'];
+    if(function_exists('farid_switchIsMarzbanType') && farid_switchIsMarzbanType($serverConfig['type'] ?? '')) return ['ok'=>false, 'message'=>'تغییر اینباند برای مرزبان کاربرد ندارد.', 'skip'=>true];
+
+    $oldUuid = trim((string)($order['uuid'] ?? ''));
+    $oldRemark = trim((string)($order['remark'] ?? ''));
+    if($oldUuid === '' || $oldRemark === '') return ['ok'=>false, 'message'=>'UUID یا ریمارک سفارش ناقص است.'];
+
+    $usage = function_exists('v2raystore_orderPanelUsage') ? v2raystore_orderPanelUsage($order) : null;
+    $live = function_exists('farid_switchGetOrderLiveState') ? farid_switchGetOrderLiveState($order) : null;
+    if(!is_array($usage) || empty($usage['found']) || !is_array($live) || empty($live['ok'])){
+        return ['ok'=>false, 'message'=>'کانفیگ روی inbound مبدا پیدا نشد یا پنل پاسخ نداد.'];
+    }
+
+    $remainingBytes = isset($usage['remaining']) ? intval($usage['remaining']) : intval($live['remaining_bytes'] ?? 0);
+    if($remainingBytes < 0) $remainingBytes = 0;
+    $expireSeconds = intval($usage['expiryTime'] ?? ($live['expire_seconds'] ?? 0));
+    $expireMillis = $expireSeconds > 0 ? ($expireSeconds * 1000) : intval($live['expire_millis'] ?? 0);
+    $limitIp = intval($live['limitIp'] ?? 0);
+    $flow = trim((string)($live['flow'] ?? ''));
+
+    $targetInbound = function_exists('farid_switchFindXuiInboundInfo') ? farid_switchFindXuiInboundInfo($serverId, $targetInboundId, '') : null;
+    if(!$targetInbound) return ['ok'=>false, 'message'=>'inbound مقصد در پنل پیدا نشد.'];
+    $protocol = trim((string)($targetInbound['protocol'] ?? ($order['protocol'] ?? '')));
+    if($protocol === '') $protocol = trim((string)($order['protocol'] ?? 'vless'));
+    $idLabel = ($protocol === 'trojan') ? 'password' : 'id';
+
+    $newUuid = function_exists('generateRandomString') ? generateRandomString(42, $protocol) : (function_exists('RandomString') ? RandomString(32) : md5(uniqid('', true)));
+    $newRemark = $oldRemark;
+    $subId = function_exists('RandomString') ? RandomString(16) : substr(md5(uniqid('', true)), 0, 16);
+    $client = [
+        $idLabel => $newUuid,
+        'email' => $newRemark,
+        'enable' => true,
+        'limitIp' => $limitIp,
+        'totalGB' => $remainingBytes,
+        'expiryTime' => $expireMillis,
+        'subId' => $subId,
+    ];
+    if($flow !== '') $client['flow'] = $flow;
+
+    $response = addInboundAccount($serverId, '', $targetInboundId, 1, $newRemark, 0, $limitIp, $client, intval($order['fileid'] ?? 0));
+    $msg = is_object($response) ? (string)($response->msg ?? '') : (string)$response;
+    if((!is_object($response) || empty($response->success)) && stripos($msg, 'duplicate') !== false){
+        $newRemark = $oldRemark . '-' . (function_exists('RandomString') ? RandomString(4, 'small') : rand(1000,9999));
+        $newUuid = function_exists('generateRandomString') ? generateRandomString(42, $protocol) : md5(uniqid('', true));
+        $client[$idLabel] = $newUuid;
+        $client['email'] = $newRemark;
+        $client['subId'] = $subId = (function_exists('RandomString') ? RandomString(16) : substr(md5(uniqid('', true)), 0, 16));
+        $response = addInboundAccount($serverId, '', $targetInboundId, 1, $newRemark, 0, $limitIp, $client, intval($order['fileid'] ?? 0));
+        $msg = is_object($response) ? (string)($response->msg ?? '') : (string)$response;
+    }
+    if($response === null) return ['ok'=>false, 'message'=>'اتصال به پنل برقرار نشد.'];
+    if($response === 'inbound not Found') return ['ok'=>false, 'message'=>'inbound مقصد پیدا نشد.'];
+    if(!is_object($response) || empty($response->success)) return ['ok'=>false, 'message'=>'ساخت کلاینت مقصد ناموفق بود: ' . ($msg !== '' ? $msg : 'پاسخ نامعتبر پنل')];
+
+    if(($serverConfig['type'] ?? '') === 'sanaei_new' && function_exists('farid_switchClientExistsInInbound') && !farid_switchClientExistsInInbound($serverId, $targetInboundId, $newUuid, $newRemark)){
+        if(function_exists('farid_switchSanaeiNewAttachClientToInbound')) farid_switchSanaeiNewAttachClientToInbound($serverId, $targetInboundId, $client);
+        if(!farid_switchClientExistsInInbound($serverId, $targetInboundId, $newUuid, $newRemark)){
+            return ['ok'=>false, 'message'=>'کلاینت ساخته شد ولی به inbound مقصد وصل نشد.'];
+        }
+    }
+
+    $plan = function_exists('v2raystore_switchGetPlan') ? v2raystore_switchGetPlan(intval($order['fileid'] ?? 0)) : null;
+    $custom = function_exists('farid_switchPlanCustomFields') ? farid_switchPlanCustomFields($plan) : ['customPath'=>null,'customPort'=>0,'customSni'=>null,'customDomain'=>null];
+    $targetInboundInfo = farid_switchFindXuiInboundInfo($serverId, $targetInboundId, $newUuid) ?: $targetInbound;
+    $links = function_exists('farid_switchBuildInboundLinks') ? farid_switchBuildInboundLinks($serverId, $newUuid, $protocol, $newRemark, $targetInboundInfo, $targetInboundId, $custom) : getConnectionLink($serverId, $newUuid, $protocol, $newRemark, intval($targetInboundInfo['port'] ?? 0), (string)($targetInboundInfo['netType'] ?? ''), $targetInboundId, false, $custom['customPath'] ?? null, $custom['customPort'] ?? 0, $custom['customSni'] ?? null, $custom['customDomain'] ?? null);
+    $links = function_exists('v2raystore_normalizeConfigLinksArray') ? v2raystore_normalizeConfigLinksArray($links) : (is_array($links) ? $links : [$links]);
+    $links = array_values(array_filter(array_map('strval', $links)));
+    if(empty($links)) return ['ok'=>false, 'message'=>'لینک مقصد ساخته نشد.'];
+
+    // فقط بعد از ساخت لینک مقصد، کلاینت قدیمی حذف می‌شود.
+    $deleteOld = function_exists('deleteClient') ? deleteClient($serverId, $sourceInboundId, $oldUuid, 1) : null;
+
+    $linkJson = json_encode($links, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = @$connection->prepare("UPDATE `orders_list` SET `inbound_id`=?, `uuid`=?, `token`=?, `protocol`=?, `link`=?, `remark`=?, `notif`=0 WHERE `id`=?");
+    if(!$stmt) return ['ok'=>false, 'message'=>'ذخیره اطلاعات جدید در دیتابیس ناموفق بود.'];
+    $stmt->bind_param('isssssi', $targetInboundId, $newUuid, $subId, $protocol, $linkJson, $newRemark, $orderId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    if(!$ok) return ['ok'=>false, 'message'=>'آپدیت دیتابیس انجام نشد.'];
+
+    $sent = false;
+    $ownerId = intval($order['userid'] ?? 0);
+    if($ownerId > 0 && function_exists('farid_sendUpdatedConfigToUser')){
+        farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, null, '🔄 کانفیگ جدید شما آماده شد');
+        $sent = true;
+    }
+
+    return [
+        'ok'=>true,
+        'message'=>'منتقل شد.',
+        'sent'=>$sent,
+        'order_id'=>$orderId,
+        'old_remark'=>$oldRemark,
+        'new_remark'=>$newRemark,
+        'old_uuid'=>$oldUuid,
+        'new_uuid'=>$newUuid,
+        'source_inbound'=>$sourceInboundId,
+        'target_inbound'=>$targetInboundId,
+        'remaining_gb'=>round($remainingBytes / 1073741824, 2),
+        'delete_old'=>$deleteOld,
+    ];
+}
+
+function farid_inboundMoveRunBatch($job = null, $batch = 3){
+    $job = is_array($job) ? $job : farid_inboundMoveGetJob();
+    if(intval($job['state'] ?? 0) != 1) return ['processed'=>0, 'done'=>true];
+    $ids = is_array($job['ids'] ?? null) ? array_values($job['ids']) : [];
+    $total = count($ids);
+    $offset = max(0, intval($job['offset'] ?? 0));
+    $batch = max(1, min(8, intval($batch)));
+    $stats = is_array($job['stats'] ?? null) ? $job['stats'] : ['processed'=>0,'moved'=>0,'sent'=>0,'failed'=>0,'skipped'=>0];
+    $errors = is_array($job['errors'] ?? null) ? $job['errors'] : [];
+    $processed = 0;
+    for($i=0; $i<$batch && ($offset + $i) < $total; $i++){
+        $orderId = intval($ids[$offset + $i]);
+        $res = farid_inboundMoveOneOrder($orderId, intval($job['target_inbound'] ?? 0), intval($job['requested_by'] ?? 0));
+        $processed++;
+        $stats['processed'] = intval($stats['processed'] ?? 0) + 1;
+        if(!empty($res['ok'])){
+            $stats['moved'] = intval($stats['moved'] ?? 0) + 1;
+            if(!empty($res['sent'])) $stats['sent'] = intval($stats['sent'] ?? 0) + 1;
+        }else{
+            if(!empty($res['skip'])) $stats['skipped'] = intval($stats['skipped'] ?? 0) + 1;
+            else $stats['failed'] = intval($stats['failed'] ?? 0) + 1;
+            $errors[] = '#' . $orderId . ': ' . (string)($res['message'] ?? 'خطای نامشخص');
+            if(count($errors) > 20) $errors = array_slice($errors, -20);
+        }
+    }
+    $job['offset'] = $offset + $processed;
+    $job['stats'] = $stats;
+    $job['errors'] = $errors;
+    if($job['offset'] >= $total) $job['state'] = 0;
+    farid_inboundMoveSetJob($job);
+    return ['processed'=>$processed, 'done'=>intval($job['state']) != 1, 'job'=>$job];
+}
+
 function getAdminKeysPlus(){
     global $buttonValues, $from_id, $admin;
 
@@ -13369,6 +14020,9 @@ function getAdminKeysPlus(){
     $keys[] = [
         ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu', 'style'=>'danger'],
         ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu', 'style'=>'primary']
+    ];
+    $keys[] = [
+        ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu', 'style'=>'success']
     ];
     $keys[] = [
         ['text'=>$buttonValues['gift_volume_day'], 'callback_data'=>'giftVolumeAndDay', 'style'=>'success']
