@@ -10264,6 +10264,41 @@ if(($userInfo['step'] == "searchUsersConfig" && $text != $buttonValues['cancel']
     }
 }
 
+
+function v2raystore_supportPrefillUrl($messageText = ''){
+    global $admin, $connection;
+    $messageText = trim((string)$messageText);
+    $encodedText = $messageText !== '' ? rawurlencode($messageText) : '';
+    $adminId = intval($admin ?? 0);
+    $adminUsername = '';
+
+    if($adminId > 0 && isset($connection) && $connection instanceof mysqli){
+        $stmt = @$connection->prepare("SELECT `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $adminId);
+            if($stmt->execute()){
+                $row = $stmt->get_result()->fetch_assoc();
+                $adminUsername = trim((string)($row['username'] ?? ''));
+            }
+            $stmt->close();
+        }
+    }
+
+    if(function_exists('v2raystore_cleanTelegramUsernameValue')){
+        $adminUsername = v2raystore_cleanTelegramUsernameValue($adminUsername);
+    }else{
+        $adminUsername = ltrim($adminUsername, '@');
+        if($adminUsername === '-' || $adminUsername === 'ندارد') $adminUsername = '';
+    }
+
+    if($adminUsername !== '' && preg_match('/^[A-Za-z0-9_]{5,32}$/', $adminUsername)){
+        return 'https://t.me/' . $adminUsername . ($encodedText !== '' ? '?text=' . $encodedText : '');
+    }
+
+    // لینک عددی تلگرام متن آماده را پشتیبانی نمی‌کند؛ اگر یوزرنیم ادمین ثبت نشده باشد، فقط پی‌وی باز می‌شود.
+    return 'tg://user?id=' . $adminId;
+}
+
 if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configDiagnosticsState', 'on')){
         alert('خطایابی خودکار توسط مدیریت غیرفعال شده است.');
@@ -10321,9 +10356,9 @@ if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
     }
     if(count($problems) == 0){
         $problems[] = '✅ مشکل واضحی از سمت حجم، زمان یا دامنه پیدا نشد.';
-        $adminText = rawurlencode(function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($order['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.');
-        $keys[] = [['text'=>'💬 پیام به پشتیبانی', 'url'=>'tg://user?id=' . $admin]];
-        $keys[] = [['text'=>'📋 متن آماده پیام', 'callback_data'=>'diagReadyText_' . $oid]];
+        $adminTextRaw = function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($order['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.';
+        $keys[] = [['text'=>'💬 پیام به پشتیبانی', 'url'=>v2raystore_supportPrefillUrl($adminTextRaw)]];
+        $keys[] = [['text'=>'📋 نمایش متن آماده', 'callback_data'=>'diagReadyText_' . $oid]];
     }else{
         if($expire <= time() || (is_array($summary) && isset($summary['remaining_gb']) && $summary['remaining_gb'] !== null && floatval($summary['remaining_gb']) <= 0)){
             $keys[] = [['text'=>'🔥 تمدید سرویس', 'callback_data'=>'renewAccount' . $oid]];
@@ -10343,8 +10378,12 @@ if(preg_match('/^diagReadyText_(\d+)$/', $data, $match)){
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     $txt = function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($row['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.';
-    sendMessage("📋 متن آماده برای ارسال به پشتیبانی:\n\n<code>" . htmlspecialchars($txt, ENT_QUOTES, 'UTF-8') . "</code>", json_encode(['inline_keyboard'=>[
-        [['text'=>'💬 رفتن به پیوی پشتیبانی', 'url'=>'tg://user?id=' . $admin]],
+    sendMessage("📋 متن آماده برای ارسال به پشتیبانی:
+
+<code>" . htmlspecialchars($txt, ENT_QUOTES, 'UTF-8') . "</code>
+
+با دکمه زیر پی‌وی پشتیبانی باز می‌شود و اگر برای ادمین یوزرنیم ثبت شده باشد، متن هم داخل پیام آماده می‌شود.", json_encode(['inline_keyboard'=>[
+        [['text'=>'💬 رفتن به پیوی پشتیبانی', 'url'=>v2raystore_supportPrefillUrl($txt)]],
         [['text'=>$buttonValues['back_button'], 'callback_data'=>'diagnoseConfig' . $oid]]
     ]], JSON_UNESCAPED_UNICODE), 'HTML');
     exit();
@@ -14344,10 +14383,8 @@ function farid_inboundMoveRunBatch($job = null, $batch = 3){
 }
 
 function v2raystore_adminSectionBackRow(){
-    global $buttonValues;
     return [
-        ['text'=>'⬅️ برگشت به مدیریت', 'callback_data'=>'adminMainMenu'],
-        ['text'=>$buttonValues['back_to_main'] ?? 'بازگشت', 'callback_data'=>'mainMenu']
+        ['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMainMenu']
     ];
 }
 
@@ -14368,7 +14405,7 @@ function getAdminKeysPlus(){
         ['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'adminMessagesMenu'],
         ['text'=>'⚙️ تنظیمات و ظاهر ربات', 'callback_data'=>'adminSettingsMenu']
     ];
-    $keys[] = [['text'=>$buttonValues['back_to_main'] ?? 'بازگشت', 'callback_data'=>'mainMenu']];
+    $keys[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'mainMenu']];
 
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
