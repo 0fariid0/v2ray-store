@@ -10292,7 +10292,8 @@ function v2raystore_supportPrefillUrl($messageText = ''){
     }
 
     if($adminUsername !== '' && preg_match('/^[A-Za-z0-9_]{5,32}$/', $adminUsername)){
-        return 'https://t.me/' . $adminUsername . ($encodedText !== '' ? '?text=' . $encodedText : '');
+        // برای پر شدن متن داخل پی‌وی، لینک tg://resolve در اکثر کلاینت‌های تلگرام بهتر از https://t.me/... عمل می‌کند.
+        return 'tg://resolve?domain=' . $adminUsername . ($encodedText !== '' ? '&text=' . $encodedText : '');
     }
 
     // لینک عددی تلگرام متن آماده را پشتیبانی نمی‌کند؛ اگر یوزرنیم ادمین ثبت نشده باشد، فقط پی‌وی باز می‌شود.
@@ -10320,12 +10321,12 @@ function v2raystore_diagSupportText($remark = ''){
 
 function v2raystore_openSupportChatByCallback($supportText){
     global $callbackId;
-    $url = v2raystore_supportPrefillUrl($supportText);
+    // باز شدن خودکار پی‌وی از داخل callback در تلگرام قابل اتکا نیست؛
+    // پس فقط callback را جواب می‌دهیم و در پیام اصلی دکمه URL می‌گذاریم.
     return bot('answercallbackquery', [
         'callback_query_id' => $callbackId,
-        'text' => 'مشکل واضحی پیدا نشد؛ پی‌وی پشتیبانی باز شد.',
-        'show_alert' => false,
-        'url' => $url
+        'text' => 'مشکل واضحی پیدا نشد؛ دکمه پیام به پشتیبانی نمایش داده شد.',
+        'show_alert' => false
     ]);
 }
 
@@ -10386,6 +10387,16 @@ if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
     if(count($problems) == 0){
         $adminTextRaw = v2raystore_diagSupportText($order['remark'] ?? '');
         v2raystore_openSupportChatByCallback($adminTextRaw);
+        $supportUrl = v2raystore_supportPrefillUrl($adminTextRaw);
+        $msg = "🛠 <b>بررسی خودکار کانفیگ</b>
+
+✅ مشکل واضحی از سمت حساب شما پیدا نشد.
+
+برای ارسال پیام آماده به پشتیبانی، دکمه زیر را بزنید.";
+        editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+            [['text'=>'💬 پیام به پشتیبانی', 'url'=>$supportUrl]],
+            [['text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'orderDetails' . $oid]]
+        ]], JSON_UNESCAPED_UNICODE), 'HTML');
         exit();
     }else{
         if($domainChanged){
