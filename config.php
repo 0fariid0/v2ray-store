@@ -9782,7 +9782,7 @@ function changeInboundState($server_id, $uuid){
     if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
     if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
 
-    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    if($serverType == "sanaei_new" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
@@ -9914,7 +9914,7 @@ function renewInboundUuid($server_id, $uuid){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
-    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    if($serverType == "sanaei_new" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
@@ -10034,7 +10034,7 @@ function changeClientState($server_id, $inbound_id, $uuid){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     $settings['clients'][$client_key]['enable'] = $enable == true?false:true;
 
-    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    if($serverType == "sanaei_new" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
@@ -10203,7 +10203,7 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
-    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    if($serverType == "sanaei_new" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
@@ -10374,7 +10374,7 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
-    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    if($serverType == "sanaei_new" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
@@ -10601,7 +10601,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
             $settings['clients'][$client_key]['subId'] = RandomString(16);
         }
     }
-    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+    if($serverType == "sanaei_new" && isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
         v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
@@ -11122,10 +11122,10 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                 "expiryTime" => $expiryTime
             ];
 		}
-        v2raystore_applyPanelClientComment($newClient, 0, $remark);
+        if($serverType == "sanaei_new") v2raystore_applyPanelClientComment($newClient, 0, $remark);
         $settings['clients'][] = $newClient;
     }elseif(is_array($newarr)){
-        v2raystore_applyPanelClientComment($newarr, 0, $newarr['email'] ?? $remark);
+        if($serverType == "sanaei_new") v2raystore_applyPanelClientComment($newarr, 0, $newarr['email'] ?? $remark);
         $settings['clients'][] = $newarr;
     }
 
@@ -11182,11 +11182,11 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         $newSetting = array();
         if($newarr == ''){
-            v2raystore_applyPanelClientComment($newClient, 0, $remark);
+            if($serverType == "sanaei_new") v2raystore_applyPanelClientComment($newClient, 0, $remark);
             $newSetting['clients'][] = $newClient;
         }
         elseif(is_array($newarr)){
-            v2raystore_applyPanelClientComment($newarr, 0, $newarr['email'] ?? $remark);
+            if($serverType == "sanaei_new") v2raystore_applyPanelClientComment($newarr, 0, $newarr['email'] ?? $remark);
             $newSetting['clients'][] = $newarr;
         }
 
@@ -13326,7 +13326,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
 
 
         // trojan
-        $settings = v2raystore_applyPanelCommentToSettingsJson($settings, 0, $remark);
+        if($serverType == "sanaei_new") $settings = v2raystore_applyPanelCommentToSettingsJson($settings, 0, $remark);
         $dataArr = array('up' => '0','down' => '0','total' => $volume,'remark' => $remark,'enable' => 'true','expiryTime' => $expiryTime,'listen' => '','port' => $port,'protocol' => $protocol,'settings' => $settings,'streamSettings' => $streamSettings,
             'sniffing' => '{
       "enabled": true,
@@ -13686,7 +13686,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         	}';
         }
         // vmess - vless
-        $settings = v2raystore_applyPanelCommentToSettingsJson($settings, 0, $remark);
+        if($serverType == "sanaei_new") $settings = v2raystore_applyPanelCommentToSettingsJson($settings, 0, $remark);
         $dataArr = array('up' => '0','down' => '0','total' => $volume, 'remark' => $remark,'enable' => 'true','expiryTime' => $expiryTime,'listen' => '','port' => $port,'protocol' => $protocol,'settings' => $settings,'streamSettings' => $streamSettings
         ,'sniffing' => $sniffing);
     }
