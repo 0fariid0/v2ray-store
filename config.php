@@ -6448,6 +6448,150 @@ function curl_get_file_contents($URL){
     else return FALSE;
 }
 
+function v2raystore_cleanTelegramUsernameValue($username){
+    $username = trim((string)$username);
+    $username = ltrim($username, '@');
+    if($username === '' || $username === '-' || $username === 'ندارد' || $username === ' ندارد ' || strtolower($username) === 'none' || strtolower($username) === 'null'){
+        return '';
+    }
+    return $username;
+}
+
+function v2raystore_cleanTelegramNameValue($name){
+    $name = html_entity_decode((string)$name, ENT_QUOTES, 'UTF-8');
+    $name = trim(strip_tags($name));
+    $name = preg_replace('/\s+/u', ' ', $name);
+    return trim((string)$name);
+}
+
+function v2raystore_updateCurrentTelegramUserInfo($userId, $firstName = '', $lastName = '', $username = '', $currentUserInfo = null){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0 || !isset($connection) || !($connection instanceof mysqli)) return is_array($currentUserInfo) ? $currentUserInfo : [];
+
+    $firstName = v2raystore_cleanTelegramNameValue($firstName);
+    $lastName = v2raystore_cleanTelegramNameValue($lastName);
+    $fullName = trim($firstName . ' ' . $lastName);
+    if($fullName === '') $fullName = is_array($currentUserInfo) ? trim((string)($currentUserInfo['name'] ?? '')) : '';
+    $cleanUsername = v2raystore_cleanTelegramUsernameValue($username);
+    $storeUsername = $cleanUsername !== '' ? $cleanUsername : 'ندارد';
+
+    $stmt = @$connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid` = ? LIMIT 1");
+    if(!$stmt) return is_array($currentUserInfo) ? $currentUserInfo : [];
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return is_array($currentUserInfo) ? $currentUserInfo : [];
+
+    $oldName = trim((string)($row['name'] ?? ''));
+    $oldUsername = trim((string)($row['username'] ?? ''));
+    $newName = $fullName !== '' ? $fullName : $oldName;
+    $newUsername = $storeUsername;
+
+    if($newName !== $oldName || $newUsername !== $oldUsername){
+        $stmt = @$connection->prepare("UPDATE `users` SET `name` = ?, `username` = ? WHERE `userid` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('ssi', $newName, $newUsername, $userId);
+            @$stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    if(is_array($currentUserInfo)){
+        $currentUserInfo['name'] = $newName;
+        $currentUserInfo['username'] = $newUsername;
+    }
+    return is_array($currentUserInfo) ? $currentUserInfo : ['userid'=>$userId, 'name'=>$newName, 'username'=>$newUsername];
+}
+
+function v2raystore_getUserRowFresh($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0 || !isset($connection) || !($connection instanceof mysqli)) return null;
+    $stmt = @$connection->prepare("SELECT * FROM `users` WHERE `userid` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
+function v2raystore_getUsernameByUserId($userId){
+    $row = v2raystore_getUserRowFresh($userId);
+    if(!$row) return '';
+    return v2raystore_cleanTelegramUsernameValue($row['username'] ?? '');
+}
+
+function v2raystore_extractUserIdFromRemark($remark){
+    $remark = (string)$remark;
+    if(preg_match('/(?:^|[^0-9])(\d{5,15})(?:[^0-9]|$)/', $remark, $m)){
+        return intval($m[1]);
+    }
+    return 0;
+}
+
+function v2raystore_userRowForPanelRemark($remark = '', $fallbackUserId = 0){
+    global $connection;
+    $fallbackUserId = intval($fallbackUserId);
+    if($fallbackUserId <= 0) $fallbackUserId = v2raystore_extractUserIdFromRemark($remark);
+    if($fallbackUserId > 0){
+        $row = v2raystore_getUserRowFresh($fallbackUserId);
+        if($row) return $row;
+    }
+    $remark = trim((string)$remark);
+    if($remark !== '' && isset($connection) && ($connection instanceof mysqli)){
+        $stmt = @$connection->prepare("SELECT u.* FROM `orders_list` o LEFT JOIN `users` u ON u.`userid` = o.`userid` WHERE o.`remark` = ? ORDER BY o.`id` DESC LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('s', $remark);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row && !empty($row['userid'])) return $row;
+        }
+    }
+    return null;
+}
+
+function v2raystore_panelClientCommentForUser($userId = 0, $remark = '', $fallbackName = ''){
+    $row = v2raystore_userRowForPanelRemark($remark, $userId);
+    $uid = intval($row['userid'] ?? $userId);
+    $username = v2raystore_cleanTelegramUsernameValue($row['username'] ?? '');
+    $name = v2raystore_cleanTelegramNameValue($row['name'] ?? $fallbackName);
+
+    $parts = [];
+    if($uid > 0) $parts[] = 'TGID: ' . $uid;
+    if($username !== '') $parts[] = '@' . $username;
+    if($name !== '') $parts[] = $name;
+    if(count($parts) === 0 && trim((string)$remark) !== '') $parts[] = trim((string)$remark);
+    return implode(' | ', $parts);
+}
+
+function v2raystore_applyPanelClientComment(&$client, $userId = 0, $remark = ''){
+    if(is_object($client)) $client = json_decode(json_encode($client), true);
+    if(!is_array($client)) return $client;
+    $email = trim((string)($client['email'] ?? $client['remark'] ?? $remark));
+    $comment = v2raystore_panelClientCommentForUser($userId, $email, '');
+    if($comment !== ''){
+        // 3x-ui v3.4.x stores this field as clients.comment. It has no effect on the config itself.
+        $client['comment'] = $comment;
+    }
+    return $client;
+}
+
+function v2raystore_applyPanelCommentToSettingsJson($settings, $userId = 0, $remark = ''){
+    $decoded = is_string($settings) ? json_decode($settings, true) : $settings;
+    if(!is_array($decoded)) return $settings;
+    if(isset($decoded['clients']) && is_array($decoded['clients'])){
+        foreach($decoded['clients'] as $k => $client){
+            if(is_array($client)) $decoded['clients'][$k] = v2raystore_applyPanelClientComment($client, $userId, $client['email'] ?? $remark);
+        }
+        return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+    return is_string($settings) ? $settings : json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 function ip_in_range($ip, $range){
     if (strpos($range, '/') == false) {
         $range .= '/32';
@@ -6483,9 +6627,10 @@ if(isset($update->callback_query)){
     $message_id = $update->callback_query->message->message_id;
     $chat_id = $update->callback_query->message->chat->id;
     $chat_type = $update->callback_query->message->chat->type;
-    $username = htmlspecialchars($update->callback_query->from->username)?? " ندارد ";
+    $username = htmlspecialchars($update->callback_query->from->username ?? '') ?: " ندارد ";
     $from_id = $update->callback_query->from->id;
-    $first_name = htmlspecialchars($update->callback_query->from->first_name);
+    $first_name = htmlspecialchars($update->callback_query->from->first_name ?? '');
+    $last_name = htmlspecialchars($update->callback_query->from->last_name ?? '');
     $markup = json_decode(json_encode($update->callback_query->message->reply_markup->inline_keyboard),true);
 }
 if($from_id < 0) exit();
@@ -6495,6 +6640,9 @@ $stmt->execute();
 $uinfo = $stmt->get_result();
 $userInfo = $uinfo->fetch_assoc();
 $stmt->close();
+if(isset($from_id) && $from_id > 0 && function_exists('v2raystore_updateCurrentTelegramUserInfo')){
+    $userInfo = v2raystore_updateCurrentTelegramUserInfo($from_id, $first_name ?? '', $last_name ?? '', $username ?? '', is_array($userInfo) ? $userInfo : []);
+}
 
 function v2raystore_getJoinedStateSafe($channelLock, $userId){
     $channelLock = trim((string)$channelLock);
@@ -9632,6 +9780,9 @@ function changeInboundState($server_id, $uuid){
     if(!isset($settings['clients'][0]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['subId'] = RandomString(16);
     if(!isset($settings['clients'][0]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][0]['enable'] = true;
 
+    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+        v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
+    }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings,488);
@@ -9761,6 +9912,9 @@ function renewInboundUuid($server_id, $uuid){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
+    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+        v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
+    }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings,488);
@@ -9878,6 +10032,9 @@ function changeClientState($server_id, $inbound_id, $uuid){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     $settings['clients'][$client_key]['enable'] = $enable == true?false:true;
 
+    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+        v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
+    }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings,488);
@@ -10044,6 +10201,9 @@ function renewClientUuid($server_id, $inbound_id, $uuid){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
+    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+        v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
+    }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings,488);
@@ -10212,6 +10372,9 @@ function editClientRemark($server_id, $inbound_id, $uuid, $newRemark){
     if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['subId'] = RandomString(16);
     if(!isset($settings['clients'][$client_key]['enable']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")) $settings['clients'][$client_key]['enable'] = true;
 
+    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+        v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
+    }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings);
@@ -10435,6 +10598,9 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
         if(!isset($settings['clients'][$client_key]['subId']) && ($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza")){
             $settings['clients'][$client_key]['subId'] = RandomString(16);
         }
+    }
+    if(isset($settings['clients'][$client_key]) && is_array($settings['clients'][$client_key])){
+        v2raystore_applyPanelClientComment($settings['clients'][$client_key], 0, $settings['clients'][$client_key]['email'] ?? '');
     }
     $editedClient = $settings['clients'][$client_key];
     $settings['clients'] = array_values($settings['clients']);
@@ -10954,8 +11120,12 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
                 "expiryTime" => $expiryTime
             ];
 		}
+        v2raystore_applyPanelClientComment($newClient, 0, $remark);
         $settings['clients'][] = $newClient;
-    }elseif(is_array($newarr)) $settings['clients'][] = $newarr;
+    }elseif(is_array($newarr)){
+        v2raystore_applyPanelClientComment($newarr, 0, $newarr['email'] ?? $remark);
+        $settings['clients'][] = $newarr;
+    }
 
     $settings['clients'] = array_values($settings['clients']);
     $settings = json_encode($settings);
@@ -11000,6 +11170,7 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     
     if($serverType == "sanaei_new"){
         $clientToAdd = ($newarr == '') ? $newClient : $newarr;
+        if(is_array($clientToAdd)) v2raystore_applyPanelClientComment($clientToAdd, 0, $clientToAdd['email'] ?? $remark);
         $url = "$panel_url/panel/api/clients/add";
         v2raystore_sanaeiNewJsonPost($curl, $url, $session, array("client" => $clientToAdd, "inboundIds" => array((int)$inbound_id)));
         $response = curl_exec($curl);
@@ -11008,9 +11179,15 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     }
     if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
         $newSetting = array();
-        if($newarr == '')$newSetting['clients'][] = $newClient;
-        elseif(is_array($newarr)) $newSetting['clients'][] = $newarr;
-        
+        if($newarr == ''){
+            v2raystore_applyPanelClientComment($newClient, 0, $remark);
+            $newSetting['clients'][] = $newClient;
+        }
+        elseif(is_array($newarr)){
+            v2raystore_applyPanelClientComment($newarr, 0, $newarr['email'] ?? $remark);
+            $newSetting['clients'][] = $newarr;
+        }
+
         $newSetting = json_encode($newSetting);
         $dataArr = array(
             "id"=>$inbound_id,
@@ -13147,6 +13324,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
 
 
         // trojan
+        $settings = v2raystore_applyPanelCommentToSettingsJson($settings, 0, $remark);
         $dataArr = array('up' => '0','down' => '0','total' => $volume,'remark' => $remark,'enable' => 'true','expiryTime' => $expiryTime,'listen' => '','port' => $port,'protocol' => $protocol,'settings' => $settings,'streamSettings' => $streamSettings,
             'sniffing' => '{
       "enabled": true,
@@ -13506,6 +13684,7 @@ function addUser($server_id, $client_id, $protocol, $port, $expiryTime, $remark,
         	}';
         }
         // vmess - vless
+        $settings = v2raystore_applyPanelCommentToSettingsJson($settings, 0, $remark);
         $dataArr = array('up' => '0','down' => '0','total' => $volume, 'remark' => $remark,'enable' => 'true','expiryTime' => $expiryTime,'listen' => '','port' => $port,'protocol' => $protocol,'settings' => $settings,'streamSettings' => $streamSettings
         ,'sniffing' => $sniffing);
     }
@@ -13690,12 +13869,20 @@ function v2raystore_translateTechnicalError($text){
     return $fa . "\nجزئیات فنی: " . $raw;
 }
 
-function v2raystore_userPrivateUrl($userId){
-    return 'tg://user?id=' . intval($userId);
+function v2raystore_userPrivateUrl($userId, $username = ''){
+    $userId = intval($userId);
+    if($userId > 0) return 'tg://user?id=' . $userId;
+    $username = v2raystore_cleanTelegramUsernameValue($username);
+    return $username !== '' ? ('https://t.me/' . $username) : '';
 }
 
-function v2raystore_userPrivateButton($userId, $text = '👤 رفتن به پی وی مشتری'){
-    return ['text' => $text, 'url' => v2raystore_userPrivateUrl($userId), 'style' => 'primary'];
+function v2raystore_userPrivateButton($userId, $text = '👤 رفتن به پی وی مشتری', $username = ''){
+    $url = v2raystore_userPrivateUrl($userId, $username);
+    if($url === ''){
+        $username = v2raystore_getUsernameByUserId($userId);
+        $url = $username !== '' ? ('https://t.me/' . $username) : ('tg://user?id=' . intval($userId));
+    }
+    return ['text' => $text, 'url' => $url, 'style' => 'primary'];
 }
 
 function v2raystore_isUserPrivacyButtonError($value){
@@ -13719,6 +13906,14 @@ function v2raystore_stripPrivateUserButtons($markup, &$removed = false){
             if(!is_array($button)) continue;
             $url = strtolower(trim((string)($button['url'] ?? '')));
             if($url !== '' && (strpos($url, 'tg://user?id=') === 0 || strpos($url, 'tg://openmessage?user_id=') === 0)){
+                $candidateId = 0;
+                if(preg_match('/(?:id=|user_id=)(\d+)/', $url, $mPriv)) $candidateId = intval($mPriv[1]);
+                $fallbackUsername = $candidateId > 0 ? v2raystore_getUsernameByUserId($candidateId) : '';
+                if($fallbackUsername !== ''){
+                    $button['url'] = 'https://t.me/' . $fallbackUsername;
+                    $newRow[] = $button;
+                    continue;
+                }
                 $removed = true;
                 continue;
             }
@@ -13735,9 +13930,14 @@ function v2raystore_stripPrivateUserButtons($markup, &$removed = false){
 
 function v2raystore_formatUserLine($userId, $name = '', $username = ''){
     $userId = intval($userId);
+    $fresh = $userId > 0 ? v2raystore_getUserRowFresh($userId) : null;
+    if($fresh){
+        $name = trim((string)($fresh['name'] ?? $name));
+        $username = trim((string)($fresh['username'] ?? $username));
+    }
     $name = trim((string)$name) !== '' ? trim((string)$name) : ('کاربر ' . $userId);
-    $username = trim((string)$username);
-    $username = ($username !== '' && $username !== 'ندارد' && $username !== ' ندارد ') ? '@' . ltrim($username, '@') : 'ندارد';
+    $username = v2raystore_cleanTelegramUsernameValue($username);
+    $username = $username !== '' ? '@' . $username : 'ندارد';
     return "👤 کاربر: <a href='tg://user?id={$userId}'>" . v2raystore_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . v2raystore_h($username);
 }
 
