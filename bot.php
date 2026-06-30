@@ -14138,10 +14138,8 @@ function getAdminKeysPlus(){
         ['text'=>$buttonValues['create_account'], 'callback_data'=>'createMultipleAccounts', 'style'=>'success']
     ];
     $keys[] = [
-        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu', 'style'=>'danger']
-    ];
-    $keys[] = [
-        ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu', 'style'=>'success']
+        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu', 'style'=>'danger'],
+        ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu', 'style'=>'primary']
     ];
     $keys[] = [
         ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement', 'style'=>'primary'],

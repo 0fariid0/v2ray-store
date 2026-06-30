@@ -2596,7 +2596,7 @@ function v2raystore_buttonStyleByCallback($button){
     if(!isset($button['text'])) return $button;
 
     // فقط استایل‌های قابل قبول نگه داشته می‌شود تا دکمه‌ها به خاطر style اشتباه سفید/بی‌رنگ یا خراب نشوند.
-    $allowedStyles = ['danger', 'success', 'primary'];
+    $allowedStyles = ['danger', 'success', 'primary', 'warning'];
     $callback = (string)($button['callback_data'] ?? '');
     $text = (string)($button['text'] ?? '');
     $haystack = $text . ' ' . $callback;
@@ -6556,16 +6556,18 @@ function v2raystore_userRowForPanelRemark($remark = '', $fallbackUserId = 0){
 
 function v2raystore_panelClientCommentForUser($userId = 0, $remark = '', $fallbackName = ''){
     $row = v2raystore_userRowForPanelRemark($remark, $userId);
-    $uid = intval($row['userid'] ?? $userId);
-    $username = v2raystore_cleanTelegramUsernameValue($row['username'] ?? '');
-    $name = v2raystore_cleanTelegramNameValue($row['name'] ?? $fallbackName);
 
-    $parts = [];
-    if($uid > 0) $parts[] = 'TGID: ' . $uid;
-    if($username !== '') $parts[] = '@' . $username;
-    if($name !== '') $parts[] = $name;
-    if(count($parts) === 0 && trim((string)$remark) !== '') $parts[] = trim((string)$remark);
-    return implode(' | ', $parts);
+    // بخش توضیحات 3x-ui فقط برای یک شناسه خوانا استفاده می‌شود؛
+    // آیدی عددی کاربر عمداً ثبت نمی‌شود چون خود ریمارک کانفیگ شامل آن است.
+    // اولویت: یوزرنیم فعلی تلگرام، سپس اسم فعلی اکانت، سپس ریمارک.
+    $username = v2raystore_cleanTelegramUsernameValue($row['username'] ?? '');
+    if($username !== '') return '@' . $username;
+
+    $name = v2raystore_cleanTelegramNameValue($row['name'] ?? $fallbackName);
+    if($name !== '') return $name;
+
+    $remark = trim((string)$remark);
+    return $remark !== '' ? $remark : '';
 }
 
 function v2raystore_applyPanelClientComment(&$client, $userId = 0, $remark = ''){
@@ -14659,31 +14661,17 @@ function v2raystore_reportEventItems(){
 }
 
 function v2raystore_reportStatItems(){
+    // آیتم‌های آمار کانال/گروه گزارش با آمار کلی ربات یکی شد.
     return [
-        'users_total' => '👥 کل کاربران',
-        'users_today' => '👤 کاربران جدید امروز',
-        'users_month' => '👥 کاربران جدید ماه',
-        'agents_total' => '🤝 تعداد نماینده‌ها',
-        'active_services' => '🧾 سرویس‌های فعال',
-        'expired_services' => '⌛ سرویس‌های منقضی فعال',
-        'total_orders' => '📦 کل سفارش‌ها',
-        'today_orders' => '🛒 سفارش‌های امروز',
-        'month_orders' => '📆 سفارش‌های ماه',
-        'pending_pays' => '⏳ پرداخت‌های در انتظار',
-        'approved_pays_today' => '✅ پرداخت‌های تأیید امروز',
-        'declined_pays_today' => '❌ پرداخت‌های رد امروز',
-        'today_income' => '💰 درآمد امروز',
-        'yesterday_income' => '💵 درآمد دیروز',
-        'week_income' => '🗓 درآمد هفته',
-        'month_income' => '📆 درآمد ماه',
-        'total_income' => '🏦 درآمد کل',
-        'auto_approved_today' => '🤖 تأیید خودکار امروز',
-        'auto_approved_total' => '🤖 کل تأیید خودکار',
-        'test_accounts_today' => '🧪 تست‌های امروز',
-        'test_accounts_total' => '🧪 کل تست‌ها',
-        'wallet_total' => '👛 مجموع کیف پول کاربران',
+        'users_total' => '👥 تعداد کل کاربران',
+        'total_orders' => '📦 کل محصولات خریداری شده',
         'servers_total' => '🖥 تعداد سرورها',
-        'plans_total' => '📋 تعداد پلن‌ها'
+        'categories_total' => '🗂 تعداد دسته‌ها',
+        'plans_total' => '📋 تعداد پلن‌ها',
+        'total_income' => '🏦 درآمد کل',
+        'today_income' => '💰 درآمد امروز',
+        'week_income' => '🗓 درآمد هفته',
+        'month_income' => '📆 درآمد ماه'
     ];
 }
 
@@ -14774,43 +14762,48 @@ function v2raystore_reportPlanServerLinesByPlanId($planId, $volume = '', $days =
 
 function v2raystore_liveStatsSnapshot($forDaily = false){
     global $connection;
-    $now = time();
-    $today = strtotime(date('Y-m-d 00:00:00'));
-    $yesterday = strtotime(date('Y-m-d 00:00:00', strtotime('-1 day')));
-    $week = strtotime(date('Y-m-d 00:00:00', strtotime('-6 day')));
-    $month = strtotime(date('Y-m-01 00:00:00'));
-    $q = function($sql) use ($connection){
-        $res = @($connection->query($sql));
-        if(!$res) return 0;
-        $row = $res->fetch_assoc();
-        return intval($row['c'] ?? $row['s'] ?? 0);
+
+    $q = function($sql, $types = '', $params = []) use ($connection){
+        if($types !== ''){
+            $stmt = @($connection->prepare($sql));
+            if(!$stmt) return 0;
+            $stmt->bind_param($types, ...$params);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            $row = $res ? $res->fetch_assoc() : [];
+            $stmt->close();
+        }else{
+            $res = @($connection->query($sql));
+            if(!$res) return 0;
+            $row = $res->fetch_assoc();
+        }
+        return intval($row['c'] ?? $row['s'] ?? $row['total'] ?? 0);
     };
 
+    $todayStart = strtotime('today');
+    $weekStart = strtotime('-' . (date('w') + 1) . ' days');
+    $monthStart = strtotime(date('Y-m-01 00:00:00'));
+    if(function_exists('jdate') && function_exists('jalali_to_gregorian')){
+        $persian = explode('-', jdate('Y-n-1', time()));
+        if(count($persian) >= 3){
+            $gregorian = jalali_to_gregorian(intval($persian[0]), intval($persian[1]), intval($persian[2]));
+            if(is_array($gregorian) && count($gregorian) >= 3){
+                $monthStart = strtotime($gregorian[0] . '-' . $gregorian[1] . '-' . $gregorian[2]);
+            }
+        }
+    }
+
+    $paidWhere = "(`state` = 'paid' OR `state` = 'approved')";
     $values = [
-        'users_total' => ['👥 کاربران', $q("SELECT COUNT(*) c FROM `users`"), ''],
-        'users_today' => ['👤 کاربران جدید امروز', $q("SELECT COUNT(*) c FROM `users` WHERE CAST(`date` AS UNSIGNED) >= $today"), ''],
-        'users_month' => ['👥 کاربران جدید ماه', $q("SELECT COUNT(*) c FROM `users` WHERE CAST(`date` AS UNSIGNED) >= $month"), ''],
-        'agents_total' => ['🤝 نماینده‌ها', $q("SELECT COUNT(*) c FROM `users` WHERE COALESCE(`is_agent`,0) = 1"), ''],
-        'active_services' => ['🧾 سرویس‌های فعال', $q("SELECT COUNT(*) c FROM `orders_list` WHERE `status` = 1"), ''],
-        'expired_services' => ['⌛ سرویس‌های منقضی فعال', $q("SELECT COUNT(*) c FROM `orders_list` WHERE `status` = 1 AND CAST(`expire_date` AS UNSIGNED) > 0 AND CAST(`expire_date` AS UNSIGNED) < $now"), ''],
-        'total_orders' => ['📦 کل سفارش‌ها', $q("SELECT COUNT(*) c FROM `orders_list`"), ''],
-        'today_orders' => ['🛒 سفارش امروز', $q("SELECT COUNT(*) c FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $today"), ''],
-        'month_orders' => ['📆 سفارش ماه', $q("SELECT COUNT(*) c FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $month"), ''],
-        'pending_pays' => ['⏳ پرداخت‌های در انتظار', $q("SELECT COUNT(*) c FROM `pays` WHERE `state` IN ('pending','sent','processing','auto_processing')"), ''],
-        'approved_pays_today' => ['✅ پرداخت‌های تأیید امروز', $q("SELECT COUNT(*) c FROM `pays` WHERE `state` = 'approved' AND CAST(COALESCE(NULLIF(`auto_approved_date`,0), `request_date`) AS UNSIGNED) >= $today"), ''],
-        'declined_pays_today' => ['❌ پرداخت‌های رد امروز', $q("SELECT COUNT(*) c FROM `pays` WHERE `state` IN ('declined','auto_cancelled') AND CAST(`request_date` AS UNSIGNED) >= $today"), ''],
-        'today_income' => ['💰 درآمد امروز', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $today"), ' تومان'],
-        'yesterday_income' => ['💵 درآمد دیروز', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $yesterday AND CAST(`date` AS UNSIGNED) < $today"), ' تومان'],
-        'week_income' => ['🗓 درآمد هفته', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $week"), ' تومان'],
-        'month_income' => ['📆 درآمد ماه', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list` WHERE CAST(`date` AS UNSIGNED) >= $month"), ' تومان'],
-        'total_income' => ['🏦 درآمد کل', $q("SELECT COALESCE(SUM(`amount`),0) s FROM `orders_list`"), ' تومان'],
-        'auto_approved_today' => ['🤖 تأیید خودکار امروز', $q("SELECT COUNT(*) c FROM `pays` WHERE `auto_approved` = 1 AND CAST(`auto_approved_date` AS UNSIGNED) >= $today"), ''],
-        'auto_approved_total' => ['🤖 کل تأیید خودکار', $q("SELECT COUNT(*) c FROM `pays` WHERE `auto_approved` = 1"), ''],
-        'test_accounts_today' => ['🧪 تست‌های امروز', $q("SELECT COUNT(*) c FROM `orders_list` WHERE `status` = 1 AND CAST(`amount` AS UNSIGNED) = 0 AND CAST(`date` AS UNSIGNED) >= $today"), ''],
-        'test_accounts_total' => ['🧪 کل تست‌ها', $q("SELECT COUNT(*) c FROM `orders_list` WHERE CAST(`amount` AS UNSIGNED) = 0"), ''],
-        'wallet_total' => ['👛 مجموع کیف پول', $q("SELECT COALESCE(SUM(`wallet`),0) s FROM `users`"), ' تومان'],
-        'servers_total' => ['🖥 سرورها', $q("SELECT COUNT(*) c FROM `server_config`"), ''],
-        'plans_total' => ['📋 پلن‌ها', $q("SELECT COUNT(*) c FROM `server_plans`"), '']
+        'users_total' => ['👥 تعداد کل کاربران', $q("SELECT COUNT(*) c FROM `users`"), ''],
+        'total_orders' => ['📦 کل محصولات خریداری شده', $q("SELECT COUNT(*) c FROM `orders_list`"), ''],
+        'servers_total' => ['🖥 تعداد سرورها', $q("SELECT COUNT(*) c FROM `server_config`"), ''],
+        'categories_total' => ['🗂 تعداد دسته‌ها', $q("SELECT COUNT(*) c FROM `server_categories`"), ''],
+        'plans_total' => ['📋 تعداد پلن‌ها', $q("SELECT COUNT(*) c FROM `server_plans`"), ''],
+        'total_income' => ['🏦 درآمد کل', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE $paidWhere"), ' تومان'],
+        'today_income' => ['💰 درآمد امروز', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE `request_date` > ? AND $paidWhere", 'i', [$todayStart]), ' تومان'],
+        'week_income' => ['🗓 درآمد هفته', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE `request_date` > ? AND $paidWhere", 'i', [$weekStart]), ' تومان'],
+        'month_income' => ['📆 درآمد ماه', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE `request_date` > ? AND $paidWhere", 'i', [$monthStart]), ' تومان'],
     ];
 
     $lines = [];
@@ -14820,7 +14813,7 @@ function v2raystore_liveStatsSnapshot($forDaily = false){
         $lines[] = $label . ': <b>' . number_format($value) . $suffix . '</b>';
     }
     if(count($lines) == 0) return '';
-    $title = $forDaily ? "📊 <b>آمار روزانه</b>" : "📊 <b>آمار لحظه‌ای</b>";
+    $title = $forDaily ? "📊 <b>آمار روزانه ربات</b>" : "📊 <b>آمار کلی ربات</b>";
     return "\n\n" . $title . "\n" . implode("\n", $lines);
 }
 
