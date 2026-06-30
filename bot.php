@@ -1103,7 +1103,9 @@ if(preg_match('/^setAllUserButtons_(on|off)$/', $data, $match) && ($from_id == $
 
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if($data!="botSettings"){
-        $newValue = $botState[$match[1]]=="on"?"off":"on";
+        $defaultOnBotKeys = ['smartRenewState','configTutorialButtonsState','configDiagnosticsState'];
+        $currentBotValue = $botState[$match[1]] ?? (in_array($match[1], $defaultOnBotKeys, true) ? 'on' : 'off');
+        $newValue = $currentBotValue=="on"?"off":"on";
         setSettings($match[1], $newValue);
     }
     editText($message_id,$mainValues['change_bot_settings_message'],getBotSettingKeys());
@@ -1647,6 +1649,72 @@ if(preg_match('/^toggleAgentLink_(config|sub)_(\d+)$/',$data,$match) && ($from_i
     editText($message_id, str_replace("AGENT-NAME", $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId));
     exit();
 }
+
+if(preg_match('/^toggleAgentBuying_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$info){ alert('نماینده پیدا نشد'); exit(); }
+    $d = v2raystore_agentPricingDecode($info['discount_percent'] ?? null);
+    $l = v2raystore_agentLimitsNormalize($d['limits'] ?? []);
+    $l['buying'] = ($l['buying'] === 'on') ? 'off' : 'on';
+    $d['limits'] = $l;
+    $encoded = json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("UPDATE `users` SET `discount_percent`=? WHERE `userid`=?");
+    $stmt->bind_param('si', $encoded, $agentId);
+    $stmt->execute();
+    $stmt->close();
+    alert('وضعیت خرید نماینده تغییر کرد.');
+    editText($message_id, str_replace('AGENT-NAME', $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId));
+    exit();
+}
+if(preg_match('/^editAgent(DailyCap|CreditCap)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[2]);
+    delMessage();
+    if($match[1] === 'DailyCap'){
+        sendMessage("سقف خرید روزانه نماینده را عددی وارد کنید.\nبرای نامحدود کردن عدد <code>0</code> را بفرستید.", $cancelKey, 'HTML');
+        setUser('saveAgentLimit_daily_' . $agentId);
+    }else{
+        sendMessage("سقف اعتبار/بدهی نماینده را به تومان وارد کنید.\nبرای نامحدود کردن عدد <code>0</code> را بفرستید.", $cancelKey, 'HTML');
+        setUser('saveAgentLimit_credit_' . $agentId);
+    }
+    exit();
+}
+if(preg_match('/^saveAgentLimit_(daily|credit)_(\d+)$/', $userInfo['step'] ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $value = str_replace([',','٬',' '], '', trim((string)$text));
+    if(!is_numeric($value) || intval($value) < 0){ sendMessage('لطفاً فقط عدد صفر یا بزرگتر وارد کن.', $cancelKey); exit(); }
+    $agentId = intval($match[2]);
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$info){ setUser(); sendMessage('نماینده پیدا نشد.', $removeKeyboard); exit(); }
+    $d = v2raystore_agentPricingDecode($info['discount_percent'] ?? null);
+    $l = v2raystore_agentLimitsNormalize($d['limits'] ?? []);
+    if($match[1] === 'daily') $l['daily_cap'] = intval($value);
+    else $l['credit_cap'] = intval($value);
+    $d['limits'] = $l;
+    $encoded = json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("UPDATE `users` SET `discount_percent`=? WHERE `userid`=?");
+    $stmt->bind_param('si', $encoded, $agentId);
+    $stmt->execute();
+    $stmt->close();
+    setUser();
+    sendMessage('✅ تنظیمات نماینده ذخیره شد.', $removeKeyboard);
+    sendMessage(str_replace('AGENT-NAME', $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId), 'HTML');
+    exit();
+}
+if(preg_match('/^agentProReport_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $txt = function_exists('v2raystore_agentReportText') ? v2raystore_agentReportText($agentId) : 'گزارش در دسترس نیست.';
+    editText($message_id, $txt, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'], 'callback_data'=>'agentPercentDetails' . $agentId]]]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+
 if(preg_match('/^editAgentDiscount(Server|Plan|Normal)(\d+)_(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $typeFa = $match[1] == 'Normal' ? 'عمومی' : ($match[1] == 'Plan' ? 'پلن' : 'سرور');
     $keys = json_encode(['inline_keyboard'=>[
@@ -2306,6 +2374,13 @@ if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy
     if($data=="buySubscription") $buyType = "none";
     elseif($data=="agentOneBuy") $buyType = "one";
     elseif($data== "agentMuchBuy") $buyType = "much";
+    if(function_exists('v2raystore_agentCanStartPurchase')){
+        $agentGate = v2raystore_agentCanStartPurchase($userInfo ?? null, $buyType);
+        if(empty($agentGate['ok'])){
+            alert($agentGate['message'] ?? 'خرید نماینده فعلاً مجاز نیست.', true);
+            exit();
+        }
+    }
     
     $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `active`=1 and `state` = 1 and `ucount` > 0 ORDER BY `id` ASC");
     $stmt->execute();
@@ -2634,7 +2709,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
             imagedestroy($qrImage);
 
 
-        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+        	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
             unlink($file);
         }
         $stmt->bind_param("ssiiisssisiii", $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $price, $date, $rahgozar);
@@ -3087,7 +3162,7 @@ if($subLink != "") $acc_text .= "
             imagedestroy($backgroundImage);
             imagedestroy($qrImage);
 
-        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+        	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
             unlink($file);
         }
         
@@ -5681,7 +5756,7 @@ if($subLink != "") $acc_text .= "
         imagedestroy($backgroundImage);
         imagedestroy($qrImage);
 
-    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+    	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
         unlink($file);
     }
 
@@ -5765,7 +5840,7 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
         imagedestroy($backgroundImage);
         imagedestroy($qrImage);
 
-    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+    	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
         unlink($file);
     }
     elseif($match[1] == "Config"){
@@ -5793,7 +5868,7 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
             imagedestroy($backgroundImage);
             imagedestroy($qrImage);
             
-        	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+        	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
             unlink($file);
         }
     }
@@ -6114,7 +6189,7 @@ if($subLink != "") $acc_text .= "
         imagedestroy($backgroundImage);
         imagedestroy($qrImage);
 
-    	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+    	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
         unlink($file);
     }
     sendMessage('✅ کانفیگ و براش ارسال کردم', getMainKeys());
@@ -6468,7 +6543,7 @@ if($subLink != "") $acc_text .= "
                 imagedestroy($backgroundImage);
                 imagedestroy($qrImage);
 
-            	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+            	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
                 unlink($file);
             }
             
@@ -7021,7 +7096,7 @@ if($subLink != "") $acc_text .= "
                 imagedestroy($backgroundImage);
                 imagedestroy($qrImage);
 
-            	sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $uid);
+            	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
                 unlink($file);
             }
             $agent_bought = $payInfo['agent_bought'];
@@ -7167,6 +7242,27 @@ if(preg_match('/decline(\d+)_(\d+)/',$userInfo['step'],$match) && ($from_id == $
     
     sendMessage($text, null, null, $uid);
 }
+
+if(preg_match('/^appTutorial_(ios|android|windows|streisand|v2rayng|hiddify)$/', $data, $match)){
+    if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
+        alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
+        exit();
+    }
+    $app = $match[1];
+    $item = function_exists('v2raystore_findTutorialForApp') ? v2raystore_findTutorialForApp($app) : null;
+    $title = function_exists('v2raystore_appTutorialTitle') ? v2raystore_appTutorialTitle($app) : $app;
+    if($item){
+        $msg = "📚 <b>آموزش {$title}</b>\n\n" . htmlspecialchars((string)$item['body'], ENT_QUOTES, 'UTF-8');
+    }else{
+        $msg = "📚 <b>آموزش {$title}</b>\n\nهنوز آموزش اختصاصی برای این برنامه ثبت نشده است. از بخش مدیریت FAQ و آموزش‌ها می‌توانی متن این آموزش را اضافه یا ویرایش کنی.";
+    }
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>'📚 همه آموزش‌ها', 'callback_data'=>'tutorialsMenu']],
+        [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']]
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+
 if($data=="supportSection"){
     editText($message_id,"به بخش پشتیبانی خوش اومدی🛂\nلطفاً، یکی از دکمه های زیر را انتخاب نمایید.",
         json_encode(['inline_keyboard'=>[
@@ -8585,15 +8681,15 @@ if($subLink != "") $acc_text .= "
         imagedestroy($backgroundImage);
         imagedestroy($qrImage);
 
-        $sendRes = sendPhoto($botUrl . $file, $acc_text,json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]),"HTML", $__v2raystoreTargetUid);
+        $sendRes = sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $__v2raystoreTargetUid);
         $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
         if(!$sendOk){
-            $sendRes = sendMessage($acc_text, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), "HTML", $__v2raystoreTargetUid);
+            $sendRes = sendMessage($acc_text, (function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])), "HTML", $__v2raystoreTargetUid);
             $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
         }
         if(!$sendOk){
             $plainText = function_exists('v2raystore_plainTextFromHtml') ? v2raystore_plainTextFromHtml($acc_text) : strip_tags($acc_text);
-            $sendRes = sendMessage($plainText, json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]]), null, $__v2raystoreTargetUid);
+            $sendRes = sendMessage($plainText, (function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])), null, $__v2raystoreTargetUid);
             $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($sendRes) : true;
         }
         if($sendOk) $__v2raystoreTestSendOk = true;
@@ -10058,7 +10154,15 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     }
     $keyboard[] = [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]];
 
-    editText($message_id, $mainValues['select_one_to_show_detail'], json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE));
+    $listText = $mainValues['select_one_to_show_detail'];
+    if(!$isAgentConfigList && function_exists('v2raystore_smartRenewCandidateFromOrders') && (!function_exists('v2raystore_botFeatureEnabled') || v2raystore_botFeatureEnabled('smartRenewState', 'on'))){
+        $smartCandidate = v2raystore_smartRenewCandidateFromOrders($ordersRows);
+        if($smartCandidate){
+            $keyboard = array_merge(v2raystore_smartRenewRows($smartCandidate), $keyboard);
+            $listText = v2raystore_smartRenewHeaderText($smartCandidate) . $listText;
+        }
+    }
+    editText($message_id, $listText, json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE), 'HTML');
     exit;
 }
 
@@ -10159,6 +10263,105 @@ if(($userInfo['step'] == "searchUsersConfig" && $text != $buttonValues['cancel']
         }
     }
 }
+
+if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
+    if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configDiagnosticsState', 'on')){
+        alert('خطایابی خودکار توسط مدیریت غیرفعال شده است.');
+        exit();
+    }
+    $oid = intval($match[1]);
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=? AND `userid`=? AND `status`=1 LIMIT 1");
+    $stmt->bind_param('ii', $oid, $from_id);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$order){ alert($mainValues['no_order_found'] ?? 'سفارش پیدا نشد.'); exit(); }
+    $summary = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($order) : null;
+    $problems = [];
+    $okLines = [];
+    if(is_array($summary) && array_key_exists('enabled', $summary) && $summary['enabled'] === false){
+        $problems[] = '🔘 کانفیگ روی پنل غیرفعال است.';
+    }elseif(is_array($summary) && array_key_exists('enabled', $summary)){
+        $okLines[] = '🔘 کانفیگ روی پنل فعال است.';
+    }
+    $expire = intval($summary['expire_date'] ?? $order['expire_date'] ?? 0);
+    if($expire > 0 && $expire <= time()) $problems[] = '⏰ زمان سرویس تمام شده است.';
+    else $okLines[] = '⏰ زمان سرویس فعال است: ' . htmlspecialchars($summary['remaining_days_text'] ?? v2raystore_formatRemainingDaysText($expire), ENT_QUOTES, 'UTF-8');
+    if(is_array($summary) && isset($summary['remaining_gb']) && $summary['remaining_gb'] !== null){
+        if(floatval($summary['remaining_gb']) <= 0) $problems[] = '🔋 حجم سرویس تمام شده است.';
+        else $okLines[] = '🔋 حجم باقی‌مانده: ' . htmlspecialchars($summary['remaining_gb_text'] . ' گیگ', ENT_QUOTES, 'UTF-8');
+    }else $okLines[] = '🔋 حجم سرویس نامحدود یا قابل تشخیص نیست.';
+    $domainChanged = false;
+    if(function_exists('farid_generateUpdatedVrayLinks') && function_exists('v2raystore_normalizeConfigLinksArray')){
+        $oldLinks = v2raystore_normalizeConfigLinksArray(json_decode($order['link'] ?? '', true) ?: ($order['link'] ?? ''));
+        $newLinks = farid_generateUpdatedVrayLinks($order);
+        $hostOf = function($link){
+            $link = trim((string)$link);
+            if($link === '') return '';
+            if(preg_match('/^(vmess|vless|trojan):\/\//i', $link)){
+                if(stripos($link, 'vmess://') === 0){
+                    $dec = base64_decode(substr($link, 8), true);
+                    $j = $dec ? json_decode($dec, true) : null;
+                    return strtolower((string)($j['add'] ?? $j['host'] ?? ''));
+                }
+                $parts = @parse_url($link);
+                return strtolower((string)($parts['host'] ?? ''));
+            }
+            $parts = @parse_url($link);
+            return strtolower((string)($parts['host'] ?? ''));
+        };
+        $oldHosts = array_filter(array_map($hostOf, $oldLinks));
+        $newHosts = array_filter(array_map($hostOf, is_array($newLinks) ? $newLinks : []));
+        if(count($oldHosts) && count($newHosts) && array_values(array_unique($oldHosts)) != array_values(array_unique($newHosts))) $domainChanged = true;
+    }
+    $keys = [];
+    if($domainChanged){
+        $problems[] = '🌐 دامنه یا آدرس اتصال تغییر کرده است.';
+        $keys[] = [['text'=>'🔄 بروزرسانی کانفیگ', 'callback_data'=>'updateConfigConnectionLink' . $oid]];
+    }
+    if(count($problems) == 0){
+        $problems[] = '✅ مشکل واضحی از سمت حجم، زمان یا دامنه پیدا نشد.';
+        $adminText = rawurlencode(function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($order['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.');
+        $keys[] = [['text'=>'💬 پیام به پشتیبانی', 'url'=>'tg://user?id=' . $admin]];
+        $keys[] = [['text'=>'📋 متن آماده پیام', 'callback_data'=>'diagReadyText_' . $oid]];
+    }else{
+        if($expire <= time() || (is_array($summary) && isset($summary['remaining_gb']) && $summary['remaining_gb'] !== null && floatval($summary['remaining_gb']) <= 0)){
+            $keys[] = [['text'=>'🔥 تمدید سرویس', 'callback_data'=>'renewAccount' . $oid]];
+        }
+    }
+    $msg = "🛠 <b>بررسی خودکار کانفیگ</b>\n\n" . implode("\n", array_merge($problems, $okLines));
+    $keys[] = [['text'=>'ℹ️ اطلاعات سرویس', 'callback_data'=>'orderDetails' . $oid]];
+    $keys[] = [['text'=>$buttonValues['back_button'], 'callback_data'=>'mySubscriptions']];
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+if(preg_match('/^diagReadyText_(\d+)$/', $data, $match)){
+    $oid = intval($match[1]);
+    $stmt = $connection->prepare("SELECT `remark` FROM `orders_list` WHERE `id`=? AND `userid`=? LIMIT 1");
+    $stmt->bind_param('ii', $oid, $from_id);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $txt = function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($row['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.';
+    sendMessage("📋 متن آماده برای ارسال به پشتیبانی:\n\n<code>" . htmlspecialchars($txt, ENT_QUOTES, 'UTF-8') . "</code>", json_encode(['inline_keyboard'=>[
+        [['text'=>'💬 رفتن به پیوی پشتیبانی', 'url'=>'tg://user?id=' . $admin]],
+        [['text'=>$buttonValues['back_button'], 'callback_data'=>'diagnoseConfig' . $oid]]
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+if($data == 'editDiagAdminText' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("متن آماده‌ای که برای پیام به پشتیبانی نمایش داده می‌شود را ارسال کن.\nمی‌توانی از <code>{remark}</code> برای نام سرویس استفاده کنی.", $cancelKey, 'HTML');
+    setUser('editDiagAdminText');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'editDiagAdminText' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    v2raystore_setSettingValue('CONFIG_DIAG_ADMIN_TEXT', trim((string)$text));
+    setUser();
+    sendMessage('✅ متن پشتیبانی ذخیره شد.', $removeKeyboard);
+    exit();
+}
+
 if(preg_match('/^orderDetails(\d+)(_|)(?<offset>\d+|)/', $data, $match)){
     $keys = getOrderDetailKeys($from_id, $match[1], !empty($match['offset'])?$match['offset']:0);
     if($keys != null){
@@ -14272,7 +14475,8 @@ function getAdminMessagesMenuKeys(){
         ['text'=>'📌 پیام‌های پین‌شده', 'callback_data'=>'broadcastPinsMenu']
     ];
     $keys[] = [
-        ['text'=>'📌 پین دستی متن/تصویر/فایل', 'callback_data'=>'proPinMenu']
+        ['text'=>'📌 پین دستی متن/تصویر/فایل', 'callback_data'=>'proPinMenu'],
+        ['text'=>'🛠 متن خطایابی کانفیگ', 'callback_data'=>'editDiagAdminText']
     ];
     $keys[] = v2raystore_adminSectionBackRow();
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);

@@ -1550,6 +1550,11 @@ function v2raystore_agentPricingDecode($raw){
         'config' => $normalizeLinkState($data['links']['config'] ?? 'default'),
         'sub' => $normalizeLinkState($data['links']['sub'] ?? 'default'),
     ];
+    if(!isset($data['limits']) || !is_array($data['limits'])) $data['limits'] = [];
+    $buyState = strtolower(trim((string)($data['limits']['buying'] ?? 'on')));
+    $data['limits']['buying'] = in_array($buyState, ['off','disable','disabled','0','false'], true) ? 'off' : 'on';
+    $data['limits']['daily_cap'] = max(0, intval($data['limits']['daily_cap'] ?? 0));
+    $data['limits']['credit_cap'] = max(0, intval($data['limits']['credit_cap'] ?? 0));
     return $data;
 }
 
@@ -1613,6 +1618,237 @@ function v2raystore_agentLinkSettingsLabel($raw){
     $discounts = v2raystore_agentPricingDecode($raw);
     $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
     return 'عادی: ' . v2raystore_agentLinkStateLabel($links['config']) . ' | ساب: ' . v2raystore_agentLinkStateLabel($links['sub']);
+}
+
+
+function v2raystore_agentLimitsNormalize($limits = null){
+    if(!is_array($limits)) $limits = [];
+    $buying = strtolower(trim((string)($limits['buying'] ?? 'on')));
+    $buying = in_array($buying, ['off','disable','disabled','0','false'], true) ? 'off' : 'on';
+    return [
+        'buying' => $buying,
+        'daily_cap' => max(0, intval($limits['daily_cap'] ?? 0)),
+        'credit_cap' => max(0, intval($limits['credit_cap'] ?? 0)),
+    ];
+}
+
+function v2raystore_agentLimitsLabel($raw){
+    $discounts = v2raystore_agentPricingDecode($raw);
+    $l = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
+    $buying = $l['buying'] === 'on' ? 'فعال ✅' : 'بسته 🚫';
+    $daily = $l['daily_cap'] > 0 ? ($l['daily_cap'] . ' خرید/روز') : 'نامحدود';
+    $credit = $l['credit_cap'] > 0 ? (number_format($l['credit_cap']) . ' تومان') : 'نامحدود';
+    return "خرید: {$buying} | سقف روزانه: {$daily} | سقف اعتبار/بدهی: {$credit}";
+}
+
+function v2raystore_agentTodayOrdersCount($agentId){
+    global $connection;
+    $agentId = intval($agentId);
+    $today = strtotime('today');
+    $stmt = $connection->prepare("SELECT COUNT(*) AS c FROM `orders_list` WHERE `userid`=? AND `agent_bought`=1 AND `status`=1 AND `date`>=?");
+    if(!$stmt) return 0;
+    $stmt->bind_param('ii', $agentId, $today);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return intval($row['c'] ?? 0);
+}
+
+function v2raystore_agentCanStartPurchase($user = null, $buyType = ''){
+    if($user === null) $user = $GLOBALS['userInfo'] ?? null;
+    if(!v2raystore_isAgentUser($user)) return ['ok'=>true];
+    if(!in_array((string)$buyType, ['one','much'], true)) return ['ok'=>true];
+    $discounts = v2raystore_agentPricingDecode($user['discount_percent'] ?? null);
+    $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
+    if($limits['buying'] !== 'on'){
+        return ['ok'=>false, 'message'=>'خرید نمایندگی شما فعلاً توسط مدیریت بسته شده است.'];
+    }
+    if($limits['daily_cap'] > 0 && v2raystore_agentTodayOrdersCount($user['userid'] ?? 0) >= $limits['daily_cap']){
+        return ['ok'=>false, 'message'=>'سقف خرید روزانه نماینده برای امروز تکمیل شده است.'];
+    }
+    $wallet = floatval($user['wallet'] ?? 0);
+    if($limits['credit_cap'] > 0 && $wallet < 0 && abs($wallet) >= $limits['credit_cap']){
+        return ['ok'=>false, 'message'=>'سقف اعتبار/بدهی نماینده تکمیل شده است.'];
+    }
+    return ['ok'=>true];
+}
+
+function v2raystore_agentReportText($agentId){
+    global $connection;
+    $agentId = intval($agentId);
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=? LIMIT 1");
+    if(!$stmt) return 'نماینده پیدا نشد.';
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agent = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$agent) return 'نماینده پیدا نشد.';
+    $now = time();
+    $today = strtotime('today');
+    $week = $now - 7*86400;
+    $month = $now - 30*86400;
+    $q = function($since) use ($connection, $agentId){
+        $stmt = $connection->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(`amount`),0) AS s FROM `orders_list` WHERE `userid`=? AND `agent_bought`=1 AND `status`=1 AND `date`>=?");
+        if(!$stmt) return ['c'=>0,'s'=>0];
+        $stmt->bind_param('ii', $agentId, $since);
+        $stmt->execute();
+        $r = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return ['c'=>intval($r['c'] ?? 0), 's'=>intval($r['s'] ?? 0)];
+    };
+    $allStmt = $connection->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(`amount`),0) AS s FROM `orders_list` WHERE `userid`=? AND `agent_bought`=1 AND `status`=1");
+    $all = ['c'=>0,'s'=>0];
+    if($allStmt){ $allStmt->bind_param('i',$agentId); $allStmt->execute(); $rr=$allStmt->get_result()->fetch_assoc(); $allStmt->close(); $all=['c'=>intval($rr['c']??0),'s'=>intval($rr['s']??0)]; }
+    $subs = 0;
+    $st = $connection->prepare("SELECT COUNT(*) AS c FROM `users` WHERE `refered_by`=?");
+    if($st){ $st->bind_param('i',$agentId); $st->execute(); $subs=intval($st->get_result()->fetch_assoc()['c']??0); $st->close(); }
+    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
+    $limits = v2raystore_agentLimitsLabel($agent['discount_percent'] ?? null);
+    $todayR = $q($today); $weekR = $q($week); $monthR = $q($month);
+    $name = htmlspecialchars((string)($agent['name'] ?? $agentId), ENT_QUOTES, 'UTF-8');
+    return "📊 <b>گزارش نماینده</b>\n\n" .
+        "👤 نماینده: <b>{$name}</b>\n" .
+        "🆔 آیدی: <code>{$agentId}</code>\n" .
+        "⚙️ کنترل خرید: " . htmlspecialchars($limits, ENT_QUOTES, 'UTF-8') . "\n\n" .
+        "امروز: <code>{$todayR['c']}</code> خرید | <code>" . number_format($todayR['s']) . "</code> تومان\n" .
+        "۷ روز: <code>{$weekR['c']}</code> خرید | <code>" . number_format($weekR['s']) . "</code> تومان\n" .
+        "۳۰ روز: <code>{$monthR['c']}</code> خرید | <code>" . number_format($monthR['s']) . "</code> تومان\n" .
+        "کل: <code>{$all['c']}</code> خرید | <code>" . number_format($all['s']) . "</code> تومان\n" .
+        "👥 زیرمجموعه‌های ثبت‌شده: <code>{$subs}</code>";
+}
+
+function v2raystore_getSettingValue($type, $default = ''){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type`=? LIMIT 1");
+    if(!$stmt) return $default;
+    $stmt->bind_param('s', $type);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ? (string)$row['value'] : $default;
+}
+
+function v2raystore_setSettingValue($type, $value){
+    global $connection;
+    $type = (string)$type; $value = (string)$value;
+    $stmt = $connection->prepare("INSERT INTO `setting` (`type`,`value`) VALUES (?,?) ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)");
+    if(!$stmt) return false;
+    $stmt->bind_param('ss', $type, $value);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+
+function v2raystore_botFeatureEnabled($key, $default = 'on'){
+    global $botState;
+    $key = (string)$key;
+    $default = ($default === 'off') ? 'off' : 'on';
+    $value = $botState[$key] ?? $default;
+    return $value !== 'off';
+}
+
+function v2raystore_configHelpButtonRows(){
+    if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')) return [];
+    return [
+        [ ['text'=>'📱 آموزش آیفون', 'callback_data'=>'appTutorial_ios'], ['text'=>'🤖 آموزش اندروید', 'callback_data'=>'appTutorial_android'] ],
+        [ ['text'=>'💻 آموزش ویندوز', 'callback_data'=>'appTutorial_windows'], ['text'=>'🌀 Streisand', 'callback_data'=>'appTutorial_streisand'] ],
+        [ ['text'=>'📲 V2rayNG', 'callback_data'=>'appTutorial_v2rayng'], ['text'=>'🛡 Hiddify', 'callback_data'=>'appTutorial_hiddify'] ],
+    ];
+}
+
+function v2raystore_configSentKeyboard($extraRows = []){
+    global $buttonValues;
+    if(!is_array($extraRows)) $extraRows = [];
+    $rows = array_merge($extraRows, v2raystore_configHelpButtonRows());
+    $rows[] = [['text'=>$buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی', 'callback_data'=>'mainMenu']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_findTutorialForApp($app){
+    $app = strtolower(trim((string)$app));
+    $aliases = [
+        'ios'=>['ios','iphone','آیفون','streisand'],
+        'android'=>['android','اندروید','v2rayng','hiddify'],
+        'windows'=>['windows','ویندوز','nekoray','hiddify'],
+        'streisand'=>['streisand','استرایسند','ios','iphone'],
+        'v2rayng'=>['v2rayng','v2ray ng','اندروید','android'],
+        'hiddify'=>['hiddify','هیدیفای','android','ios','windows'],
+    ];
+    $words = $aliases[$app] ?? [$app];
+    foreach(v2raystore_helpGetItems('tutorial', false) as $row){
+        $hay = strtolower((string)($row['title'] ?? '') . ' ' . (string)($row['body'] ?? ''));
+        foreach($words as $w){
+            $w = strtolower((string)$w);
+            if($w !== '' && stripos($hay, $w) !== false) return $row;
+        }
+    }
+    return null;
+}
+
+function v2raystore_appTutorialTitle($app){
+    $map = ['ios'=>'آیفون','android'=>'اندروید','windows'=>'ویندوز','streisand'=>'Streisand','v2rayng'=>'V2rayNG','hiddify'=>'Hiddify'];
+    return $map[$app] ?? $app;
+}
+
+function v2raystore_adminHelpContactText($orderRemark = ''){
+    $default = "سلام، کانفیگ من وصل نمی‌شود. لطفاً بررسی کنید.\nنام سرویس: {remark}";
+    $txt = v2raystore_getSettingValue('CONFIG_DIAG_ADMIN_TEXT', $default);
+    return str_replace('{remark}', (string)$orderRemark, $txt);
+}
+
+function v2raystore_smartRenewCandidateFromOrders($ordersRows){
+    if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('smartRenewState', 'on')) return null;
+    if(!is_array($ordersRows) || count($ordersRows) == 0) return null;
+    $now = time();
+    $best = null; $bestScore = PHP_INT_MAX; $bestSummary = null;
+    foreach($ordersRows as $o){
+        if(!is_array($o) || intval($o['status'] ?? 0) != 1) continue;
+        $exp = intval($o['expire_date'] ?? 0);
+        $score = PHP_INT_MAX;
+        if($exp > 0 && $exp <= $now) $score = 0;
+        elseif($exp > 0 && $exp <= $now + 3*86400) $score = 10 + max(0, $exp - $now);
+        if($score < $bestScore){ $bestScore = $score; $best = $o; }
+    }
+    // اگر از نظر زمان چیزی نزدیک اتمام نبود، برای فشار نیامدن فقط چند سرویس اول را از پنل چک می‌کنیم
+    // تا اتمام حجم هم بتواند پیشنهاد تمدید بدهد.
+    if(!$best && function_exists('v2raystore_getOrderRemainingSummary')){
+        $checked = 0;
+        foreach($ordersRows as $o){
+            if(!is_array($o) || intval($o['status'] ?? 0) != 1) continue;
+            if($checked++ >= 6) break;
+            $sum = v2raystore_getOrderRemainingSummary($o);
+            if(is_array($sum) && isset($sum['remaining_gb']) && $sum['remaining_gb'] !== null && floatval($sum['remaining_gb']) <= 1){
+                $best = $o; $bestSummary = $sum; break;
+            }
+        }
+    }
+    if(!$best) return null;
+    $summary = $bestSummary ?: (function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($best) : null);
+    $daysText = $summary['remaining_days_text'] ?? v2raystore_formatRemainingDaysText($best['expire_date'] ?? 0);
+    $volText = isset($summary['remaining_gb_text']) ? ($summary['remaining_gb_text'] === 'نامحدود' ? 'نامحدود' : $summary['remaining_gb_text'] . ' گیگ') : 'نامشخص';
+    return ['order'=>$best, 'days_text'=>$daysText, 'volume_text'=>$volText];
+}
+function v2raystore_smartRenewHeaderText($candidate){
+    if(!$candidate || empty($candidate['order'])) return '';
+    $remark = htmlspecialchars((string)($candidate['order']['remark'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $days = htmlspecialchars((string)($candidate['days_text'] ?? 'نامشخص'), ENT_QUOTES, 'UTF-8');
+    $vol = htmlspecialchars((string)($candidate['volume_text'] ?? 'نامشخص'), ENT_QUOTES, 'UTF-8');
+    return "⚠️ <b>اکانت شما در حال اتمام است و نیاز به تمدید دارد.</b>\n" .
+           "🔮 سرویس: <b>{$remark}</b>\n" .
+           "⏳ روز باقی‌مانده: <b>{$days}</b>\n" .
+           "🔋 حجم باقی‌مانده: <b>{$vol}</b>\n\n";
+}
+
+function v2raystore_smartRenewRows($candidate){
+    if(!$candidate || empty($candidate['order'])) return [];
+    $id = intval($candidate['order']['id']);
+    $days = (string)($candidate['days_text'] ?? 'نامشخص');
+    $vol = (string)($candidate['volume_text'] ?? 'نامشخص');
+    return [
+        [ ['text'=>'🔥 تمدید سرویس', 'callback_data'=>'renewAccount' . $id], ['text'=>'ℹ️ اطلاعات بیشتر', 'callback_data'=>'orderDetails' . $id] ],
+        [ ['text'=>'⏳ ' . $days, 'callback_data'=>'v2raystore'], ['text'=>'🔋 ' . $vol, 'callback_data'=>'v2raystore'] ],
+    ];
 }
 
 function v2raystore_getUserRowById($userId){
@@ -7465,6 +7701,18 @@ function getAgentDiscounts($agentId){
     $keys[] = [
         ['text'=>'لینک عادی: ' . v2raystore_agentLinkStateLabel($links['config']), 'callback_data'=>'toggleAgentLink_config_' . $agentId],
         ['text'=>'لینک ساب: ' . v2raystore_agentLinkStateLabel($links['sub']), 'callback_data'=>'toggleAgentLink_sub_' . $agentId]
+    ];
+    $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
+    $keys[] = [
+        ['text'=>'خرید نماینده: ' . ($limits['buying'] === 'on' ? 'فعال ✅' : 'بسته 🚫'), 'callback_data'=>'toggleAgentBuying_' . $agentId]
+    ];
+    $keys[] = [
+        ['text'=>'سقف روزانه: ' . ($limits['daily_cap'] > 0 ? $limits['daily_cap'] : 'نامحدود'), 'callback_data'=>'editAgentDailyCap_' . $agentId],
+        ['text'=>'سقف اعتبار: ' . ($limits['credit_cap'] > 0 ? number_format($limits['credit_cap']) : 'نامحدود'), 'callback_data'=>'editAgentCreditCap_' . $agentId]
+    ];
+    $keys[] = [
+        ['text'=>'📊 گزارش فروش و سود', 'callback_data'=>'agentProReport_' . $agentId],
+        ['text'=>'👥 زیرمجموعه‌ها', 'callback_data'=>'proReferralList_' . $agentId]
     ];            
     
     if(($botState['agencyPlanDiscount'] ?? 'on')=="on"){
@@ -7928,6 +8176,9 @@ function getBotSettingKeys(){
     $newMemberLock = ($botState['newMemberLockState'] ?? 'off')=="on"?$buttonValues['on']:$buttonValues['off'];
     $qrConfig = $botState['qrConfigState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $qrSub = $botState['qrSubState']=="on"?$buttonValues['on']:$buttonValues['off'];
+    $smartRenew = (($botState['smartRenewState'] ?? 'on') == 'on') ? $buttonValues['on'] : $buttonValues['off'];
+    $configTutorialButtons = (($botState['configTutorialButtonsState'] ?? 'on') == 'on') ? $buttonValues['on'] : $buttonValues['off'];
+    $configDiagnostics = (($botState['configDiagnosticsState'] ?? 'on') == 'on') ? $buttonValues['on'] : $buttonValues['off'];
     
     $requirePhone = $botState['requirePhone']=="on"?$buttonValues['on']:$buttonValues['off'];
     $requireIranPhone = $botState['requireIranPhone']=="on"?$buttonValues['on']:$buttonValues['off'];
@@ -8058,6 +8309,18 @@ function getBotSettingKeys(){
         [
             ['text'=>$updateConfigLink,'callback_data'=>"changeBotupdateConfigLinkState"],
             ['text'=>"بروز رسانی لینک",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>$smartRenew,'callback_data'=>"changeBotsmartRenewState"],
+            ['text'=>"تمدید هوشمند در کانفیگ‌های من",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>$configTutorialButtons,'callback_data'=>"changeBotconfigTutorialButtonsState"],
+            ['text'=>"دکمه‌های آموزش زیر کانفیگ",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>$configDiagnostics,'callback_data'=>"changeBotconfigDiagnosticsState"],
+            ['text'=>"دکمه وصل نمیشه / خطایابی",'callback_data'=>"v2raystore"]
         ],
         [
             ['text'=>$qrConfig,'callback_data'=>"changeBotqrConfigState"],
@@ -8438,8 +8701,7 @@ function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subL
     if(trim($msg) === '') return false;
 
     if($keyboard === null){
-        $backText = $buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی';
-        $keyboard = json_encode(['inline_keyboard'=>[[['text'=>$backText,'callback_data'=>'mainMenu']]]]);
+        $keyboard = function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>($buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی'),'callback_data'=>'mainMenu']]]], JSON_UNESCAPED_UNICODE);
     }
     $sendRes = sendMessage($msg, $keyboard, 'HTML', $chatId);
     if(function_exists('v2raystore_telegramResponseOk') && v2raystore_telegramResponseOk($sendRes)) return true;
@@ -9189,6 +9451,9 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
             if($botState['qrSubState'] == "on") $temp[] = ['text'=>$buttonValues['qr_sub'],'callback_data'=>"showQrSub" . $id];
             array_push($keyboard, $temp);
             
+        }
+        if(function_exists('v2raystore_botFeatureEnabled') && v2raystore_botFeatureEnabled('configDiagnosticsState', 'on')){
+            $keyboard[] = [['text' => '🛠 وصل نمیشه؟ بررسی خودکار', 'callback_data' => "diagnoseConfig" . $id]];
         }
         $keyboard[] = [['text' => $buttonValues['delete_config'], 'callback_data' => "deleteMyConfig" . $id]];
 
@@ -15104,6 +15369,7 @@ function v2raystore_getOrderRemainingSummary($order){
     $serverType = (string)($serverConfig['type'] ?? '');
 
     $remainingBytes = null;
+    $enabled = null;
     $expireSeconds = intval($order['expire_date'] ?? 0);
 
     if($serverType === 'marzban'){
@@ -15112,6 +15378,7 @@ function v2raystore_getOrderRemainingSummary($order){
             $total = intval($info->data_limit ?? 0);
             $used = intval($info->used_traffic ?? 0);
             $remainingBytes = $total > 0 ? max(0, $total - $used) : null;
+            $enabled = (($info->status ?? 'active') === 'active');
             $expireSeconds = intval($info->expire ?? $expireSeconds);
         }
     }else{
@@ -15135,6 +15402,7 @@ function v2raystore_getOrderRemainingSummary($order){
                         $up = intval(v2raystore_arrayValue($stat, 'up', 0));
                         $down = intval(v2raystore_arrayValue($stat, 'down', 0));
                         $remainingBytes = $total > 0 ? max(0, $total - $up - $down) : null;
+                        $enabled = (bool)v2raystore_arrayValue($stat, 'enable', v2raystore_arrayValue($client, 'enable', true));
                         $exp = v2raystore_arrayValue($stat, 'expiryTime', 0);
                         if((empty($exp) || intval($exp) == 0)) $exp = v2raystore_arrayValue($client, 'expiryTime', 0);
                         if(function_exists('v2raystore_panelExpiryToSeconds')) $expireSeconds = v2raystore_panelExpiryToSeconds($exp) ?: $expireSeconds;
@@ -15144,6 +15412,7 @@ function v2raystore_getOrderRemainingSummary($order){
                     $up = intval(v2raystore_arrayValue($row, 'up', 0));
                     $down = intval(v2raystore_arrayValue($row, 'down', 0));
                     $remainingBytes = $total > 0 ? max(0, $total - $up - $down) : null;
+                    $enabled = (bool)v2raystore_arrayValue($row, 'enable', v2raystore_arrayValue($client, 'enable', true));
                     $exp = v2raystore_arrayValue($row, 'expiryTime', 0);
                     if(function_exists('v2raystore_panelExpiryToSeconds')) $expireSeconds = v2raystore_panelExpiryToSeconds($exp) ?: $expireSeconds;
                 }
@@ -15159,6 +15428,7 @@ function v2raystore_getOrderRemainingSummary($order){
         'remaining_days' => v2raystore_formatRemainingDaysNumber($expireSeconds),
         'remaining_days_text' => v2raystore_formatRemainingDaysText($expireSeconds),
         'expire_date' => $expireSeconds,
+        'enabled' => $enabled,
     ];
 }
 
