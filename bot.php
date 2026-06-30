@@ -10299,6 +10299,36 @@ function v2raystore_supportPrefillUrl($messageText = ''){
     return 'tg://user?id=' . $adminId;
 }
 
+function v2raystore_diagSupportText($remark = ''){
+    $remark = trim((string)$remark);
+    if(function_exists('v2raystore_adminHelpContactText')){
+        $txt = (string)v2raystore_adminHelpContactText($remark);
+    }else{
+        $txt = "سلام، کانفیگ من وصل نمی‌شود. لطفاً بررسی کنید.\nنام سرویس: {remark}";
+        $txt = str_replace('{remark}', $remark, $txt);
+    }
+    $txt = str_replace(["\r\n", "\r"], "\n", trim($txt));
+    if($remark !== ''){
+        // نام سرویس در خط جدا باشد تا کاربر/ادمین راحت کپی کند.
+        $txt = preg_replace('/نام\s*سرویس\s*:\s*' . preg_quote($remark, '/') . '/u', "نام سرویس:\n" . $remark, $txt);
+        if(strpos($txt, $remark) === false){
+            $txt = rtrim($txt) . "\n\nنام سرویس:\n" . $remark;
+        }
+    }
+    return $txt;
+}
+
+function v2raystore_openSupportChatByCallback($supportText){
+    global $callbackId;
+    $url = v2raystore_supportPrefillUrl($supportText);
+    return bot('answercallbackquery', [
+        'callback_query_id' => $callbackId,
+        'text' => 'مشکل واضحی پیدا نشد؛ پی‌وی پشتیبانی باز شد.',
+        'show_alert' => false,
+        'url' => $url
+    ]);
+}
+
 if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configDiagnosticsState', 'on')){
         alert('خطایابی خودکار توسط مدیریت غیرفعال شده است.');
@@ -10352,19 +10382,23 @@ if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
     $keys = [];
     if($domainChanged){
         $problems[] = '🌐 دامنه یا آدرس اتصال تغییر کرده است.';
-        $keys[] = [['text'=>'🔄 بروزرسانی کانفیگ', 'callback_data'=>'updateConfigConnectionLink' . $oid]];
     }
     if(count($problems) == 0){
-        $problems[] = '✅ مشکل واضحی از سمت حجم، زمان یا دامنه پیدا نشد.';
-        $adminTextRaw = function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($order['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.';
-        $keys[] = [['text'=>'💬 پیام به پشتیبانی', 'url'=>v2raystore_supportPrefillUrl($adminTextRaw)]];
-        $keys[] = [['text'=>'📋 نمایش متن آماده', 'callback_data'=>'diagReadyText_' . $oid]];
+        $adminTextRaw = v2raystore_diagSupportText($order['remark'] ?? '');
+        v2raystore_openSupportChatByCallback($adminTextRaw);
+        exit();
     }else{
+        if($domainChanged){
+            $keys[] = [['text'=>'🔄 بروزرسانی کانفیگ', 'callback_data'=>'updateConfigConnectionLink' . $oid]];
+        }
         if($expire <= time() || (is_array($summary) && isset($summary['remaining_gb']) && $summary['remaining_gb'] !== null && floatval($summary['remaining_gb']) <= 0)){
             $keys[] = [['text'=>'🔥 تمدید سرویس', 'callback_data'=>'renewAccount' . $oid]];
         }
     }
-    $msg = "🛠 <b>بررسی خودکار کانفیگ</b>\n\n" . implode("\n", array_merge($problems, $okLines));
+    $msg = "🛠 <b>بررسی خودکار کانفیگ</b>\n\n" . implode("\n", $problems);
+    if(count($okLines)){
+        $msg .= "\n\nجزئیات:\n" . implode("\n", $okLines);
+    }
     $keys[] = [['text'=>'ℹ️ اطلاعات سرویس', 'callback_data'=>'orderDetails' . $oid]];
     $keys[] = [['text'=>$buttonValues['back_button'], 'callback_data'=>'mySubscriptions']];
     editText($message_id, $msg, json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE), 'HTML');
@@ -10377,7 +10411,7 @@ if(preg_match('/^diagReadyText_(\d+)$/', $data, $match)){
     $stmt->execute();
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-    $txt = function_exists('v2raystore_adminHelpContactText') ? v2raystore_adminHelpContactText($row['remark'] ?? '') : 'سلام، کانفیگ من وصل نمی‌شود.';
+    $txt = v2raystore_diagSupportText($row['remark'] ?? '');
     sendMessage("📋 متن آماده برای ارسال به پشتیبانی:
 
 <code>" . htmlspecialchars($txt, ENT_QUOTES, 'UTF-8') . "</code>

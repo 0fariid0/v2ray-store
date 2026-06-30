@@ -1792,7 +1792,7 @@ function v2raystore_appTutorialTitle($app){
 }
 
 function v2raystore_adminHelpContactText($orderRemark = ''){
-    $default = "سلام، کانفیگ من وصل نمی‌شود. لطفاً بررسی کنید.\nنام سرویس: {remark}";
+    $default = "سلام، کانفیگ من وصل نمی‌شود. لطفاً بررسی کنید.\n\nنام سرویس:\n{remark}";
     $txt = v2raystore_getSettingValue('CONFIG_DIAG_ADMIN_TEXT', $default);
     return str_replace('{remark}', (string)$orderRemark, $txt);
 }
