@@ -2630,7 +2630,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         }
         else{
             $token = RandomString(30);
-            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+            $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
             $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
             $vray_link = json_encode($vraylink);
         }
@@ -3071,7 +3071,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $token = RandomString(30);
             $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
     
-            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+            $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
             $vray_link = json_encode($vraylink);
         }
         $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
@@ -5666,7 +5666,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $token = RandomString(30);
         $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
     
-        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+        $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link = json_encode($vraylink);
     }
     delMessage();
@@ -6099,7 +6099,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
         $token = RandomString(30);
         $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
     
-        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+        $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link= json_encode($vraylink);
     }
     define('IMAGE_WIDTH',540);
@@ -6455,7 +6455,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             }
             else{
                 $token = RandomString(30);
-                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+                $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
                 $vray_link= json_encode($vraylink);
                 $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
             }
@@ -7009,7 +7009,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 $token = RandomString(30);
                 $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
         
-                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+                $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
                 $vray_link = json_encode($vraylink);
             }
             $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
@@ -8576,7 +8576,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     }else{
         $token = RandomString(30);
         $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
-        $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+        $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $id) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link = json_encode($vraylink);
     }
     define('IMAGE_WIDTH',540);

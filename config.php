@@ -668,7 +668,8 @@ v2raystore_ensureServerInboundAddressesColumn();
 function v2raystore_normalizeInboundAddressList($addresses){
     if(is_array($addresses)) $raw = $addresses;
     else $raw = preg_split('/
-||
+|
+|
 |[,،;|]+/u', trim((string)$addresses));
     $out = [];
     foreach($raw as $item){
@@ -8918,13 +8919,24 @@ function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subL
     }
     $linkOptions = v2raystore_normalizeDeliveryLinkOptions($linkOptions);
     $links = v2raystore_normalizeConfigLinksArray($links);
-    if(count($links) <= 1) return false;
-    if(!$linkOptions['config']) return false;
     if(!$linkOptions['sub']) $subLink = '';
     if($serverType === 'marzban') return false;
 
     if($heading === null || trim((string)$heading) === '') $heading = '✅ کانفیگ‌های سرویس شما آماده شد';
-    $msg = v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink, $heading, $extraLines);
+
+    if(!$linkOptions['config']){
+        $subLink = trim((string)$subLink);
+        if($subLink === '') return false;
+        $safeRemark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
+        $msg = $heading . "\n";
+        if($safeRemark !== '') $msg .= "🔮 نام سرویس: <b>{$safeRemark}</b>\n";
+        $extraLines = trim((string)$extraLines);
+        if($extraLines !== '') $msg .= $extraLines . "\n";
+        $msg .= "\n🌐 subscription : <code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>";
+    }else{
+        if(count($links) <= 1) return false;
+        $msg = v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink, $heading, $extraLines);
+    }
     if(trim($msg) === '') return false;
 
     if($keyboard === null){
@@ -11936,7 +11948,8 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
         $inboundAddressOverride = v2raystore_getInboundAddressString($server_id, $inbound_id);
         if($inboundAddressOverride !== '') $customDomain = $inboundAddressOverride;
     }
-    if($serverType == 'sanaei_new' && $rahgozar == false && $customPath == false && intval($customPort) == 0 && $customSni === null && v2raystore_normalizePlanDomainInput($customDomain) === ''){
+    $__v2raystoreForceLocalLinkBuild = !empty($GLOBALS['v2raystore_force_local_link_build']);
+    if(!$__v2raystoreForceLocalLinkBuild && $serverType == 'sanaei_new' && $rahgozar == false && $customPath == false && intval($customPort) == 0 && $customSni === null && v2raystore_normalizePlanDomainInput($customDomain) === ''){
         $panelLinks = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uniqid, $inbound_id);
         if(!empty($panelLinks)) return $panelLinks;
     }
@@ -12348,6 +12361,66 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
 
     return $outputLink;
 }
+
+if(!function_exists('v2raystore_buildPlanInboundConnectionLinks')){
+function v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $fallbackInboundId = 0, $rahgozar = false, $customPath = false, $customPort = 0, $customSni = null, $customDomain = null, $planId = null){
+    global $connection;
+    $server_id = intval($server_id);
+    $fallbackInboundId = intval($fallbackInboundId);
+
+    $serverType = '';
+    if($server_id > 0 && isset($connection)){
+        $stmt = @$connection->prepare("SELECT `type` FROM `server_config` WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $server_id);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $serverType = (string)($row['type'] ?? '');
+        }
+    }
+
+    $inboundIds = [];
+    if($serverType === 'sanaei_new' && $planId !== null && function_exists('v2raystore_getPlanRow') && function_exists('v2raystore_planInboundIds')){
+        $planRow = v2raystore_getPlanRow(intval($planId));
+        $inboundIds = v2raystore_planInboundIds($planRow, false);
+    }
+    if(empty($inboundIds) && $fallbackInboundId > 0) $inboundIds = [$fallbackInboundId];
+    if(empty($inboundIds)){
+        return getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $fallbackInboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+    }
+
+    $inboundIds = array_values(array_unique(array_filter(array_map('intval', $inboundIds))));
+    if(count($inboundIds) <= 1){
+        $iid = !empty($inboundIds) ? intval($inboundIds[0]) : $fallbackInboundId;
+        return getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $iid, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+    }
+
+    $links = [];
+    $oldForce = !empty($GLOBALS['v2raystore_force_local_link_build']);
+    $GLOBALS['v2raystore_force_local_link_build'] = true;
+    try{
+        foreach($inboundIds as $iid){
+            if($iid <= 0) continue;
+            $one = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $iid, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+            $one = function_exists('v2raystore_normalizeConfigLinksArray') ? v2raystore_normalizeConfigLinksArray($one) : (is_array($one) ? $one : [$one]);
+            foreach($one as $link){
+                $link = trim((string)$link);
+                if($link !== '') $links[] = $link;
+            }
+        }
+    }finally{
+        if($oldForce) $GLOBALS['v2raystore_force_local_link_build'] = true;
+        else unset($GLOBALS['v2raystore_force_local_link_build']);
+    }
+    $links = array_values(array_unique($links));
+    if(empty($links)){
+        return getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $fallbackInboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+    }
+    return $links;
+}
+}
+
 function updateConfig($server_id, $inboundId, $protocol, $netType = 'tcp', $security = 'none', $rahgozar = false){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -17950,19 +18023,9 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
             if(empty($planInboundIdsForLinks) && intval($inbound_id) > 0) $planInboundIdsForLinks = [intval($inbound_id)];
             $primaryInboundForSub = !empty($planInboundIdsForLinks) ? intval($planInboundIdsForLinks[0]) : intval($inbound_id);
             $subLink = ($linkOptions['sub'] ?? false) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $primaryInboundForSub, $remark) : '';
-            if($serverType == 'sanaei_new' && count($planInboundIdsForLinks) > 1){
-                $vraylink = [];
-                foreach($planInboundIdsForLinks as $multiInboundId){
-                    $multiInboundId = intval($multiInboundId);
-                    if($multiInboundId <= 0) continue;
-                    $linksForInbound = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $multiInboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
-                    if(is_array($linksForInbound)) $vraylink = array_merge($vraylink, $linksForInbound);
-                    elseif(!empty($linksForInbound)) $vraylink[] = $linksForInbound;
-                }
-                $vraylink = array_values(array_unique(array_filter(array_map('strval', $vraylink))));
-            }else{
-                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
-            }
+            $vraylink = function_exists('v2raystore_buildPlanInboundConnectionLinks')
+                ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid)
+                : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
         $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType, $linkOptions);
