@@ -1995,8 +1995,7 @@ if($data=="myInfo"){
     $accountKeys = [];
     if(v2raystore_isWalletOpenForCurrentUser()){
         $accountKeys[] = [
-            ['text'=>"شارژ کیف پول 💰",'callback_data'=>"increaseMyWallet"],
-            ['text'=>"انتقال موجودی",'callback_data'=>"transferMyWallet"]
+            ['text'=>"شارژ کیف پول 💰",'callback_data'=>"increaseMyWallet"]
         ];
     }
     $accountKeys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"mainMenu"]];
@@ -2016,58 +2015,15 @@ if($data=="myInfo"){
             $keys,"html");
 }
 if($data=="transferMyWallet"){
-    if(!v2raystore_isWalletOpenForCurrentUser()){
-        alert("کیف پول در حال حاضر برای حساب شما غیرفعال است.", true);
-        exit();
-    }
-    if($userInfo['wallet'] > 0 ){
-        delMessage();
-        sendMessage("لطفاً آیدی عددی کاربر مورد نظر رو وارد کن",$cancelKey);
-        setUser($data);
-    }else alert("موجودی حساب شما کم است");
+    setUser();
+    alert("گزینه انتقال موجودی غیرفعال شده است.", true);
+    exit();
 }
-if($userInfo['step'] =="transferMyWallet" && $text != $buttonValues['cancel']){
-    if(!v2raystore_isWalletOpenForCurrentUser()){
-        setUser();
-        sendMessage("کیف پول در حال حاضر برای حساب شما غیرفعال است.", $removeKeyboard);
-        exit();
-    }
-    if(is_numeric($text)){
-        if($text != $from_id){
-            $stmt= $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
-            $stmt->bind_param("i", $text);
-            $stmt->execute();
-            $checkExist = $stmt->get_result();
-            $stmt->close();
-            
-            if($checkExist->num_rows > 0){
-                setUser("tranfserUserAmount" . $text);
-                sendMessage("لطفاً مبلغ مورد نظر رو وارد کن");
-            }else sendMessage("کاربری با این آیدی یافت نشد");
-        }else sendMessage("میخای به خودت انتقال بدی ؟؟");
-    }else sendMessage($mainValues['send_only_number']);
-}
-if(preg_match('/^tranfserUserAmount(\d+)/',$userInfo['step'],$match) && $text != $buttonValues['cancel']){
-    if(is_numeric($text)){
-        if($text > 0){
-            if($userInfo['wallet'] >= $text){
-                $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
-                $stmt->bind_param("ii", $text, $match[1]);
-                $stmt->execute();
-                $stmt->close();
-                
-                $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` - ? WHERE `userid` = ?");
-                $stmt->bind_param("ii", $text, $from_id);
-                $stmt->execute();
-                $stmt->close();
-                
-                sendMessage("✅|مبلغ " . number_format($text) . " تومان به کیف پول شما توسط کاربر $from_id انتقال یافت",null,null,$match[1]);
-                setUser();
-                sendMessage("✅|مبلغ " . number_format($text) . " تومان به کیف پول کاربر مورد نظر شما انتقال یافت",$removeKeyboard);
-                sendMessage("لطفاً یکی از کلید های زیر را انتخاب کنید",getMainKeys());
-            }else sendMessage("موجودی حساب شما کم است");
-        }else sendMessage("لطفاً عددی بزرگتر از صفر وارد کنید");
-    }else sendMessage($mainValues['send_only_number']);
+if(($userInfo['step'] == "transferMyWallet" || preg_match('/^tranfserUserAmount(\d+)/', $userInfo['step'])) && $text != $buttonValues['cancel']){
+    setUser();
+    sendMessage("گزینه انتقال موجودی غیرفعال شده است.", $removeKeyboard);
+    sendMessage("لطفاً یکی از کلید های زیر را انتخاب کنید", getMainKeys());
+    exit();
 }
 if($data=="increaseMyWallet"){
     if(!v2raystore_isWalletOpenForCurrentUser()){
