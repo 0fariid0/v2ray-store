@@ -1975,9 +1975,13 @@ function v2raystore_botFeatureEnabled($key, $default = 'on'){
 function v2raystore_configHelpButtonRows(){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')) return [];
     return [
-        [ ['text'=>'📲 آموزش V2rayNG', 'callback_data'=>'appTutorial_v2rayng'] ],
-        [ ['text'=>'💻 آموزش V2rayN', 'callback_data'=>'appTutorial_v2rayn'] ],
-        [ ['text'=>'🌀 آموزش Streisand', 'callback_data'=>'appTutorial_streisand'] ],
+        [
+            ['text'=>'📲 آموزش V2rayNG', 'callback_data'=>'appTutorial_v2rayng'],
+            ['text'=>'💻 آموزش V2rayN', 'callback_data'=>'appTutorial_v2rayn']
+        ],
+        [
+            ['text'=>'🌀 آموزش Streisand', 'callback_data'=>'appTutorial_streisand']
+        ],
     ];
 }
 
@@ -2000,20 +2004,23 @@ function v2raystore_defaultTutorialForApp($app){
 }
 
 function v2raystore_findTutorialForApp($app){
-    $app = strtolower(trim((string)$app));
-    $aliases = [
-        'streisand'=>['streisand','استرایسند','ios','iphone','آیفون'],
-        'v2rayng'=>['v2rayng','v2ray ng','اندروید','android'],
-        'v2rayn'=>['v2rayn','v2ray n','windows','ویندوز'],
-    ];
-    $words = $aliases[$app] ?? [$app];
-    foreach(v2raystore_helpGetItems('tutorial', false) as $row){
-        $hay = strtolower((string)($row['title'] ?? '') . ' ' . (string)($row['body'] ?? ''));
-        foreach($words as $w){
-            $w = strtolower((string)$w);
-            if($w !== '' && stripos($hay, $w) !== false) return $row;
-        }
+    $app = function_exists('v2raystore_helpNormalizeTutorialApp') ? v2raystore_helpNormalizeTutorialApp($app) : strtolower(trim((string)$app));
+    if($app === '') return null;
+
+    $items = v2raystore_helpGetItems('tutorial', false);
+
+    // اول با شناسه دقیق برنامه match می‌کنیم تا V2rayN با V2rayNG اشتباه نشود.
+    foreach($items as $row){
+        $rowApp = function_exists('v2raystore_helpNormalizeTutorialApp') ? v2raystore_helpNormalizeTutorialApp($row['app'] ?? '') : strtolower((string)($row['app'] ?? ''));
+        if($rowApp !== '' && $rowApp === $app) return $row;
     }
+
+    // fallback امن برای آیتم‌های قدیمی که app ندارند؛ عبارت V2rayN دیگر داخل V2rayNG حساب نمی‌شود.
+    foreach($items as $row){
+        $rowApp = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($row) : '';
+        if($rowApp !== '' && $rowApp === $app) return $row;
+    }
+
     return function_exists('v2raystore_defaultTutorialForApp') ? v2raystore_defaultTutorialForApp($app) : null;
 }
 
@@ -3241,6 +3248,48 @@ function v2raystore_helpLimitText($text, $max){
     return strlen($text) > $max ? substr($text, 0, $max) : $text;
 }
 
+function v2raystore_helpNormalizeTutorialApp($app){
+    $app = strtolower(trim((string)$app));
+    $app = str_replace([' ', '-', '_'], '', $app);
+    $map = [
+        'v2rayng' => 'v2rayng',
+        'v2rayn' => 'v2rayn',
+        'streisand' => 'streisand',
+        'android' => 'v2rayng',
+        'اندروید' => 'v2rayng',
+        'windows' => 'v2rayn',
+        'win' => 'v2rayn',
+        'ویندوز' => 'v2rayn',
+        'ios' => 'streisand',
+        'iphone' => 'streisand',
+        'آیفون' => 'streisand',
+        'استرایسند' => 'streisand',
+    ];
+    return $map[$app] ?? '';
+}
+
+function v2raystore_helpDetectTutorialApp($row){
+    if(is_array($row)){
+        $app = v2raystore_helpNormalizeTutorialApp($row['app'] ?? '');
+        if($app !== '') return $app;
+        $hay = (string)($row['title'] ?? '') . ' ' . (string)($row['body'] ?? '');
+    }else{
+        $hay = (string)$row;
+    }
+
+    // ترتیب مهم است: اول V2rayNG بررسی می‌شود تا با V2rayN قاطی نشود.
+    if(preg_match('/(^|[^a-z0-9])v2ray\s*ng([^a-z0-9]|$)/iu', $hay) || stripos($hay, 'android') !== false || (function_exists('mb_stripos') && mb_stripos($hay, 'اندروید', 0, 'UTF-8') !== false) || strpos($hay, 'اندروید') !== false){
+        return 'v2rayng';
+    }
+    if(preg_match('/(^|[^a-z0-9])v2ray\s*n(?!g)([^a-z0-9]|$)/iu', $hay) || stripos($hay, 'windows') !== false || (function_exists('mb_stripos') && mb_stripos($hay, 'ویندوز', 0, 'UTF-8') !== false) || strpos($hay, 'ویندوز') !== false){
+        return 'v2rayn';
+    }
+    if(stripos($hay, 'streisand') !== false || stripos($hay, 'iphone') !== false || stripos($hay, 'ios') !== false || (function_exists('mb_stripos') && mb_stripos($hay, 'آیفون', 0, 'UTF-8') !== false) || (function_exists('mb_stripos') && mb_stripos($hay, 'استرایسند', 0, 'UTF-8') !== false) || strpos($hay, 'آیفون') !== false || strpos($hay, 'استرایسند') !== false){
+        return 'streisand';
+    }
+    return '';
+}
+
 function v2raystore_helpDefaultItems($type){
     if($type === 'tutorial'){
         return [
@@ -3272,10 +3321,11 @@ https://github.com/2dust/v2rayN/releases
 <b>روش استفاده:</b>
 1) فایل نسخه ویندوز را دانلود و Extract کنید.
 2) برنامه v2rayN.exe را اجرا کنید.
-3) لینک کانفیگ یا ساب را از ربات کپی کنید.
-4) از منوی Servers گزینه Import bulk URL from clipboard را بزنید.
-5) اگر لینک ساب دارید، از Subscription group setting لینک را اضافه و Update subscription را بزنید.
-6) کانفیگ را انتخاب کنید، Set system proxy را فعال کنید و متصل شوید.",
+3) همان اول از داخل خود برنامه یک بار گزینه Check Update / بررسی بروزرسانی را بزنید و Core برنامه را هم بروزرسانی کنید؛ اگر این کار انجام نشود ممکن است کانفیگ‌ها درست کار نکنند.
+4) لینک کانفیگ یا ساب را از ربات کپی کنید.
+5) از منوی Servers گزینه Import bulk URL from clipboard را بزنید.
+6) اگر لینک ساب دارید، از Subscription group setting لینک را اضافه کنید و حتماً Update subscription را بزنید.
+7) کانفیگ را انتخاب کنید، Set system proxy را فعال کنید و متصل شوید.",
                 'enabled'=>true
             ],
             [
@@ -3319,12 +3369,17 @@ function v2raystore_helpSanitizeItems($items, $type = 'faq', $useDefaultWhenEmpt
         $title = trim((string)($row['title'] ?? ''));
         $body = trim((string)($row['body'] ?? ''));
         if($title === '' || $body === '') continue;
-        $out[] = [
+        $clean = [
             'id' => $id,
             'title' => v2raystore_helpLimitText($title, 120),
             'body' => v2raystore_helpLimitText($body, 3900),
             'enabled' => !isset($row['enabled']) || !empty($row['enabled'])
         ];
+        if($type === 'tutorial'){
+            $detectedApp = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($row) : '';
+            if($detectedApp !== '') $clean['app'] = $detectedApp;
+        }
+        $out[] = $clean;
         $used[$id] = true;
     }
     if(count($out) === 0 && $useDefaultWhenEmpty) $out = v2raystore_helpDefaultItems($type);
@@ -3415,32 +3470,72 @@ function v2raystore_helpUserMenuText($type){
     return $msg;
 }
 
+function v2raystore_helpSoftwareLinksByApp(){
+    global $connection;
+    $out = ['by_app'=>[], 'other'=>[]];
+    $stmt = @$connection->prepare("SELECT `title`, `link` FROM `needed_sofwares` WHERE `status`=1");
+    if(!$stmt) return $out;
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while($res && ($file = $res->fetch_assoc())){
+        $title = trim((string)($file['title'] ?? ''));
+        $link = trim((string)($file['link'] ?? ''));
+        if($title === '' || !preg_match('/^https?:\/\//i', $link)) continue;
+        $app = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($title) : '';
+        $item = ['title'=>$title, 'link'=>$link];
+        if($app !== '' && !isset($out['by_app'][$app])) $out['by_app'][$app] = $item;
+        else $out['other'][] = $item;
+    }
+    $stmt->close();
+    return $out;
+}
+
 function v2raystore_helpUserMenuKeys($type){
-    global $connection, $buttonValues;
+    global $buttonValues;
     $cfg = v2raystore_helpTypeConfig($type);
     $rows = [];
-    foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
-        $rows[] = [[
-            'text' => ($cfg['type'] === 'faq' ? '❓ ' : '📚 ') . $row['title'],
-            'callback_data' => $cfg['item_prefix'] . intval($row['id']),
-            'style' => 'primary'
-        ]];
-    }
+
     if($cfg['type'] === 'tutorial'){
-        $stmt = @$connection->prepare("SELECT `title`, `link` FROM `needed_sofwares` WHERE `status`=1");
-        if($stmt){
-            $stmt->execute();
-            $res = $stmt->get_result();
-            while($res && ($file = $res->fetch_assoc())){
-                $title = trim((string)($file['title'] ?? ''));
-                $link = trim((string)($file['link'] ?? ''));
-                if($title !== '' && preg_match('/^https?:\/\//i', $link)){
-                    $rows[] = [[ 'text' => '⬇️ ' . $title, 'url' => $link ]];
-                }
+        $softwareLinks = v2raystore_helpSoftwareLinksByApp();
+        $usedApps = [];
+        foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
+            $app = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($row) : '';
+            $buttons = [[
+                'text' => '📚 آموزش ' . $row['title'],
+                'callback_data' => $cfg['item_prefix'] . intval($row['id']),
+                'style' => 'primary'
+            ]];
+            if($app !== '' && isset($softwareLinks['by_app'][$app])){
+                $buttons[] = [
+                    'text' => '⬇️ دانلود ' . v2raystore_appTutorialTitle($app),
+                    'url' => $softwareLinks['by_app'][$app]['link']
+                ];
+                $usedApps[$app] = true;
             }
-            $stmt->close();
+            $rows[] = $buttons;
+        }
+
+        $extraDownloadButtons = [];
+        foreach($softwareLinks['by_app'] as $app => $file){
+            if(isset($usedApps[$app])) continue;
+            $extraDownloadButtons[] = ['text'=>'⬇️ ' . $file['title'], 'url'=>$file['link']];
+        }
+        foreach($softwareLinks['other'] as $file){
+            $extraDownloadButtons[] = ['text'=>'⬇️ ' . $file['title'], 'url'=>$file['link']];
+        }
+        foreach(array_chunk($extraDownloadButtons, 2) as $chunk){
+            $rows[] = $chunk;
+        }
+    }else{
+        foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
+            $rows[] = [[
+                'text' => '❓ ' . $row['title'],
+                'callback_data' => $cfg['item_prefix'] . intval($row['id']),
+                'style' => 'primary'
+            ]];
         }
     }
+
     $rows[] = [[ 'text' => $buttonValues['back_to_main'] ?? 'بازگشت به منو', 'callback_data' => 'mainMenu', 'style' => 'primary' ]];
     return v2raystore_inlineKeyboardJson($rows);
 }
@@ -8599,6 +8694,10 @@ function getBotSettingKeys(){
         [
             ['text'=>$configTutorialButtons,'callback_data'=>"changeBotconfigTutorialButtonsState"],
             ['text'=>"دکمه‌های آموزش زیر کانفیگ",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>'✏️ ویرایش متن آموزش‌ها','callback_data'=>'adminHelpList_tutorial', 'style'=>'primary'],
+            ['text'=>"آموزش‌های اتصال",'callback_data'=>"v2raystore"]
         ],
         [
             ['text'=>$configDiagnostics,'callback_data'=>"changeBotconfigDiagnosticsState"],
