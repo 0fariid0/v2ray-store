@@ -1975,9 +1975,9 @@ function v2raystore_botFeatureEnabled($key, $default = 'on'){
 function v2raystore_configHelpButtonRows(){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')) return [];
     return [
-        [ ['text'=>'📱 آموزش آیفون', 'callback_data'=>'appTutorial_ios'], ['text'=>'🤖 آموزش اندروید', 'callback_data'=>'appTutorial_android'] ],
-        [ ['text'=>'💻 آموزش ویندوز', 'callback_data'=>'appTutorial_windows'], ['text'=>'🌀 Streisand', 'callback_data'=>'appTutorial_streisand'] ],
-        [ ['text'=>'📲 V2rayNG', 'callback_data'=>'appTutorial_v2rayng'], ['text'=>'🛡 Hiddify', 'callback_data'=>'appTutorial_hiddify'] ],
+        [ ['text'=>'📲 آموزش V2rayNG', 'callback_data'=>'appTutorial_v2rayng'] ],
+        [ ['text'=>'💻 آموزش V2rayN', 'callback_data'=>'appTutorial_v2rayn'] ],
+        [ ['text'=>'🌀 آموزش Streisand', 'callback_data'=>'appTutorial_streisand'] ],
     ];
 }
 
@@ -1989,15 +1989,22 @@ function v2raystore_configSentKeyboard($extraRows = []){
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
+function v2raystore_defaultTutorialForApp($app){
+    $app = strtolower(trim((string)$app));
+    $items = v2raystore_helpDefaultItems('tutorial');
+    foreach($items as $row){
+        $key = strtolower((string)($row['app'] ?? ''));
+        if($key !== '' && $key === $app) return $row;
+    }
+    return null;
+}
+
 function v2raystore_findTutorialForApp($app){
     $app = strtolower(trim((string)$app));
     $aliases = [
-        'ios'=>['ios','iphone','آیفون','streisand'],
-        'android'=>['android','اندروید','v2rayng','hiddify'],
-        'windows'=>['windows','ویندوز','nekoray','hiddify'],
-        'streisand'=>['streisand','استرایسند','ios','iphone'],
+        'streisand'=>['streisand','استرایسند','ios','iphone','آیفون'],
         'v2rayng'=>['v2rayng','v2ray ng','اندروید','android'],
-        'hiddify'=>['hiddify','هیدیفای','android','ios','windows'],
+        'v2rayn'=>['v2rayn','v2ray n','windows','ویندوز'],
     ];
     $words = $aliases[$app] ?? [$app];
     foreach(v2raystore_helpGetItems('tutorial', false) as $row){
@@ -2007,12 +2014,12 @@ function v2raystore_findTutorialForApp($app){
             if($w !== '' && stripos($hay, $w) !== false) return $row;
         }
     }
-    return null;
+    return function_exists('v2raystore_defaultTutorialForApp') ? v2raystore_defaultTutorialForApp($app) : null;
 }
 
 function v2raystore_appTutorialTitle($app){
-    $map = ['ios'=>'آیفون','android'=>'اندروید','windows'=>'ویندوز','streisand'=>'Streisand','v2rayng'=>'V2rayNG','hiddify'=>'Hiddify'];
-    return $map[$app] ?? $app;
+    $map = ['streisand'=>'Streisand', 'v2rayng'=>'V2rayNG', 'v2rayn'=>'V2rayN'];
+    return $map[strtolower((string)$app)] ?? $app;
 }
 
 function v2raystore_adminHelpContactText($orderRemark = ''){
@@ -3237,10 +3244,57 @@ function v2raystore_helpLimitText($text, $max){
 function v2raystore_helpDefaultItems($type){
     if($type === 'tutorial'){
         return [
-            ['id'=>1, 'title'=>'Android - V2rayNG / Hiddify', 'body'=>"1) برنامه V2rayNG یا Hiddify را نصب کنید.\n2) لینک کانفیگ را کپی کنید.\n3) داخل برنامه گزینه Import from Clipboard را بزنید.\n4) کانفیگ را انتخاب و اتصال را روشن کنید.", 'enabled'=>true],
-            ['id'=>2, 'title'=>'iOS - Streisand / Hiddify', 'body'=>"1) برنامه Streisand یا Hiddify را نصب کنید.\n2) لینک کانفیگ را کپی کنید.\n3) داخل برنامه از بخش Import، گزینه Clipboard را انتخاب کنید.\n4) کانفیگ را انتخاب و متصل شوید.", 'enabled'=>true],
-            ['id'=>3, 'title'=>'Windows - Hiddify / Nekoray', 'body'=>"1) برنامه Hiddify یا Nekoray را نصب کنید.\n2) لینک کانفیگ را کپی کنید.\n3) داخل برنامه Import from Clipboard را بزنید.\n4) کانفیگ را فعال و متصل شوید.", 'enabled'=>true],
-            ['id'=>4, 'title'=>'Nekobox / Nekoray', 'body'=>"لینک کانفیگ را کپی کنید، وارد برنامه شوید و از قسمت Import گزینه Clipboard را بزنید. بعد از اضافه شدن کانفیگ، آن را انتخاب و Start کنید.", 'enabled'=>true],
+            [
+                'id'=>1,
+                'app'=>'v2rayng',
+                'title'=>'V2rayNG - Android',
+                'body'=>"📲 <b>دانلود V2rayNG برای اندروید</b>
+لینک رسمی دانلود:
+https://github.com/2dust/v2rayNG/releases
+
+<b>روش استفاده:</b>
+1) برنامه را نصب و باز کنید.
+2) لینک کانفیگ یا ساب را از ربات کپی کنید.
+3) داخل V2rayNG از بالای صفحه روی + بزنید.
+4) برای لینک کانفیگ گزینه Import config from Clipboard را بزنید.
+5) برای لینک ساب از Subscription group setting یک گروه اضافه کنید و لینک ساب را وارد کنید.
+6) کانفیگ را انتخاب کنید و دکمه اتصال را بزنید.",
+                'enabled'=>true
+            ],
+            [
+                'id'=>2,
+                'app'=>'v2rayn',
+                'title'=>'V2rayN - Windows',
+                'body'=>"💻 <b>دانلود V2rayN برای ویندوز</b>
+لینک رسمی دانلود:
+https://github.com/2dust/v2rayN/releases
+
+<b>روش استفاده:</b>
+1) فایل نسخه ویندوز را دانلود و Extract کنید.
+2) برنامه v2rayN.exe را اجرا کنید.
+3) لینک کانفیگ یا ساب را از ربات کپی کنید.
+4) از منوی Servers گزینه Import bulk URL from clipboard را بزنید.
+5) اگر لینک ساب دارید، از Subscription group setting لینک را اضافه و Update subscription را بزنید.
+6) کانفیگ را انتخاب کنید، Set system proxy را فعال کنید و متصل شوید.",
+                'enabled'=>true
+            ],
+            [
+                'id'=>3,
+                'app'=>'streisand',
+                'title'=>'Streisand - iPhone / iOS',
+                'body'=>"🌀 <b>دانلود Streisand برای آیفون</b>
+لینک رسمی App Store:
+https://apps.apple.com/us/app/streisand/id6450534064
+
+<b>روش استفاده:</b>
+1) برنامه را از App Store نصب کنید.
+2) لینک کانفیگ یا ساب را از ربات کپی کنید.
+3) وارد Streisand شوید و گزینه + یا Import را بزنید.
+4) گزینه Import from Clipboard را انتخاب کنید.
+5) اگر آیفون اجازه VPN خواست، Allow بزنید و رمز گوشی را وارد کنید.
+6) کانفیگ را انتخاب و اتصال را روشن کنید.",
+                'enabled'=>true
+            ],
         ];
     }
     return [

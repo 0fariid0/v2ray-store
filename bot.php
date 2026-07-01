@@ -44,6 +44,31 @@ if(function_exists('v2raystore_pro_handle_bot_update')){
     v2raystore_pro_handle_bot_update();
 }
 
+if(preg_match('/^appTutorial_(v2rayng|v2rayn|streisand)$/', $data ?? '', $match)){
+    if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
+        alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
+        exit();
+    }
+    $app = $match[1];
+    $item = function_exists('v2raystore_findTutorialForApp') ? v2raystore_findTutorialForApp($app) : null;
+    $title = function_exists('v2raystore_appTutorialTitle') ? v2raystore_appTutorialTitle($app) : $app;
+    $body = is_array($item) ? (string)($item['body'] ?? '') : '';
+    if(trim($body) === '' && function_exists('v2raystore_defaultTutorialForApp')){
+        $def = v2raystore_defaultTutorialForApp($app);
+        $body = is_array($def) ? (string)($def['body'] ?? '') : '';
+    }
+    if(trim($body) === '') $body = 'آموزش پیش‌فرض برای این برنامه پیدا نشد.';
+    $msg = "📚 <b>آموزش {$title}</b>
+
+" . $body;
+    // برای اینکه دکمه آموزش حتی روی پیام‌های قدیمی/غیرقابل ویرایش هم جواب بدهد، پیام جدا ارسال می‌شود.
+    sendMessage($msg, json_encode(['inline_keyboard'=>[
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'mainMenu']]
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    if(isset($callback_query->id)) alert('آموزش ارسال شد.');
+    exit();
+}
+
 if(!function_exists('v2raystore_appendServerPlanToChannelReport')){
     function v2raystore_appendServerPlanToChannelReport($msg, $serverTitle = '', $planTitle = ''){
         $msg = (string)$msg;
@@ -7199,25 +7224,7 @@ if(preg_match('/decline(\d+)_(\d+)/',$userInfo['step'],$match) && ($from_id == $
     sendMessage($text, null, null, $uid);
 }
 
-if(preg_match('/^appTutorial_(ios|android|windows|streisand|v2rayng|hiddify)$/', $data, $match)){
-    if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
-        alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
-        exit();
-    }
-    $app = $match[1];
-    $item = function_exists('v2raystore_findTutorialForApp') ? v2raystore_findTutorialForApp($app) : null;
-    $title = function_exists('v2raystore_appTutorialTitle') ? v2raystore_appTutorialTitle($app) : $app;
-    if($item){
-        $msg = "📚 <b>آموزش {$title}</b>\n\n" . htmlspecialchars((string)$item['body'], ENT_QUOTES, 'UTF-8');
-    }else{
-        $msg = "📚 <b>آموزش {$title}</b>\n\nهنوز آموزش اختصاصی برای این برنامه ثبت نشده است. از بخش مدیریت FAQ و آموزش‌ها می‌توانی متن این آموزش را اضافه یا ویرایش کنی.";
-    }
-    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
-        [['text'=>'📚 همه آموزش‌ها', 'callback_data'=>'tutorialsMenu']],
-        [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']]
-    ]], JSON_UNESCAPED_UNICODE), 'HTML');
-    exit();
-}
+// appTutorial_* is handled near the top of the file so tutorial buttons always respond quickly.
 
 if($data=="supportSection"){
     editText($message_id,"به بخش پشتیبانی خوش اومدی🛂\nلطفاً، یکی از دکمه های زیر را انتخاب نمایید.",
