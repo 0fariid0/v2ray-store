@@ -530,6 +530,118 @@ function v2raystore_ensurePlanCustomDomainColumn(){
 }
 v2raystore_ensurePlanCustomDomainColumn();
 
+
+function v2raystore_ensurePlanMultiInboundColumn(){
+    global $connection;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('PLAN_MULTI_INBOUND_IDS_V1')) return;
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_plans` LIKE 'multi_inbound_ids'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `server_plans` ADD `multi_inbound_ids` text CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `inbound_id`"));
+    }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('PLAN_MULTI_INBOUND_IDS_V1');
+}
+v2raystore_ensurePlanMultiInboundColumn();
+
+function v2raystore_decodePlanMultiInboundIds($value){
+    if($value === null) return [];
+    if(is_array($value)) $raw = $value;
+    else{
+        $value = trim((string)$value);
+        if($value === '') return [];
+        $decoded = json_decode($value, true);
+        if(is_array($decoded)) $raw = $decoded;
+        else $raw = preg_split('/[\s,،;|]+/u', $value);
+    }
+    $ids = [];
+    foreach($raw as $item){
+        if(is_array($item) && isset($item['id'])) $item = $item['id'];
+        $id = intval($item);
+        if($id > 0) $ids[] = $id;
+    }
+    return array_values(array_unique($ids));
+}
+
+function v2raystore_planIsSanaeiNew($plan){
+    global $connection;
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return false;
+    if(isset($plan['_server_type'])) return ((string)$plan['_server_type'] === 'sanaei_new');
+    $serverId = intval($plan['server_id'] ?? 0);
+    if($serverId <= 0) return false;
+    static $typeCache = [];
+    if(array_key_exists($serverId, $typeCache)) return $typeCache[$serverId] === 'sanaei_new';
+    $type = '';
+    $stmt = @$connection->prepare("SELECT `type` FROM `server_config` WHERE `id`=? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('i', $serverId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $type = (string)($row['type'] ?? '');
+    }
+    $typeCache[$serverId] = $type;
+    return $type === 'sanaei_new';
+}
+
+function v2raystore_planInboundIds($plan, $fallbackSingle = true){
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return [];
+    // قابلیت چند اینباند فقط برای سنایی جدید معتبر است؛ برای پنل‌های دیگر همیشه همان اینباند تکی قبلی استفاده می‌شود.
+    $ids = v2raystore_planIsSanaeiNew($plan) ? v2raystore_decodePlanMultiInboundIds($plan['multi_inbound_ids'] ?? '') : [];
+    if(empty($ids) && $fallbackSingle){
+        $single = intval($plan['inbound_id'] ?? 0);
+        if($single > 0) $ids = [$single];
+    }
+    return array_values(array_unique(array_filter(array_map('intval', $ids))));
+}
+
+function v2raystore_planMultiInboundSummary($plan){
+    $ids = v2raystore_planInboundIds($plan, true);
+    if(empty($ids)) return 'غیرفعال';
+    if(count($ids) === 1) return 'تکی: ' . $ids[0];
+    $preview = implode(',', array_slice($ids, 0, 4));
+    if(count($ids) > 4) $preview .= '...';
+    return count($ids) . ' اینباند: ' . $preview;
+}
+
+function v2raystore_savePlanMultiInboundIds($planId, $ids){
+    global $connection;
+    $planId = intval($planId);
+    $plan = function_exists('v2raystore_getPlanRow') ? v2raystore_getPlanRow($planId) : null;
+    if(!$plan || !v2raystore_planIsSanaeiNew($plan)){
+        // روی پنل‌های غیر سنایی جدید، فقط مقدار چنداینباند احتمالی پاک می‌شود و inbound اصلی پلن دست نمی‌خورد.
+        $null = null;
+        $stmt = @$connection->prepare("UPDATE `server_plans` SET `multi_inbound_ids`=? WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('si', $null, $planId);
+            $stmt->execute();
+            $stmt->close();
+        }
+        return false;
+    }
+    $ids = v2raystore_decodePlanMultiInboundIds($ids);
+    $json = !empty($ids) ? json_encode(array_values($ids), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+    $primary = !empty($ids) ? intval($ids[0]) : intval($plan['inbound_id'] ?? 0);
+    $stmt = @$connection->prepare("UPDATE `server_plans` SET `multi_inbound_ids`=?, `inbound_id`=? WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('sii', $json, $primary, $planId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_getPlanRow($planId){
+    global $connection;
+    $planId = intval($planId);
+    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
 function v2raystore_ensureServerSubDomainColumn(){
     global $connection;
     if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('SERVER_SUB_DOMAIN_V1')) return;
@@ -8779,6 +8891,7 @@ function getPlanDetailsKeys($planId){
             [['text'=>$v2raystoreplanaccnumber,'callback_data'=>"v2raystore"],['text'=>"🎗 تعداد اکانت های فروخته شده",'callback_data'=>"v2raystore"]],
             ($pd['inbound_id'] != 0?[['text'=>"$acount",'callback_data'=>"v2raystoreplanslimit$id"],['text'=>"🚪 تغییر ظرفیت کانفیگ",'callback_data'=>"v2raystore"]]:[]),
             ($pd['inbound_id'] != 0?[['text'=>$pd['inbound_id'],'callback_data'=>"v2raystoreplansinobundid$id"],['text'=>"🚪 سطر کانفیگ",'callback_data'=>"v2raystore"]]:[]),
+            (($server_info['type'] ?? '') == "sanaei_new" ? [['text'=>(function_exists('v2raystore_planMultiInboundSummary') ? v2raystore_planMultiInboundSummary($pd) : 'تنظیم'), 'callback_data'=>"v2raystoreplanmultiinbounds$id"], ['text'=>"🚪 چند اینباند برای پلن", 'callback_data'=>"v2raystore"]] : []),
             [['text'=>"✏️ ویرایش توضیحات",'callback_data'=>"v2raystoreplaneditdes$id"]],
             [['text'=>number_format($price) . " تومان",'callback_data'=>"v2raystoreplanrial$id"],['text'=>"💰 قیمت پلن",'callback_data'=>"v2raystore"]],
             [['text'=>"♻️ دریافت لیست اکانت ها",'callback_data'=>"v2raystoreplanacclist$id"]],
@@ -11317,6 +11430,93 @@ function resetClientTraffic($server_id, $remark, $inboundId = null){
     curl_close($curl);
     return $decodedResponse;
 }
+
+function v2raystore_addInboundAccountMulti($server_id, $client_id, $inbound_ids, $expiryTime, $remark, $volume, $limitip = 1, $newarr = '', $planId = null){
+    global $connection;
+    $server_id = intval($server_id);
+    $inbound_ids = v2raystore_decodePlanMultiInboundIds($inbound_ids);
+    if(empty($inbound_ids)) return (object)['success'=>false, 'msg'=>'هیچ اینباندی برای این پلن انتخاب نشده است.'];
+
+    $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return (object)['success'=>false, 'msg'=>'خواندن اطلاعات سرور ناموفق بود.'];
+    $stmt->bind_param("i", $server_id);
+    $stmt->execute();
+    $server_info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if(!$server_info) return (object)['success'=>false, 'msg'=>'سرور پیدا نشد.'];
+    if(($server_info['type'] ?? '') !== 'sanaei_new'){
+        return (object)['success'=>false, 'msg'=>'ثبت یک کاربر روی چند اینباند فقط برای سنایی جدید پشتیبانی می‌شود.'];
+    }
+
+    $json = getJson($server_id);
+    if(!$json || empty($json->success) || !isset($json->obj) || !is_array($json->obj)){
+        return (object)['success'=>false, 'msg'=>'خواندن اینباندهای پنل ناموفق بود.'];
+    }
+
+    $available = [];
+    foreach($json->obj as $row){
+        if(!is_object($row)) continue;
+        $rid = intval($row->id ?? 0);
+        if($rid > 0) $available[$rid] = $row;
+    }
+
+    $validIds = [];
+    foreach($inbound_ids as $iid){
+        if(isset($available[$iid])) $validIds[] = intval($iid);
+    }
+    $validIds = array_values(array_unique($validIds));
+    if(empty($validIds)) return (object)['success'=>false, 'msg'=>'هیچ‌کدام از اینباندهای انتخاب‌شده در پنل پیدا نشد.'];
+
+    $first = $available[$validIds[0]];
+    $protocol = (string)($first->protocol ?? 'vless');
+    $id_label = ($protocol === 'trojan') ? 'password' : 'id';
+    $volumeBytes = ($volume == 0) ? 0 : floor(floatval($volume) * 1073741824);
+
+    if(is_array($newarr) && !empty($newarr)){
+        $client = $newarr;
+    }else{
+        $client = [
+            "$id_label" => $client_id,
+            "enable" => true,
+            "email" => $remark,
+            "limitIp" => intval($limitip),
+            "totalGB" => $volumeBytes,
+            "expiryTime" => intval($expiryTime),
+            "subId" => RandomString(16)
+        ];
+        // اگر چند اینباند vless/trojan ترکیبی باشند، وجود هر دو کلید باعث می‌شود سنایی جدید بتواند مقدار مناسب خودش را بردارد.
+        if($id_label !== 'id') $client['id'] = $client_id;
+        if($id_label !== 'password') $client['password'] = $client_id;
+
+        if(($server_info['reality'] ?? '') == "true" && $planId !== null){
+            $stmt = @$connection->prepare("SELECT `flow` FROM `server_plans` WHERE `id`=? LIMIT 1");
+            if($stmt){
+                $pid = intval($planId);
+                $stmt->bind_param("i", $pid);
+                $stmt->execute();
+                $plan = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $flow = isset($plan['flow']) && $plan['flow'] != "None" ? (string)$plan['flow'] : "";
+                if($flow !== '') $client['flow'] = $flow;
+            }
+        }
+    }
+
+    if(function_exists('v2raystore_applyPanelClientComment')) v2raystore_applyPanelClientComment($client, 0, $client['email'] ?? $remark);
+
+    $payload = [
+        "client" => $client,
+        "inboundIds" => array_values($validIds)
+    ];
+    $decoded = v2raystore_sanaeiRequestJson($server_info, '/panel/api/clients/add', 'POST', $payload);
+    if(is_array($decoded)){
+        return json_decode(json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
+    return (object)['success'=>false, 'msg'=>'پاسخ نامعتبر از پنل هنگام ثبت چند اینباند.'];
+}
+
+
 function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $remark, $volume, $limitip = 1, $newarr = '', $planId = null){
     global $connection;
     $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
@@ -11329,6 +11529,27 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
     $reality = $server_info['reality'];
+
+    // چند اینباند فقط برای سنایی جدید فعال است. روی پنل‌های دیگر حتی اگر مقدار قدیمی در دیتابیس مانده باشد نادیده گرفته می‌شود.
+    if($serverType == "sanaei_new"){
+        if($planId !== null && function_exists('v2raystore_getPlanRow') && function_exists('v2raystore_planInboundIds')){
+            $planRow = v2raystore_getPlanRow($planId);
+            $multiInboundIds = v2raystore_planInboundIds($planRow, false);
+            if(count($multiInboundIds) > 1){
+                return v2raystore_addInboundAccountMulti($server_id, $client_id, $multiInboundIds, $expiryTime, $remark, $volume, $limitip, $newarr, $planId);
+            }elseif(count($multiInboundIds) === 1 && intval($multiInboundIds[0]) > 0){
+                $inbound_id = intval($multiInboundIds[0]);
+            }
+        }
+        if(is_array($inbound_id)){
+            $ids = v2raystore_decodePlanMultiInboundIds($inbound_id);
+            if(count($ids) > 1) return v2raystore_addInboundAccountMulti($server_id, $client_id, $ids, $expiryTime, $remark, $volume, $limitip, $newarr, $planId);
+            $inbound_id = count($ids) === 1 ? intval($ids[0]) : 0;
+        }
+    }elseif(is_array($inbound_id)){
+        $ids = v2raystore_decodePlanMultiInboundIds($inbound_id);
+        $inbound_id = count($ids) >= 1 ? intval($ids[0]) : 0;
+    }
     $volume = ($volume == 0) ? 0 : floor($volume * 1073741824);
 
     $response = getJson($server_id);

@@ -9766,6 +9766,136 @@ if(preg_match('/plansList(\d+)/', $data,$match) && ($from_id == $admin || $userI
     }
     exit();
 }
+
+function v2raystore_planMultiInboundManageView($planId){
+    global $connection, $buttonValues;
+    $planId = intval($planId);
+    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return ['text'=>'خطا در خواندن پلن.', 'keyboard'=>json_encode(['inline_keyboard'=>[]])];
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $plan = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$plan) return ['text'=>'پلن پیدا نشد.', 'keyboard'=>json_encode(['inline_keyboard'=>[]])];
+
+    $serverId = intval($plan['server_id'] ?? 0);
+    $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return ['text'=>'خطا در خواندن سرور.', 'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'planDetails'.$planId]]]])];
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $server = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if(!$server || ($server['type'] ?? '') !== 'sanaei_new'){
+        return [
+            'text'=>"🚪 تنظیم چند اینباند فقط برای سنایی جدید فعال است.\n\nبرای نسخه‌های قدیمی همان اینباند تکی پلن استفاده می‌شود.",
+            'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'planDetails'.$planId]]]], JSON_UNESCAPED_UNICODE)
+        ];
+    }
+
+    $selected = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [intval($plan['inbound_id'] ?? 0)];
+    $selected = array_values(array_unique(array_filter(array_map('intval', $selected))));
+    $json = getJson($serverId);
+    $rows = ($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)) ? $json->obj : [];
+
+    $keyboard = [];
+    foreach($rows as $row){
+        if(!is_object($row)) continue;
+        $iid = intval($row->id ?? 0);
+        if($iid <= 0) continue;
+        $remark = trim((string)($row->remark ?? ''));
+        $protocol = trim((string)($row->protocol ?? ''));
+        $checked = in_array($iid, $selected, true) ? '✅' : '▫️';
+        $title = $checked . ' #' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($protocol !== '' ? ' (' . $protocol . ')' : '');
+        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 48) $title = mb_substr($title, 0, 45, 'UTF-8') . '...';
+        $keyboard[] = [['text'=>$title, 'callback_data'=>'togglePlanInbound_'.$planId.'_'.$iid]];
+    }
+
+    if(empty($keyboard)) $keyboard[] = [['text'=>'هیچ inbound از پنل دریافت نشد', 'callback_data'=>'v2raystore']];
+    else{
+        $keyboard[] = [
+            ['text'=>'✅ انتخاب همه', 'callback_data'=>'planInboundAll_'.$planId],
+            ['text'=>'🧹 پاک کردن', 'callback_data'=>'planInboundClear_'.$planId],
+        ];
+    }
+    $keyboard[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'planDetails'.$planId]];
+
+    $summary = function_exists('v2raystore_planMultiInboundSummary') ? v2raystore_planMultiInboundSummary($plan) : implode(',', $selected);
+    $text = "🚪 تنظیم چند اینباند برای پلن\n\n";
+    $text .= "پلن: <b>" . htmlspecialchars((string)($plan['title'] ?? $planId), ENT_QUOTES, 'UTF-8') . "</b>\n";
+    $text .= "وضعیت فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n\n";
+    $text .= "با انتخاب چند اینباند، کاربر هنگام خرید همین پلن روی همه اینباندهای انتخابی سنایی جدید ثبت می‌شود و لینک‌های همان کلاینت برای کاربر ارسال می‌شود.\n";
+    $text .= "اولین اینباند انتخاب‌شده به‌عنوان اینباند اصلی سفارش ذخیره می‌شود.";
+
+    return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE)];
+}
+
+
+
+if(preg_match('/^v2raystoreplanmultiinbounds(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $view = v2raystore_planMultiInboundManageView($match[1]);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit;
+}
+if(preg_match('/^togglePlanInbound_(\d+)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $planId = intval($match[1]);
+    $iid = intval($match[2]);
+    $plan = function_exists('v2raystore_getPlanRow') ? v2raystore_getPlanRow($planId) : null;
+    if(!$plan){ alert('پلن پیدا نشد.'); exit; }
+    if(function_exists('v2raystore_planIsSanaeiNew') && !v2raystore_planIsSanaeiNew($plan)){
+        alert('چند اینباند فقط برای سنایی جدید فعال است.');
+        $view = v2raystore_planMultiInboundManageView($planId);
+        editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+        exit;
+    }
+    $ids = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [intval($plan['inbound_id'] ?? 0)];
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if(in_array($iid, $ids, true)){
+        $ids = array_values(array_filter($ids, function($v) use ($iid){ return intval($v) !== $iid; }));
+    }else{
+        $ids[] = $iid;
+    }
+    if(function_exists('v2raystore_savePlanMultiInboundIds')) v2raystore_savePlanMultiInboundIds($planId, $ids);
+    $view = v2raystore_planMultiInboundManageView($planId);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit;
+}
+if(preg_match('/^planInboundAll_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $planId = intval($match[1]);
+    $plan = function_exists('v2raystore_getPlanRow') ? v2raystore_getPlanRow($planId) : null;
+    if(!$plan){ alert('پلن پیدا نشد.'); exit; }
+    if(function_exists('v2raystore_planIsSanaeiNew') && !v2raystore_planIsSanaeiNew($plan)){
+        alert('چند اینباند فقط برای سنایی جدید فعال است.');
+        $view = v2raystore_planMultiInboundManageView($planId);
+        editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+        exit;
+    }
+    $serverId = intval($plan['server_id'] ?? 0);
+    $json = getJson($serverId);
+    $ids = [];
+    if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
+        foreach($json->obj as $row){
+            if(is_object($row) && intval($row->id ?? 0) > 0) $ids[] = intval($row->id);
+        }
+    }
+    if(function_exists('v2raystore_savePlanMultiInboundIds')) v2raystore_savePlanMultiInboundIds($planId, $ids);
+    $view = v2raystore_planMultiInboundManageView($planId);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit;
+}
+if(preg_match('/^planInboundClear_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $planId = intval($match[1]);
+    $plan = function_exists('v2raystore_getPlanRow') ? v2raystore_getPlanRow($planId) : null;
+    if($plan && function_exists('v2raystore_planIsSanaeiNew') && !v2raystore_planIsSanaeiNew($plan)){
+        alert('چند اینباند فقط برای سنایی جدید فعال است.');
+    }else{
+        if(function_exists('v2raystore_savePlanMultiInboundIds')) v2raystore_savePlanMultiInboundIds($planId, []);
+    }
+    $view = v2raystore_planMultiInboundManageView($planId);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit;
+}
+
 if(preg_match('/planDetails(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $keys = getPlanDetailsKeys($match[1]);
     if($keys == null){
