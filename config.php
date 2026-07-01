@@ -10236,7 +10236,7 @@ function generateUID(){
 function checkStep($table){
     global $connection;
     
-    if($table == "server_plans") $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`price`,0) != 0 ORDER BY `id` DESC LIMIT 1");
+    if($table == "server_plans") $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 ORDER BY `id` DESC LIMIT 1");
     if($table == "server_categories") $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `active` = 0");
     
     $stmt->execute();
