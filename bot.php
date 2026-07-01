@@ -570,10 +570,224 @@ if(preg_match('/^blockCodeAccess(\d+)$/', $data, $match) && ($from_id == $admin 
 }
 if($data == "testAccountManagement" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $msg = "🧪 <b>مدیریت اکانت تست</b>\n\n" .
-           "از این بخش می‌توانید سقف دریافت اکانت تست را برای کاربران مدیریت کنید، سابقه استفاده یک کاربر را ریست کنید یا استفاده همه کاربران از تست را پاک کنید.";
+           "از این بخش می‌توانید تست‌ها را برای هر سرور یا هر اینباند تعریف کنید، سقف دریافت هر تست را کنترل کنید و سابقه استفاده کاربران را ریست کنید.";
     editText($message_id, $msg, v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
+
+if($data == "testPlansList" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_getTestPlanListText(false), v2raystore_getTestPlanListKeys(), "HTML");
+    exit();
+}
+if(preg_match('/^testPlanDetails(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_getTestPlanDetailsText($m[1]), v2raystore_getTestPlanDetailsKeys($m[1]), "HTML");
+    exit();
+}
+if(preg_match('/^toggleTestPlanState(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($m[1]);
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+    $stmt->bind_param("i", $pid);
+    $stmt->execute();
+    $stmt->close();
+    editText($message_id, v2raystore_getTestPlanDetailsText($pid), v2raystore_getTestPlanDetailsKeys($pid), "HTML");
+    exit();
+}
+if(preg_match('/^deleteTestPlanAsk(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($m[1]);
+    editText($message_id, "⚠️ این اکانت تست از لیست کاربران حذف می‌شود، ولی سفارش‌های قبلی کاربران پاک نمی‌شوند.\n\nمطمئنی حذف شود؟", json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ بله حذف شود', 'callback_data'=>'deleteTestPlanConfirm' . $pid, 'style'=>'danger']],
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'testPlanDetails' . $pid, 'style'=>'primary']]
+    ]], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+if(preg_match('/^deleteTestPlanConfirm(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($m[1]);
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1 LIMIT 1");
+    $stmt->bind_param("i", $pid);
+    $stmt->execute();
+    $stmt->close();
+    editText($message_id, "✅ اکانت تست حذف شد.", v2raystore_getTestPlanListKeys(), "HTML");
+    exit();
+}
+if(preg_match('/^editTestPlanField(\d+)_(title|volume|days|acount|limitip)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $labels = ['title'=>'عنوان', 'volume'=>'حجم گیگ', 'days'=>'مدت روز', 'acount'=>'ظرفیت', 'limitip'=>'محدودیت IP'];
+    delMessage();
+    sendMessage("✏️ مقدار جدید برای <b>" . ($labels[$m[2]] ?? $m[2]) . "</b> پلن تست #" . intval($m[1]) . " را ارسال کنید.", $cancelKey, "HTML");
+    setUser('editTestPlanField|' . intval($m[1]) . '|' . $m[2]);
+    exit();
+}
+if(preg_match('/^editTestPlanField\|(\d+)\|(title|volume|days|acount|limitip)$/', $userInfo['step'] ?? '', $m) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($m[1]);
+    $field = $m[2];
+    $value = trim((string)$text);
+    if(in_array($field, ['volume','days'], true)){
+        if(!is_numeric($value) || floatval($value) <= 0){ sendMessage('❌ مقدار باید عددی و بزرگتر از صفر باشد.', $cancelKey, 'HTML'); exit(); }
+        $num = floatval($value);
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+        $stmt->bind_param("di", $num, $pid);
+    }elseif(in_array($field, ['acount','limitip'], true)){
+        if(!preg_match('/^\d+$/', $value)){ sendMessage('❌ مقدار باید عدد صحیح باشد.', $cancelKey, 'HTML'); exit(); }
+        $num = intval($value);
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+        $stmt->bind_param("ii", $num, $pid);
+    }else{
+        if($value === ''){ sendMessage('❌ عنوان نمی‌تواند خالی باشد.', $cancelKey, 'HTML'); exit(); }
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+        $stmt->bind_param("si", $value, $pid);
+    }
+    $stmt->execute();
+    $stmt->close();
+    setUser();
+    sendMessage('✅ ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_getTestPlanDetailsText($pid), v2raystore_getTestPlanDetailsKeys($pid), 'HTML');
+    exit();
+}
+if($data == "addTestPlan" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $res = $connection->query("SELECT `id`, `title`, `flag` FROM `server_info` WHERE `active`=1 ORDER BY `id` ASC");
+    $rows = [];
+    if($res){
+        while($srv = $res->fetch_assoc()){
+            $rows[] = [[ 'text'=>trim(($srv['flag'] ? $srv['flag'] . ' ' : '') . $srv['title']), 'callback_data'=>'addTestPlanServer' . intval($srv['id']) ]];
+        }
+    }
+    if(empty($rows)) $rows[] = [[ 'text'=>'سرور فعالی پیدا نشد', 'callback_data'=>'v2raystore' ]];
+    $rows[] = [[ 'text'=>'⬅️ بازگشت', 'callback_data'=>'testAccountManagement' ]];
+    editText($message_id, "🧪 <b>افزودن اکانت تست</b>\n\nاول سرور را انتخاب کن:", json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+if(preg_match('/^addTestPlanServer(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($m[1]);
+    $rows = [];
+    $rows[] = [[ 'text'=>'کل سرور / پورت اختصاصی', 'callback_data'=>'addTestPlanInbound' . $sid . '_0' ]];
+    $json = function_exists('getJson') ? getJson($sid) : null;
+    if($json && isset($json->obj) && is_array($json->obj)){
+        foreach($json->obj as $row){
+            $iid = intval($row->id ?? 0);
+            if($iid <= 0) continue;
+            $proto = (string)($row->protocol ?? '');
+            $net = '';
+            $ss = json_decode($row->streamSettings ?? '');
+            if($ss && isset($ss->network)) $net = (string)$ss->network;
+            $remark = trim((string)($row->remark ?? ''));
+            $title = 'اینباند ' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($proto !== '' ? ' | ' . $proto : '') . ($net !== '' ? '/' . $net : '');
+            $rows[] = [[ 'text'=>$title, 'callback_data'=>'addTestPlanInbound' . $sid . '_' . $iid ]];
+        }
+    }
+    $rows[] = [[ 'text'=>'⬅️ بازگشت', 'callback_data'=>'addTestPlan' ]];
+    editText($message_id, "🚪 حالا اینباند تست را انتخاب کن.\n\nاگر می‌خواهی تست برای کل سرور/پورت اختصاصی باشد، گزینه اول را بزن.", json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+if(preg_match('/^addTestPlanInbound(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($m[1]);
+    $iid = intval($m[2]);
+    $ctx = ['server_id'=>$sid, 'inbound_id'=>$iid, 'protocol'=>'', 'type'=>''];
+    if($iid > 0){
+        $json = function_exists('getJson') ? getJson($sid) : null;
+        if($json && isset($json->obj) && is_array($json->obj)){
+            foreach($json->obj as $row){
+                if(intval($row->id ?? 0) === $iid){
+                    $ctx['protocol'] = (string)($row->protocol ?? 'vless');
+                    $ss = json_decode($row->streamSettings ?? '');
+                    $ctx['type'] = ($ss && isset($ss->network)) ? (string)$ss->network : 'tcp';
+                    break;
+                }
+            }
+        }
+        if($ctx['protocol'] === '') $ctx['protocol'] = 'vless';
+        if($ctx['type'] === '') $ctx['type'] = 'tcp';
+        setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+        delMessage();
+        sendMessage("🔋 حجم اکانت تست را به گیگ بفرست.\nمثال: <code>0.1</code>", $cancelKey, "HTML");
+        setUser('addTestPlanVolume');
+    }else{
+        setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+        delMessage();
+        sendMessage("📡 پروتکل تست را بفرست: <code>vless</code> یا <code>vmess</code> یا <code>trojan</code>", $cancelKey, "HTML");
+        setUser('addTestPlanProtocol');
+    }
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanProtocol' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $proto = strtolower(trim((string)$text));
+    if(!in_array($proto, ['vless','vmess','trojan'], true)){ sendMessage('❌ فقط vless یا vmess یا trojan مجاز است.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $ctx['protocol'] = $proto;
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    sendMessage("🌐 نوع شبکه را بفرست. مثال: <code>tcp</code> یا <code>ws</code> یا <code>grpc</code>", $cancelKey, 'HTML');
+    setUser('addTestPlanNetwork');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanNetwork' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $net = strtolower(trim((string)$text));
+    if(!preg_match('/^[a-z0-9_-]{2,30}$/', $net)){ sendMessage('❌ نوع شبکه معتبر نیست.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $ctx['type'] = $net;
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    sendMessage("🔋 حجم اکانت تست را به گیگ بفرست.\nمثال: <code>0.1</code>", $cancelKey, 'HTML');
+    setUser('addTestPlanVolume');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanVolume' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || floatval($text) <= 0){ sendMessage('❌ حجم باید عددی و بزرگتر از صفر باشد.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $ctx['volume'] = floatval($text);
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    sendMessage("⏰ مدت اعتبار تست را به روز بفرست.\nمثال: <code>1</code>", $cancelKey, 'HTML');
+    setUser('addTestPlanDays');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanDays' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!is_numeric($text) || floatval($text) <= 0){ sendMessage('❌ مدت باید عددی و بزرگتر از صفر باشد.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $ctx['days'] = floatval($text);
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    sendMessage("🚪 ظرفیت ساخت تست برای این مورد را بفرست.\nمثال: <code>100</code>\nبرای نامحدود بودن ظرفیت پلن، عدد بزرگ بگذار.", $cancelKey, 'HTML');
+    setUser('addTestPlanCapacity');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanCapacity' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!preg_match('/^\d+$/', trim((string)$text))){ sendMessage('❌ ظرفیت باید عدد صحیح باشد.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $ctx['acount'] = intval($text);
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    sendMessage("👥 محدودیت IP را بفرست.\nمعمولاً <code>1</code>", $cancelKey, 'HTML');
+    setUser('addTestPlanLimitIp');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanLimitIp' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(!preg_match('/^\d+$/', trim((string)$text)) || intval($text) < 0){ sendMessage('❌ محدودیت IP باید عدد صحیح باشد.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $ctx['limitip'] = intval($text);
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    sendMessage("🔮 عنوان نمایشی تست را بفرست.\nمثال: <code>تست آلمان</code>", $cancelKey, 'HTML');
+    setUser('addTestPlanTitle');
+    exit();
+}
+if(($userInfo['step'] ?? '') == 'addTestPlanTitle' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $title = trim((string)$text);
+    if($title === ''){ sendMessage('❌ عنوان نمی‌تواند خالی باشد.', $cancelKey, 'HTML'); exit(); }
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true); if(!is_array($ctx)) $ctx = [];
+    $sid = intval($ctx['server_id'] ?? 0); $iid = intval($ctx['inbound_id'] ?? 0);
+    $volume = floatval($ctx['volume'] ?? 0); $days = floatval($ctx['days'] ?? 0); $acount = intval($ctx['acount'] ?? 0); $limitip = intval($ctx['limitip'] ?? 1);
+    $protocol = trim((string)($ctx['protocol'] ?? 'vless')); $net = trim((string)($ctx['type'] ?? 'tcp'));
+    if($sid <= 0 || $volume <= 0 || $days <= 0){ sendMessage('❌ اطلاعات مرحله ناقص است. دوباره از افزودن اکانت تست شروع کن.', $removeKeyboard, 'HTML'); setUser('', 'temp'); setUser(); exit(); }
+    $now = time();
+    $stmt = $connection->prepare("INSERT INTO `server_plans` (`fileid`, `catid`, `server_id`, `inbound_id`, `acount`, `limitip`, `title`, `protocol`, `days`, `volume`, `type`, `price`, `descr`, `pic`, `active`, `step`, `date`, `is_test_plan`) VALUES ('', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', 1, 10, ?, 1)");
+    $stmt->bind_param("iiiissddsi", $sid, $iid, $acount, $limitip, $title, $protocol, $days, $volume, $net, $now);
+    $ok = $stmt->execute();
+    $newId = intval($connection->insert_id);
+    $err = $stmt->error;
+    $stmt->close();
+    setUser('', 'temp'); setUser();
+    if($ok){
+        sendMessage("✅ اکانت تست جدید ثبت شد.", $removeKeyboard, 'HTML');
+        sendMessage(v2raystore_getTestPlanDetailsText($newId), v2raystore_getTestPlanDetailsKeys($newId), 'HTML');
+    }else{
+        sendMessage("❌ ثبت تست ناموفق بود: <code>" . v2raystore_h($err) . "</code>", $removeKeyboard, 'HTML');
+    }
+    exit();
+}
+
 if($data == "toggleTestAccountAutoDelete" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $current = function_exists('v2raystore_getTestAccountAutoDeleteState') ? v2raystore_getTestAccountAutoDeleteState() : 'off';
     $newState = ($current === 'on') ? 'off' : 'on';
@@ -611,6 +825,7 @@ if($data == "resetAllTestAccountsAsk" && ($from_id == $admin || $userInfo['isAdm
 }
 if($data == "resetAllTestAccountsConfirm" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $connection->query("UPDATE `users` SET `freetrial` = NULL, `test_account_count` = 0");
+    $connection->query("TRUNCATE TABLE `test_account_usage`");
     editText($message_id, "✅ سابقه استفاده از اکانت تست برای همه کاربران با موفقیت ریست شد.", v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
@@ -736,6 +951,10 @@ if(in_array($userInfo['step'] ?? '', ['resetOneTestAccount','setTestAccountLimit
     v2raystore_ensureBasicUserRecord($targetId);
     if($userInfo['step'] == 'resetOneTestAccount'){
         $stmt = $connection->prepare("UPDATE `users` SET `freetrial` = NULL, `test_account_count` = 0 WHERE `userid` = ?");
+        $stmt->bind_param("i", $targetId);
+        $stmt->execute();
+        $stmt->close();
+        $stmt = $connection->prepare("DELETE FROM `test_account_usage` WHERE `userid` = ?");
         $stmt->bind_param("i", $targetId);
         $stmt->execute();
         $stmt->close();
@@ -1515,6 +1734,7 @@ if(preg_match('/^addDiscount(Server|Plan)Agent(\d+)/',$data,$match) && ($from_id
         
         $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['plans'] ?? array()));
         $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
+        $condition .= ($condition === "" ? "WHERE " : " AND ") . "COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0";
         $stmt = $connection->prepare("SELECT * FROM `server_plans` $condition LIMIT ? OFFSET ?");
         $stmt->bind_param("ii", $limit, $offset);
         $stmt->execute();
@@ -1575,6 +1795,7 @@ if(preg_match('/^nextAgentDiscountPlan(?<agentId>\d+)_(?<offset>\d+)/',$data,$ma
     
     $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['plans'] ?? array()));
     $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
+    $condition .= ($condition === "" ? "WHERE " : " AND ") . "COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0";
     $stmt = $connection->prepare("SELECT * FROM `server_plans` $condition LIMIT ? OFFSET ?");
     $stmt->bind_param("ii", $limit, $offset);
     $stmt->execute();
@@ -2419,7 +2640,7 @@ if(preg_match('/createAccServer(\d+)/',$data, $match) && ($from_id == $admin || 
         while ($file = $respd->fetch_assoc()){
             $id = $file['id'];
             $name = $file['title'];
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
             $stmt->bind_param("ii", $sid, $id);
             $stmt->execute();
             $rowcount = $stmt->get_result()->num_rows; 
@@ -2441,7 +2662,7 @@ if(preg_match('/createAccServer(\d+)/',$data, $match) && ($from_id == $admin || 
 if(preg_match('/createAccCategory(\d+)_(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $call_id = $match[1];
     $sid = $match[2];
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -4877,7 +5098,7 @@ if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) &&
         while ($file = $respd->fetch_assoc()){
             $id = $file['id'];
             $name = $file['title'];
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
             $stmt->bind_param("ii", $sid, $id);
             $stmt->execute();
             $rowcount = $stmt->get_result()->num_rows; 
@@ -4927,7 +5148,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
         }
     }
 
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and `catid`=? and `active`=1 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and COALESCE(`is_test_plan`,0)=0 and `catid`=? and `active`=1 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -4959,7 +5180,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
 if(preg_match('/selectCustomPlan(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+)/',$data,$match) && ($botState['sellState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)) {
     $call_id = $match['categoryId'];
     $sid = $match['serverId'];
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -5133,7 +5354,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
             }
         }
     }
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
@@ -5217,40 +5438,23 @@ if(preg_match('/^haveDiscount(.+?)_(.*)/',$data,$match)){
     elseif($match[1] == "Renew") setUser('discountRenew' . $match[2]);
 }
 if($data=="getTestAccount"){
-    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id)){
-        $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo) : 1;
-        $limit = function_exists('v2raystore_getTestAccountLimitText') ? v2raystore_getTestAccountLimitText($userInfo) : '1 بار';
-        alert("شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}. در صورت نیاز، لطفاً با پشتیبانی در ارتباط باشید.");
-        exit();
-    }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] != null && $from_id != $admin && $userInfo['isAdmin'] != true){
-        alert("شما اکانت تست را قبلاً استفاده کرده‌اید.");
+    $plans = function_exists('v2raystore_getActiveTestPlans') ? v2raystore_getActiveTestPlans() : [];
+    if(empty($plans)){
+        alert("در حال حاضر اکانت تست فعال نیست.");
         exit();
     }
-
-    $testPlanId = 0;
-    $stmt = $connection->prepare("SELECT `id` FROM `server_plans` WHERE `price` = 0 AND `active` = 1 ORDER BY `id` ASC LIMIT 1");
-    if($stmt){
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        if(!empty($row['id'])) $testPlanId = intval($row['id']);
-    }
-
-    if($testPlanId == 0){
-        $stmt = $connection->prepare("SELECT `id` FROM `server_plans` WHERE `price` = 0 ORDER BY `id` ASC LIMIT 1");
-        if($stmt){
-            $stmt->execute();
-            $row = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-            if(!empty($row['id'])) $testPlanId = intval($row['id']);
+    if(count($plans) === 1){
+        $testPlanId = intval($plans[0]['id'] ?? 0);
+        if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id, $testPlanId)){
+            $taken = function_exists('v2raystore_getUserTakenTestAccountLabels') ? v2raystore_getUserTakenTestAccountLabels($from_id, $plans) : [];
+            $where = count($taken) ? "\nگرفته‌شده: " . implode('، ', $taken) : '';
+            alert("از این سرور قبلاً کانفیگ تست گرفته‌ای." . $where, true);
+            exit();
         }
-    }
-
-    if($testPlanId > 0){
         alert($mainValues['receving_information'] ?? "در حال آماده‌سازی اکانت تست...");
         $data = "freeTrial{$testPlanId}_normal";
     }else{
-        alert("در حال حاضر اکانت تست فعال نیست.");
+        editText($message_id, v2raystore_getTestAccountMenuText($from_id, $plans), v2raystore_getTestAccountMenuKeys($from_id, $plans), "HTML");
         exit();
     }
 }
@@ -5365,7 +5569,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     $id = $match[1];
 	$call_id = $match[2];
     alert($mainValues['receving_information']);
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
@@ -6707,7 +6911,7 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
     }
 }
 if($data=="availableServers"){
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `acount` != 0 AND `inbound_id` != 0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `acount` != 0 AND `inbound_id` != 0 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
     $stmt->execute();
     $serversList = $stmt->get_result();
     $stmt->close();
@@ -6745,7 +6949,7 @@ if($data=="availableServers"){
     editText($message_id, "🟢 | موجودی پلن اشتراکی:", $keys);
 }
 if($data=="availableServers2"){
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `inbound_id` = 0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `inbound_id` = 0 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
     $stmt->execute();
     $serversList = $stmt->get_result();
     $stmt->close();
@@ -8412,12 +8616,17 @@ if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin 
     sendMessage("پیام شما با موفقیت ارسال شد ✅",$removeKeyboard);
 }
 if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
-    $id = $match[1];
+    $id = intval($match[1]);
+    $testPlanForLimit = function_exists('v2raystore_getTestPlanById') ? v2raystore_getTestPlanById($id) : null;
  
-    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
-        $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo) : 1;
+    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id, $id) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
+        $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo, $id) : 1;
         $limit = function_exists('v2raystore_getTestAccountLimitText') ? v2raystore_getTestAccountLimitText($userInfo) : '1 بار';
-        alert("⚠️ شما به سقف مجاز دریافت اکانت تست رسیده‌اید. تعداد استفاده: {$used} | سقف مجاز: {$limit}");
+        $serverText = $testPlanForLimit && function_exists('v2raystore_testPlanDisplayTitle') ? v2raystore_testPlanDisplayTitle($testPlanForLimit, true) : 'این سرور';
+        $taken = function_exists('v2raystore_getUserTakenTestAccountLabels') ? v2raystore_getUserTakenTestAccountLabels($from_id) : [];
+        $takenText = count($taken) ? "
+گرفته‌شده: " . implode('، ', $taken) : '';
+        alert("⚠️ از {$serverText} قبلاً کانفیگ تست گرفته‌ای. تعداد استفاده از این مورد: {$used} | سقف مجاز: {$limit}" . $takenText, true);
         exit;
     }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
         alert('⚠️شما قبلا هدیه رایگان خود را دریافت کردید');
@@ -8483,6 +8692,14 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
             $__v2raystoreTestReserved = false;
         }
     };
+
+    if(function_exists('v2raystore_reserveTestAccountCreation')){
+        if(!v2raystore_reserveTestAccountCreation($from_id, $id)){
+            alert('⏳ درخواست قبلی اکانت تست هنوز در حال پردازش است یا چند لحظه پیش ثبت شده. لطفاً کمی صبر کن و دوباره تلاش کن.', true);
+            exit;
+        }
+        $__v2raystoreTestReserved = true;
+    }
 
     $uniqid = generateRandomString(42,$protocol); 
 
@@ -8687,7 +8904,7 @@ if($subLink != "") $acc_text .= "
     }
 
     if(function_exists('v2raystore_markTestAccountUsed')){
-        v2raystore_markTestAccountUsed($from_id);
+        v2raystore_markTestAccountUsed($from_id, $id, $server_id, $inbound_id, $newOrderId);
         if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
     }else{
         setUser('used','freetrial');
@@ -9168,7 +9385,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
 
     alert($mainValues['receving_information']);
     delMessage();
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
@@ -9297,7 +9514,7 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
 
 if (($data == 'addNewPlan' || $data=="addNewRahgozarPlan" || $data == "addNewMarzbanPlan") and (($from_id == $admin || $userInfo['isAdmin'] == true))){
     setUser($data);
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
     $stmt->execute();
     $stmt->close();
     if($data=="addNewPlan" || $data == "addNewMarzbanPlan"){
@@ -9335,7 +9552,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==1 and $text!=$buttonValues['cancel']){
         $msg = '🔰 لطفاً قیمت پلن رو به تومان وارد کنید!';
         if(strlen($text)>1){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=?,`step`=2 WHERE `active`=0 and `step`=1");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=?,`step`=2 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0 and `step`=1");
             $stmt->bind_param("s", $text);
             $stmt->execute();
             $stmt->close();
@@ -9345,7 +9562,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==2 and $text!=$buttonValues['cancel']){
         $msg = '🔰لطفاً یه دسته از لیست زیر برا پلن انتخاب کن ';
         if(is_numeric($text)){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `price`=?,`step`=3 WHERE `active`=0");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `price`=?,`step`=3 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
             $stmt->bind_param("s", $text);
             $stmt->execute();
             $stmt->close();
@@ -9393,7 +9610,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         if( $inarr==1 ){
             $input = explode(' - ',$text);
             $catid = $input[0];
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `catid`=?,`step`=50 WHERE `active`=0");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `catid`=?,`step`=50 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
             $stmt->bind_param("i", $catid);
             $stmt->execute();
             $stmt->close();
@@ -9407,7 +9624,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==50 and $text!=$buttonValues['cancel'] and preg_match('/selectNewPlanServer(\d+)/', $data,$match)){
         $newStep = $userInfo['step'] == "addNewMarzbanPlan"?53:51;
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `server_id`=?,`step`=? WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `server_id`=?,`step`=? WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("ii", $match[1], $newStep);
         $stmt->execute();
         $stmt->close();
@@ -9424,12 +9641,12 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         else $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess | trojan)";
         editText($message_id,$msg);
         if($match[1] == "Shared"){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
             $stmt->execute();
             $stmt->close();
         }
         elseif($match[1] == "Specific"){
-            $stmt = $connection->prepare("UPDATE server_plans SET step=52 WHERE active=0");
+            $stmt = $connection->prepare("UPDATE server_plans SET step=52 WHERE active=0 AND COALESCE(`is_test_plan`,0)=0");
             $stmt->execute();
             $stmt->close();
         }
@@ -9444,7 +9661,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=61 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=61 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9456,7 +9673,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=62 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=62 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
@@ -9469,7 +9686,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `volume`=?,`step`=63 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `volume`=?,`step`=63 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("d", $text);
         $stmt->execute();
         $stmt->close();
@@ -9481,7 +9698,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
+        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -9498,7 +9715,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `inbound_id`=?,`step`=64 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `inbound_id`=?,`step`=64 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("si", $netType, $text);
         $stmt->execute();
         $stmt->close();
@@ -9511,7 +9728,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `acount`=?,`step`=65 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `acount`=?,`step`=65 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
@@ -9523,7 +9740,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             sendMessage($mainValues['send_only_number']);
             exit();
         }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `limitip`=?,`step`=4 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `limitip`=?,`step`=4 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9540,7 +9757,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=53 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=53 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9553,7 +9770,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=54 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=54 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
@@ -9567,10 +9784,10 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         }
         
         if($userInfo['step'] == "addNewPlan"){
-            $sql = ("UPDATE `server_plans` SET `volume`=?,`step`=55 WHERE `active`=0");
+            $sql = ("UPDATE `server_plans` SET `volume`=?,`step`=55 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
             $msg = "🔉 | لطفاً نوع شبکه این پلن را انتخاب کنید (ws | tcp | grpc | httpupgrade) :";
         }elseif($userInfo['step'] == "addNewRahgozarPlan" || $userInfo['step'] == "addNewMarzbanPlan"){
-            $sql = ("UPDATE `server_plans` SET `volume`=?, `type`='ws', `step`=4 WHERE `active`=0");
+            $sql = ("UPDATE `server_plans` SET `volume`=?, `type`='ws', `step`=4 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
             $msg = '🔻یه توضیح برای پلن مورد نظرت بنویس:';
         }
         $stmt = $connection->prepare($sql);
@@ -9585,7 +9802,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             sendMessage("لطفاً فقط نوع (ws | tcp | grpc | httpupgrade) را وارد کنید");
             exit();
         }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?,`step`=4 WHERE `active`=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?,`step`=4 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9598,7 +9815,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==4 and $text!=$buttonValues['cancel']){
         
         if($userInfo['step'] == "addNewMarzbanPlan"){
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND `step` = 4");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`is_test_plan`,0)=0 AND `step` = 4");
             $stmt->execute();
             $serverId = $stmt->get_result()->fetch_assoc()['server_id'];
             $stmt->close();
@@ -9610,11 +9827,11 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             }
             $networkType = json_encode(['inline_keyboard'=>$networkType]);
 
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `step` = 5 WHERE `step` = 4");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `step` = 5 WHERE COALESCE(`is_test_plan`,0)=0 AND `step` = 4");
             sendMessage("لطفاً نوع شبکه های این پلن را انتخاب کنید",$networkType);
         }
         else{
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `active`=1,`step`=10 WHERE `step`=4");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `active`=1,`step`=10 WHERE COALESCE(`is_test_plan`,0)=0 AND `step`=4");
             $imgtxt = '☑️ | پنل با موفقیت ثبت و ایجاد شد ( لذت ببرید ) ';
             
             sendMessage($imgtxt,$removeKeyboard);
@@ -9664,7 +9881,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         }
         
         $info = json_encode(['inbounds'=>$inbounds, 'proxies'=>$proxies]);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_sni`=?, `active`=1,`step`=10 WHERE `step`=5");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_sni`=?, `active`=1,`step`=10 WHERE COALESCE(`is_test_plan`,0)=0 AND `step`=5");
         $stmt->bind_param("s", $info);
         $stmt->execute();
         $stmt->close();
@@ -9750,7 +9967,7 @@ if(preg_match('/^editCustom(gbPrice|dayPrice)/',$data,$match) && ($from_id == $a
     setUser($data);
 }
 if(preg_match('/plansList(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? ORDER BY`id` ASC");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? AND COALESCE(`is_test_plan`,0)=0 ORDER BY`id` ASC");
     $stmt->bind_param("i", $match[1]);
     $stmt->execute();
     $res = $stmt->get_result();
@@ -13965,7 +14182,7 @@ if($data == 'reciveApplications') {
 }
 if ($text == $buttonValues['cancel']) {
     setUser();
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
     $stmt->execute();
     $stmt->close();
 
