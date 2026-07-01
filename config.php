@@ -569,7 +569,7 @@ function v2raystore_ensureTestAccountPlansSchema(){
     ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
 
     // نسخه‌های قبلی اکانت تست را به‌صورت پلن صفر تومانی نگه می‌داشتند؛ از این به بعد همان‌ها به بخش مدیریت تست منتقل می‌شوند.
-    @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0 AND COALESCE(`active`,0) = 1"));
+    if($exists && $exists->num_rows > 0){ @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0 AND COALESCE(`active`,0) = 1")); }
 
     if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2')) return;
     @($connection->query("INSERT INTO `test_account_usage` (`userid`, `plan_id`, `server_id`, `inbound_id`, `scope_key`, `order_id`, `created_at`)
@@ -578,7 +578,7 @@ function v2raystore_ensureTestAccountPlansSchema(){
         LEFT JOIN `server_plans` sp ON sp.`id` = o.`fileid`
         WHERE COALESCE(o.`amount`,0) = 0
           AND COALESCE(o.`agent_bought`,0) = 0
-          AND (COALESCE(sp.`is_test_plan`,0) = 1 OR COALESCE(sp.`price`,0) = 0)
+          AND COALESCE(sp.`price`,0) = 0
           AND NOT EXISTS (SELECT 1 FROM `test_account_usage` tu WHERE tu.`order_id` = o.`id` LIMIT 1)"));
     if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2');
 }
@@ -591,13 +591,13 @@ function v2raystore_isTestPlanRow($plan){
 }
 
 function v2raystore_testPlanActiveSql($activeOnly = true){
-    $sql = "(COALESCE(sp.`is_test_plan`,0) = 1 OR COALESCE(sp.`price`,0) = 0)";
+    $sql = "COALESCE(sp.`price`,0) = 0";
     if($activeOnly) $sql .= " AND sp.`active` = 1";
     return $sql;
 }
 
 function v2raystore_normalPlanSql($activeOnly = true){
-    $sql = "COALESCE(`is_test_plan`,0) = 0 AND COALESCE(`price`,0) != 0";
+    $sql = "COALESCE(`price`,0) != 0";
     if($activeOnly) $sql .= " AND `active` = 1";
     return $sql;
 }
@@ -10236,7 +10236,7 @@ function generateUID(){
 function checkStep($table){
     global $connection;
     
-    if($table == "server_plans") $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`is_test_plan`,0)=0 ORDER BY `id` DESC LIMIT 1");
+    if($table == "server_plans") $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`price`,0) != 0 ORDER BY `id` DESC LIMIT 1");
     if($table == "server_categories") $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `active` = 0");
     
     $stmt->execute();
@@ -18346,7 +18346,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         $existingOrders = json_decode($payInfo['auto_approved_orders'] ?? '[]', true) ?: [];
         if(count($existingOrders) == 0) $existingOrders = v2raystore_payLinkedOrderIds($hashId);
         // اگر نسخه قدیمی سفارش را قبل از ساخت کانفیگ approved کرده باشد و هیچ سفارش لینک‌شده‌ای وجود نداشته باشد، امکان تلاش دوباره بده.
-        if(count($existingOrders) == 0 && intval($payInfo['admin_message_id'] ?? 0) > 0){
+        if(count($existingOrders) == 0){
             $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` = 'approved'");
             if($stmt){ $stmt->bind_param('s', $hashId); $stmt->execute(); $stmt->close(); }
             $payInfo['state'] = 'sent';

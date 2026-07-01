@@ -585,7 +585,7 @@ if(preg_match('/^testPlanDetails(\d+)$/', $data ?? '', $m) && ($from_id == $admi
 }
 if(preg_match('/^toggleTestPlanState(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $pid = intval($m[1]);
-    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND COALESCE(`price`,0)=0");
     $stmt->bind_param("i", $pid);
     $stmt->execute();
     $stmt->close();
@@ -602,7 +602,7 @@ if(preg_match('/^deleteTestPlanAsk(\d+)$/', $data ?? '', $m) && ($from_id == $ad
 }
 if(preg_match('/^deleteTestPlanConfirm(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $pid = intval($m[1]);
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1 LIMIT 1");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND COALESCE(`price`,0)=0 LIMIT 1");
     $stmt->bind_param("i", $pid);
     $stmt->execute();
     $stmt->close();
@@ -623,16 +623,16 @@ if(preg_match('/^editTestPlanField\|(\d+)\|(title|volume|days|acount|limitip)$/'
     if(in_array($field, ['volume','days'], true)){
         if(!is_numeric($value) || floatval($value) <= 0){ sendMessage('❌ مقدار باید عددی و بزرگتر از صفر باشد.', $cancelKey, 'HTML'); exit(); }
         $num = floatval($value);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
         $stmt->bind_param("di", $num, $pid);
     }elseif(in_array($field, ['acount','limitip'], true)){
         if(!preg_match('/^\d+$/', $value)){ sendMessage('❌ مقدار باید عدد صحیح باشد.', $cancelKey, 'HTML'); exit(); }
         $num = intval($value);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
         $stmt->bind_param("ii", $num, $pid);
     }else{
         if($value === ''){ sendMessage('❌ عنوان نمی‌تواند خالی باشد.', $cancelKey, 'HTML'); exit(); }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND COALESCE(`is_test_plan`,0)=1");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
         $stmt->bind_param("si", $value, $pid);
     }
     $stmt->execute();
@@ -772,7 +772,7 @@ if(($userInfo['step'] ?? '') == 'addTestPlanTitle' && $text != $buttonValues['ca
     $protocol = trim((string)($ctx['protocol'] ?? 'vless')); $net = trim((string)($ctx['type'] ?? 'tcp'));
     if($sid <= 0 || $volume <= 0 || $days <= 0){ sendMessage('❌ اطلاعات مرحله ناقص است. دوباره از افزودن اکانت تست شروع کن.', $removeKeyboard, 'HTML'); setUser('', 'temp'); setUser(); exit(); }
     $now = time();
-    $stmt = $connection->prepare("INSERT INTO `server_plans` (`fileid`, `catid`, `server_id`, `inbound_id`, `acount`, `limitip`, `title`, `protocol`, `days`, `volume`, `type`, `price`, `descr`, `pic`, `active`, `step`, `date`, `is_test_plan`) VALUES ('', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', 1, 10, ?, 1)");
+    $stmt = $connection->prepare("INSERT INTO `server_plans` (`fileid`, `catid`, `server_id`, `inbound_id`, `acount`, `limitip`, `title`, `protocol`, `days`, `volume`, `type`, `price`, `descr`, `pic`, `active`, `step`, `date`) VALUES ('', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', 1, 10, ?)");
     $stmt->bind_param("iiiissddsi", $sid, $iid, $acount, $limitip, $title, $protocol, $days, $volume, $net, $now);
     $ok = $stmt->execute();
     $newId = intval($connection->insert_id);
@@ -1734,7 +1734,7 @@ if(preg_match('/^addDiscount(Server|Plan)Agent(\d+)/',$data,$match) && ($from_id
         
         $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['plans'] ?? array()));
         $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
-        $condition .= ($condition === "" ? "WHERE " : " AND ") . "COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0";
+        $condition .= ($condition === "" ? "WHERE " : " AND ") . "COALESCE(`price`,0) != 0";
         $stmt = $connection->prepare("SELECT * FROM `server_plans` $condition LIMIT ? OFFSET ?");
         $stmt->bind_param("ii", $limit, $offset);
         $stmt->execute();
@@ -1795,7 +1795,7 @@ if(preg_match('/^nextAgentDiscountPlan(?<agentId>\d+)_(?<offset>\d+)/',$data,$ma
     
     $condition = array_values(array_keys((function_exists('v2raystore_agentPricingDecode') ? v2raystore_agentPricingDecode($info['discount_percent'] ?? null) : (json_decode($info['discount_percent'], true) ?: []))['plans'] ?? array()));
     $condition = count($condition) > 0? "WHERE `id` NOT IN (" . implode(",", $condition) . ")":"";
-    $condition .= ($condition === "" ? "WHERE " : " AND ") . "COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0";
+    $condition .= ($condition === "" ? "WHERE " : " AND ") . "COALESCE(`price`,0) != 0";
     $stmt = $connection->prepare("SELECT * FROM `server_plans` $condition LIMIT ? OFFSET ?");
     $stmt->bind_param("ii", $limit, $offset);
     $stmt->execute();
@@ -2640,7 +2640,7 @@ if(preg_match('/createAccServer(\d+)/',$data, $match) && ($from_id == $admin || 
         while ($file = $respd->fetch_assoc()){
             $id = $file['id'];
             $name = $file['title'];
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0");
             $stmt->bind_param("ii", $sid, $id);
             $stmt->execute();
             $rowcount = $stmt->get_result()->num_rows; 
@@ -2662,7 +2662,7 @@ if(preg_match('/createAccServer(\d+)/',$data, $match) && ($from_id == $admin || 
 if(preg_match('/createAccCategory(\d+)_(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)) {
     $call_id = $match[1];
     $sid = $match[2];
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -2806,8 +2806,8 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
 	$stmt = $connection->prepare("INSERT INTO `orders_list` 
 	    (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`)
 	    VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?,1, ?, 0, ?);");
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     for($i = 1; $i<= $text; $i++){
         $uniqid = generateRandomString(42,$protocol); 
         if($portType == "auto"){
@@ -3239,8 +3239,8 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     include_once 'phpqrcode/qrlib.php';
 
     alert($mainValues['sending_config_to_user']);
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     for($i = 1; $i <= $accountCount; $i++){
         $uniqid = generateRandomString(42,$protocol);
         
@@ -5098,7 +5098,7 @@ if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) &&
         while ($file = $respd->fetch_assoc()){
             $id = $file['id'];
             $name = $file['title'];
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0");
             $stmt->bind_param("ii", $sid, $id);
             $stmt->execute();
             $rowcount = $stmt->get_result()->num_rows; 
@@ -5148,7 +5148,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
         }
     }
 
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and COALESCE(`is_test_plan`,0)=0 and `catid`=? and `active`=1 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and COALESCE(`price`,0) != 0 and `catid`=? and `active`=1 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -5180,7 +5180,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
 if(preg_match('/selectCustomPlan(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+)/',$data,$match) && ($botState['sellState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)) {
     $call_id = $match['categoryId'];
     $sid = $match['serverId'];
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -5354,7 +5354,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
             }
         }
     }
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`price`,0) != 0");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
@@ -5569,7 +5569,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     $id = $match[1];
 	$call_id = $match[2];
     alert($mainValues['receving_information']);
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`price`,0) != 0");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
@@ -5899,8 +5899,8 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $vray_link = json_encode($vraylink);
     }
     delMessage();
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
         $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
@@ -6000,8 +6000,8 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     $stmt->close();
 
     include_once 'phpqrcode/qrlib.php';
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     if($match[1] == "Sub"){
         $subLink = v2raystore_makeCustomerSubLink($order['server_id'], $order['token'], $order['uuid'] ?? "", $order['inbound_id'] ?? 0, $order['remark'] ?? "");
         if($subLink == ""){
@@ -6331,8 +6331,8 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
         $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link= json_encode($vraylink);
     }
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
 
     $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
     $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
@@ -6911,7 +6911,7 @@ if(preg_match('/payWithCartToCart(.*)/',$userInfo['step'], $match) and $text != 
     }
 }
 if($data=="availableServers"){
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `acount` != 0 AND `inbound_id` != 0 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `acount` != 0 AND `inbound_id` != 0 AND COALESCE(`price`,0) != 0");
     $stmt->execute();
     $serversList = $stmt->get_result();
     $stmt->close();
@@ -6949,7 +6949,7 @@ if($data=="availableServers"){
     editText($message_id, "🟢 | موجودی پلن اشتراکی:", $keys);
 }
 if($data=="availableServers2"){
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `inbound_id` = 0 AND COALESCE(`is_test_plan`,0)=0 AND COALESCE(`price`,0) != 0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `inbound_id` = 0 AND COALESCE(`price`,0) != 0");
     $stmt->execute();
     $serversList = $stmt->get_result();
     $stmt->close();
@@ -8809,8 +8809,8 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $id) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link = json_encode($vraylink);
     }
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
         $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
@@ -9394,7 +9394,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
 
     alert($mainValues['receving_information']);
     delMessage();
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`is_test_plan`,0)=0");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=? and `active`=1 AND COALESCE(`price`,0) != 0");
     $stmt->bind_param("i", $id);
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
@@ -9486,8 +9486,8 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
     
     if($vraylink == null){delMessage(); exit();}
     include_once 'phpqrcode/qrlib.php';  
-    define('IMAGE_WIDTH',540);
-    define('IMAGE_HEIGHT',540);
+    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
+    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
     $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
     $__v2raystoreServerType = isset($serverType) ? $serverType : '';
@@ -9523,7 +9523,7 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
 
 if (($data == 'addNewPlan' || $data=="addNewRahgozarPlan" || $data == "addNewMarzbanPlan") and (($from_id == $admin || $userInfo['isAdmin'] == true))){
     setUser($data);
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
     $stmt->execute();
     $stmt->close();
     if($data=="addNewPlan" || $data == "addNewMarzbanPlan"){
@@ -9561,7 +9561,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==1 and $text!=$buttonValues['cancel']){
         $msg = '🔰 لطفاً قیمت پلن رو به تومان وارد کنید!';
         if(strlen($text)>1){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=?,`step`=2 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0 and `step`=1");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=?,`step`=2 WHERE `active`=0 and `step`=1");
             $stmt->bind_param("s", $text);
             $stmt->execute();
             $stmt->close();
@@ -9571,7 +9571,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==2 and $text!=$buttonValues['cancel']){
         $msg = '🔰لطفاً یه دسته از لیست زیر برا پلن انتخاب کن ';
         if(is_numeric($text)){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `price`=?,`step`=3 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `price`=?,`step`=3 WHERE `active`=0");
             $stmt->bind_param("s", $text);
             $stmt->execute();
             $stmt->close();
@@ -9619,7 +9619,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         if( $inarr==1 ){
             $input = explode(' - ',$text);
             $catid = $input[0];
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `catid`=?,`step`=50 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `catid`=?,`step`=50 WHERE `active`=0");
             $stmt->bind_param("i", $catid);
             $stmt->execute();
             $stmt->close();
@@ -9633,7 +9633,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==50 and $text!=$buttonValues['cancel'] and preg_match('/selectNewPlanServer(\d+)/', $data,$match)){
         $newStep = $userInfo['step'] == "addNewMarzbanPlan"?53:51;
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `server_id`=?,`step`=? WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `server_id`=?,`step`=? WHERE `active`=0");
         $stmt->bind_param("ii", $match[1], $newStep);
         $stmt->execute();
         $stmt->close();
@@ -9650,12 +9650,12 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         else $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess | trojan)";
         editText($message_id,$msg);
         if($match[1] == "Shared"){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0");
             $stmt->execute();
             $stmt->close();
         }
         elseif($match[1] == "Specific"){
-            $stmt = $connection->prepare("UPDATE server_plans SET step=52 WHERE active=0 AND COALESCE(`is_test_plan`,0)=0");
+            $stmt = $connection->prepare("UPDATE server_plans SET step=52 WHERE active=0");
             $stmt->execute();
             $stmt->close();
         }
@@ -9670,7 +9670,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=61 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=61 WHERE `active`=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9682,7 +9682,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=62 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=62 WHERE `active`=0");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
@@ -9695,7 +9695,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `volume`=?,`step`=63 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `volume`=?,`step`=63 WHERE `active`=0");
         $stmt->bind_param("d", $text);
         $stmt->execute();
         $stmt->close();
@@ -9707,7 +9707,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
         $stmt->close();
@@ -9724,7 +9724,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `inbound_id`=?,`step`=64 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `type` = ?, `inbound_id`=?,`step`=64 WHERE `active`=0");
         $stmt->bind_param("si", $netType, $text);
         $stmt->execute();
         $stmt->close();
@@ -9737,7 +9737,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `acount`=?,`step`=65 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `acount`=?,`step`=65 WHERE `active`=0");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
@@ -9749,7 +9749,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             sendMessage($mainValues['send_only_number']);
             exit();
         }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `limitip`=?,`step`=4 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `limitip`=?,`step`=4 WHERE `active`=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9766,7 +9766,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=53 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?,`step`=53 WHERE `active`=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9779,7 +9779,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             exit();
         }
         
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=54 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `days`=?,`step`=54 WHERE `active`=0");
         $stmt->bind_param("i", $text);
         $stmt->execute();
         $stmt->close();
@@ -9793,10 +9793,10 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         }
         
         if($userInfo['step'] == "addNewPlan"){
-            $sql = ("UPDATE `server_plans` SET `volume`=?,`step`=55 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+            $sql = ("UPDATE `server_plans` SET `volume`=?,`step`=55 WHERE `active`=0");
             $msg = "🔉 | لطفاً نوع شبکه این پلن را انتخاب کنید (ws | tcp | grpc | httpupgrade) :";
         }elseif($userInfo['step'] == "addNewRahgozarPlan" || $userInfo['step'] == "addNewMarzbanPlan"){
-            $sql = ("UPDATE `server_plans` SET `volume`=?, `type`='ws', `step`=4 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+            $sql = ("UPDATE `server_plans` SET `volume`=?, `type`='ws', `step`=4 WHERE `active`=0");
             $msg = '🔻یه توضیح برای پلن مورد نظرت بنویس:';
         }
         $stmt = $connection->prepare($sql);
@@ -9811,7 +9811,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             sendMessage("لطفاً فقط نوع (ws | tcp | grpc | httpupgrade) را وارد کنید");
             exit();
         }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?,`step`=4 WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?,`step`=4 WHERE `active`=0");
         $stmt->bind_param("s", $text);
         $stmt->execute();
         $stmt->close();
@@ -9824,7 +9824,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
     if($step==4 and $text!=$buttonValues['cancel']){
         
         if($userInfo['step'] == "addNewMarzbanPlan"){
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND COALESCE(`is_test_plan`,0)=0 AND `step` = 4");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 AND `step` = 4");
             $stmt->execute();
             $serverId = $stmt->get_result()->fetch_assoc()['server_id'];
             $stmt->close();
@@ -9836,11 +9836,11 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
             }
             $networkType = json_encode(['inline_keyboard'=>$networkType]);
 
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `step` = 5 WHERE COALESCE(`is_test_plan`,0)=0 AND `step` = 4");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `step` = 5 WHERE `step` = 4");
             sendMessage("لطفاً نوع شبکه های این پلن را انتخاب کنید",$networkType);
         }
         else{
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `active`=1,`step`=10 WHERE COALESCE(`is_test_plan`,0)=0 AND `step`=4");
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `descr`=?, `active`=1,`step`=10 WHERE `step`=4");
             $imgtxt = '☑️ | پنل با موفقیت ثبت و ایجاد شد ( لذت ببرید ) ';
             
             sendMessage($imgtxt,$removeKeyboard);
@@ -9890,7 +9890,7 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         }
         
         $info = json_encode(['inbounds'=>$inbounds, 'proxies'=>$proxies]);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_sni`=?, `active`=1,`step`=10 WHERE COALESCE(`is_test_plan`,0)=0 AND `step`=5");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `custom_sni`=?, `active`=1,`step`=10 WHERE `step`=5");
         $stmt->bind_param("s", $info);
         $stmt->execute();
         $stmt->close();
@@ -9976,7 +9976,7 @@ if(preg_match('/^editCustom(gbPrice|dayPrice)/',$data,$match) && ($from_id == $a
     setUser($data);
 }
 if(preg_match('/plansList(\d+)/', $data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? AND COALESCE(`is_test_plan`,0)=0 ORDER BY`id` ASC");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? AND COALESCE(`price`,0) != 0 ORDER BY`id` ASC");
     $stmt->bind_param("i", $match[1]);
     $stmt->execute();
     $res = $stmt->get_result();
@@ -14191,7 +14191,7 @@ if($data == 'reciveApplications') {
 }
 if ($text == $buttonValues['cancel']) {
     setUser();
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0 AND COALESCE(`is_test_plan`,0)=0");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
     $stmt->execute();
     $stmt->close();
 
