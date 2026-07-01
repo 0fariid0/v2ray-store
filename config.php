@@ -729,7 +729,7 @@ function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
     $trial = (string)($user['freetrial'] ?? '');
     if(!v2raystore_isTestAccountProcessingState($trial)) return false;
     $ts = v2raystore_testAccountProcessingTimestamp($trial);
-    if($ts > 0 && $ts >= time() - 120) return false;
+    if($ts > 0 && $ts >= time() - 30) return false;
 
     $realCount = v2raystore_countUserCreatedTestAccounts($userId);
     $newTrial = $realCount > 0 ? 'used' : null;
@@ -879,7 +879,7 @@ function v2raystore_reserveTestAccountCreation($userId, $planId = 0){
     $userId = intval($userId);
     if($userId <= 0) return false;
 
-    $staleBefore = time() - 120;
+    $staleBefore = time() - 30;
     $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
     if($stmt){
         $stmt->bind_param('ii', $userId, $staleBefore);
@@ -894,7 +894,7 @@ function v2raystore_reserveTestAccountCreation($userId, $planId = 0){
         $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` = 'used' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?))");
     }
     if(!$stmt) return false;
-    $now = time() - 120;
+    $now = time() - 30;
     $stmt->bind_param('sii', $lockValue, $userId, $now);
     $stmt->execute();
     $changed = intval($stmt->affected_rows);

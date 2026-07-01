@@ -8692,6 +8692,12 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
             $__v2raystoreTestReserved = false;
         }
     };
+    // اگر وسط ساخت اکانت تست خطای ناگهانی/تایم‌اوت رخ بدهد، کاربر در حالت processing گیر نمی‌کند.
+    register_shutdown_function(function() use (&$__v2raystoreTestReserved, $from_id){
+        if($__v2raystoreTestReserved && function_exists('v2raystore_releaseTestAccountCreation')){
+            v2raystore_releaseTestAccountCreation($from_id);
+        }
+    });
 
     if(function_exists('v2raystore_reserveTestAccountCreation')){
         if(!v2raystore_reserveTestAccountCreation($from_id, $id)){
@@ -8848,7 +8854,7 @@ if($subLink != "") $acc_text .= "
         $ecc = 'L'; 
         $pixel_Size = 11;
         $frame_Size = 0;
-        QRcode::png($link, $file, $ecc, $pixel_Size, $frame_size);
+        QRcode::png($link, $file, $ecc, $pixel_Size, $frame_Size);
     	addBorderImage($file);
     	
     	
@@ -8887,7 +8893,6 @@ if($subLink != "") $acc_text .= "
 	$stmt->bind_param("isiiisssisiiii", $from_id, $token, $id, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $price, $date, $rahgozar, $agentBought);
     $stmt->execute();
     $newOrderId = intval($connection->insert_id);
-    $order = $stmt->get_result();
     $stmt->close();
     v2raystore_notifyTestAccountTaken($newOrderId, $from_id, $file_detail['title'] ?? '', $remark, $volume, $days);
     
@@ -8904,7 +8909,11 @@ if($subLink != "") $acc_text .= "
     }
 
     if(function_exists('v2raystore_markTestAccountUsed')){
-        v2raystore_markTestAccountUsed($from_id, $id, $server_id, $inbound_id, $newOrderId);
+        $__v2raystoreMarkedTest = v2raystore_markTestAccountUsed($from_id, $id, $server_id, $inbound_id, $newOrderId);
+        if(!$__v2raystoreMarkedTest){
+            // پلن روی پنل ساخته شده؛ حتی اگر ثبت جدول مصرف خطا داد، کاربر نباید دوباره همان تست را بی‌نهایت بگیرد.
+            setUser('used','freetrial');
+        }
         if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
     }else{
         setUser('used','freetrial');
