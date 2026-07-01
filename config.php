@@ -726,6 +726,7 @@ function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
     global $connection;
     $userId = intval($userId);
     if($userId <= 0 || !is_array($user)) return false;
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, $user)) return false;
     $trial = (string)($user['freetrial'] ?? '');
     if(!v2raystore_isTestAccountProcessingState($trial)) return false;
     $ts = v2raystore_testAccountProcessingTimestamp($trial);
@@ -748,6 +749,7 @@ function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
 
 function v2raystore_getUserTestAccountUsedCount($user, $planId = 0){
     $userId = intval(is_array($user) ? ($user['userid'] ?? 0) : 0);
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, $user)) return 0;
     if($userId > 0) return v2raystore_countUserCreatedTestAccounts($userId, intval($planId));
     if(empty($user)) return 0;
     return max(0, intval($user['test_account_count'] ?? 0));
@@ -761,8 +763,7 @@ function v2raystore_getTestAccountLimitText($user){
 function v2raystore_canUserGetTestAccount($user, $userId = null, $planId = 0){
     global $admin;
     $userId = intval($userId ?: (is_array($user) ? ($user['userid'] ?? 0) : 0));
-    if($userId > 0 && intval($userId) === intval($admin)) return true;
-    if(!empty($user) && !empty($user['isAdmin'])) return true;
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, $user)) return true;
     if($userId > 0 && is_array($user)){
         v2raystore_cleanupStaleTestAccountProcessing($userId, $user);
         $trial = (string)($user['freetrial'] ?? '');
@@ -785,6 +786,7 @@ function v2raystore_canUserGetTestAccount($user, $userId = null, $planId = 0){
 
 function v2raystore_getUserTakenTestAccountLabels($userId, $plans = null){
     $userId = intval($userId);
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return [];
     if($plans === null) $plans = v2raystore_getActiveTestPlans();
     $labels = [];
     foreach($plans as $plan){
@@ -796,8 +798,11 @@ function v2raystore_getUserTakenTestAccountLabels($userId, $plans = null){
 
 function v2raystore_getTestAccountMenuText($userId, $plans = null){
     $plans = $plans === null ? v2raystore_getActiveTestPlans() : $plans;
-    $taken = v2raystore_getUserTakenTestAccountLabels($userId, $plans);
     $msg = "🧪 <b>دریافت اکانت تست</b>\n\nسرور تست موردنظرت را انتخاب کن.";
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)){
+        return $msg . "\n\n👑 برای ادمین محدودیت دریافت اکانت تست اعمال نمی‌شود.";
+    }
+    $taken = v2raystore_getUserTakenTestAccountLabels($userId, $plans);
     if(count($taken) > 0){
         $msg .= "\n\n✅ <b>از این سرورها قبلاً تست گرفته‌ای:</b>\n";
         foreach($taken as $label) $msg .= "• " . v2raystore_h($label) . "\n";
@@ -808,9 +813,10 @@ function v2raystore_getTestAccountMenuText($userId, $plans = null){
 }
 
 function v2raystore_getTestAccountMenuKeys($userId, $plans = null){
-    global $buttonValues, $userInfo;
+    global $buttonValues, $userInfo, $from_id;
     $plans = $plans === null ? v2raystore_getActiveTestPlans() : $plans;
-    $limit = v2raystore_getUserTestAccountLimit(is_array($userInfo) ? $userInfo : []);
+    $isTestAdmin = function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, is_array($userInfo) ? $userInfo : null);
+    $limit = $isTestAdmin ? 0 : v2raystore_getUserTestAccountLimit(is_array($userInfo) ? $userInfo : []);
     $rows = [];
     $pair = [];
     foreach($plans as $plan){
@@ -833,6 +839,7 @@ function v2raystore_markTestAccountUsed($userId, $planId = 0, $serverId = 0, $in
     $userId = intval($userId);
     $planId = intval($planId);
     if($userId <= 0) return false;
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return true;
 
     $scopeKey = '';
     if($planId > 0){
@@ -878,6 +885,7 @@ function v2raystore_reserveTestAccountCreation($userId, $planId = 0){
     global $connection;
     $userId = intval($userId);
     if($userId <= 0) return false;
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return true;
 
     $staleBefore = time() - 30;
     $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
@@ -906,6 +914,7 @@ function v2raystore_releaseTestAccountCreation($userId){
     global $connection;
     $userId = intval($userId);
     if($userId <= 0) return false;
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return true;
     $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
     if(!$stmt) return false;
     $stmt->bind_param('i', $userId);
@@ -7827,7 +7836,7 @@ function getMainKeys(){
             ])
         ],
         'test_account' => [
-            'enabled' => (($botState['testAccount'] ?? 'off') == "on"),
+            'enabled' => (($botState['testAccount'] ?? 'off') == "on" || $isAdminUser),
             'buttons' => [['text'=>'اکانت تست','callback_data'=>"getTestAccount"]]
         ],
         'wallet_charge' => [
@@ -7958,6 +7967,28 @@ function getAdminKeys(){
 
 
 
+
+function v2raystore_isTestAccountAdminUser($userId = 0, $user = null){
+    global $admin, $connection;
+    if(is_array($user)){
+        if(!empty($user['userid'])) $userId = intval($user['userid']);
+        if(!empty($user['isAdmin'])) return true;
+    }
+    $userId = intval($userId);
+    if($userId > 0 && intval($userId) === intval($admin)) return true;
+    if($userId > 0 && isset($connection) && $connection){
+        $stmt = @$connection->prepare("SELECT `isAdmin` FROM `users` WHERE `userid` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $userId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row && !empty($row['isAdmin'])) return true;
+        }
+    }
+    return false;
+}
+
 function v2raystore_isTestAccountExempt($user){
     return !empty($user) && isset($user['test_account_exempt']) && intval($user['test_account_exempt']) === 1;
 }
@@ -7994,6 +8025,7 @@ function v2raystore_setDefaultTestAccountLimit($limit){
 }
 
 function v2raystore_getUserTestAccountLimit($user){
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser((is_array($user) ? intval($user['userid'] ?? 0) : 0), is_array($user) ? $user : null)) return 0;
     if(v2raystore_isTestAccountExempt($user)) return 0;
     if(!empty($user) && array_key_exists('test_account_limit', $user) && $user['test_account_limit'] !== null && $user['test_account_limit'] !== ''){
         $limit = intval($user['test_account_limit']);
