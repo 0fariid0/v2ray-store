@@ -542,6 +542,438 @@ function v2raystore_ensurePlanMultiInboundColumn(){
 }
 v2raystore_ensurePlanMultiInboundColumn();
 
+
+function v2raystore_ensureTestAccountPlansSchema(){
+    global $connection;
+    if(!isset($connection) || !$connection) return;
+
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_plans` LIKE 'is_test_plan'"));
+    $isNewColumn = ($exists && $exists->num_rows == 0);
+    if($isNewColumn){
+        @($connection->query("ALTER TABLE `server_plans` ADD `is_test_plan` tinyint(1) NOT NULL DEFAULT 0 AFTER `price`"));
+    }
+
+    @($connection->query("CREATE TABLE IF NOT EXISTS `test_account_usage` (
+        `id` int(11) NOT NULL AUTO_INCREMENT,
+        `userid` bigint(20) NOT NULL,
+        `plan_id` int(11) NOT NULL DEFAULT 0,
+        `server_id` int(11) NOT NULL DEFAULT 0,
+        `inbound_id` int(11) NOT NULL DEFAULT 0,
+        `scope_key` varchar(191) NOT NULL,
+        `order_id` int(11) NOT NULL DEFAULT 0,
+        `created_at` int(11) NOT NULL DEFAULT 0,
+        PRIMARY KEY (`id`),
+        KEY `idx_user_scope` (`userid`,`scope_key`),
+        KEY `idx_user_plan` (`userid`,`plan_id`),
+        KEY `idx_order_id` (`order_id`)
+    ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
+
+    // نسخه‌های قبلی اکانت تست را به‌صورت پلن صفر تومانی نگه می‌داشتند؛ از این به بعد همان‌ها به بخش مدیریت تست منتقل می‌شوند.
+    if($exists && $exists->num_rows > 0){ @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0 AND COALESCE(`active`,0) = 1")); }
+
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2')) return;
+    @($connection->query("INSERT INTO `test_account_usage` (`userid`, `plan_id`, `server_id`, `inbound_id`, `scope_key`, `order_id`, `created_at`)
+        SELECT CAST(o.`userid` AS UNSIGNED), o.`fileid`, o.`server_id`, o.`inbound_id`, CONCAT('s:', o.`server_id`, ':i:', o.`inbound_id`), o.`id`, CAST(o.`date` AS UNSIGNED)
+        FROM `orders_list` o
+        LEFT JOIN `server_plans` sp ON sp.`id` = o.`fileid`
+        WHERE COALESCE(o.`amount`,0) = 0
+          AND COALESCE(o.`agent_bought`,0) = 0
+          AND COALESCE(sp.`price`,0) = 0
+          AND NOT EXISTS (SELECT 1 FROM `test_account_usage` tu WHERE tu.`order_id` = o.`id` LIMIT 1)"));
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2');
+}
+v2raystore_ensureTestAccountPlansSchema();
+
+function v2raystore_isTestPlanRow($plan){
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return false;
+    return intval($plan['is_test_plan'] ?? 0) === 1 || intval($plan['price'] ?? 0) === 0;
+}
+
+function v2raystore_testPlanActiveSql($activeOnly = true){
+    $sql = "COALESCE(sp.`price`,0) = 0";
+    if($activeOnly) $sql .= " AND sp.`active` = 1";
+    return $sql;
+}
+
+function v2raystore_normalPlanSql($activeOnly = true){
+    $sql = "COALESCE(`price`,0) != 0";
+    if($activeOnly) $sql .= " AND `active` = 1";
+    return $sql;
+}
+
+function v2raystore_getTestPlans($activeOnly = true){
+    global $connection;
+    $plans = [];
+    if(!isset($connection) || !$connection) return $plans;
+    $where = v2raystore_testPlanActiveSql($activeOnly);
+    $res = @($connection->query("SELECT sp.*, si.`title` AS `server_title`, si.`flag` AS `server_flag`, si.`remark` AS `server_remark`, sc.`type` AS `_server_type`
+        FROM `server_plans` sp
+        LEFT JOIN `server_info` si ON si.`id` = sp.`server_id`
+        LEFT JOIN `server_config` sc ON sc.`id` = sp.`server_id`
+        WHERE $where
+        ORDER BY sp.`active` DESC, si.`id` ASC, sp.`id` ASC"));
+    if($res){
+        while($row = $res->fetch_assoc()) $plans[] = $row;
+    }
+    return $plans;
+}
+
+function v2raystore_getActiveTestPlans(){
+    return v2raystore_getTestPlans(true);
+}
+
+function v2raystore_getTestPlanById($planId){
+    global $connection;
+    $planId = intval($planId);
+    if($planId <= 0 || !isset($connection) || !$connection) return null;
+    $stmt = @$connection->prepare("SELECT sp.*, si.`title` AS `server_title`, si.`flag` AS `server_flag`, si.`remark` AS `server_remark`, sc.`type` AS `_server_type`
+        FROM `server_plans` sp
+        LEFT JOIN `server_info` si ON si.`id` = sp.`server_id`
+        LEFT JOIN `server_config` sc ON sc.`id` = sp.`server_id`
+        WHERE sp.`id` = ? LIMIT 1");
+    if(!$stmt) return null;
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row || !v2raystore_isTestPlanRow($row)) return null;
+    return $row;
+}
+
+function v2raystore_getPlanScopeInboundText($plan){
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return 'نامشخص';
+    $ids = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [intval($plan['inbound_id'] ?? 0)];
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function($v){ return $v > 0; })));
+    if(count($ids) > 1) return 'اینباندهای ' . implode(', ', $ids);
+    $inboundId = count($ids) === 1 ? intval($ids[0]) : intval($plan['inbound_id'] ?? 0);
+    return $inboundId > 0 ? ('اینباند ' . $inboundId) : 'کل سرور / پورت اختصاصی';
+}
+
+function v2raystore_testPlanScopeKey($plan){
+    if(!is_array($plan) && is_numeric($plan)) $plan = v2raystore_getTestPlanById(intval($plan));
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return '';
+    $serverId = intval($plan['server_id'] ?? 0);
+    if($serverId <= 0) return '';
+    $ids = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [intval($plan['inbound_id'] ?? 0)];
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids), function($v){ return $v > 0; })));
+    if(count($ids) > 1){
+        sort($ids, SORT_NUMERIC);
+        return 's:' . $serverId . ':m:' . implode('-', $ids);
+    }
+    $inboundId = count($ids) === 1 ? intval($ids[0]) : intval($plan['inbound_id'] ?? 0);
+    return 's:' . $serverId . ':i:' . max(0, $inboundId);
+}
+
+function v2raystore_testPlanDisplayTitle($plan, $withScope = true){
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return 'اکانت تست';
+    $serverTitle = trim((string)($plan['server_title'] ?? ''));
+    if($serverTitle === '') $serverTitle = 'سرور ' . intval($plan['server_id'] ?? 0);
+    $flag = trim((string)($plan['server_flag'] ?? ''));
+    $title = trim((string)($plan['title'] ?? ''));
+    $base = trim(($flag !== '' ? $flag . ' ' : '') . $serverTitle);
+    $hasPersianTest = function_exists('mb_stripos') ? (mb_stripos($title, 'تست', 0, 'UTF-8') !== false) : (stripos($title, 'تست') !== false);
+    if($title !== '' && stripos($title, 'test') === false && !$hasPersianTest){
+        $base .= ' - ' . $title;
+    }
+    if($withScope) $base .= ' (' . v2raystore_getPlanScopeInboundText($plan) . ')';
+    return trim($base);
+}
+
+function v2raystore_userTestUsageCountForScope($userId, $scopeKey){
+    global $connection;
+    $userId = intval($userId);
+    $scopeKey = trim((string)$scopeKey);
+    if($userId <= 0 || $scopeKey === '' || !isset($connection) || !$connection) return 0;
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS c FROM `test_account_usage` WHERE `userid` = ? AND `scope_key` = ?");
+    if(!$stmt) return 0;
+    $stmt->bind_param('is', $userId, $scopeKey);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return max(0, intval($row['c'] ?? 0));
+}
+
+function v2raystore_userTestUsageCountForPlan($userId, $plan){
+    $scope = v2raystore_testPlanScopeKey($plan);
+    return $scope === '' ? 0 : v2raystore_userTestUsageCountForScope($userId, $scope);
+}
+
+function v2raystore_countUserCreatedTestAccounts($userId, $planId = 0){
+    global $connection;
+    $userId = intval($userId);
+    $planId = intval($planId);
+    if($userId <= 0 || !isset($connection) || !$connection) return 0;
+    if($planId > 0){
+        $plan = v2raystore_getTestPlanById($planId);
+        if($plan) return v2raystore_userTestUsageCountForPlan($userId, $plan);
+    }
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS c FROM `test_account_usage` WHERE `userid` = ?");
+    if($stmt){
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return max(0, intval($row['c'] ?? 0));
+    }
+    return 0;
+}
+
+function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0 || !is_array($user)) return false;
+    $trial = (string)($user['freetrial'] ?? '');
+    if(!v2raystore_isTestAccountProcessingState($trial)) return false;
+    $ts = v2raystore_testAccountProcessingTimestamp($trial);
+    if($ts > 0 && $ts >= time() - 30) return false;
+
+    $realCount = v2raystore_countUserCreatedTestAccounts($userId);
+    $newTrial = $realCount > 0 ? 'used' : null;
+    if(isset($connection) && $connection){
+        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ?, `test_account_count` = ? WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+        if($stmt){
+            $stmt->bind_param('sii', $newTrial, $realCount, $userId);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+    $user['freetrial'] = $newTrial;
+    $user['test_account_count'] = $realCount;
+    return true;
+}
+
+function v2raystore_getUserTestAccountUsedCount($user, $planId = 0){
+    $userId = intval(is_array($user) ? ($user['userid'] ?? 0) : 0);
+    if($userId > 0) return v2raystore_countUserCreatedTestAccounts($userId, intval($planId));
+    if(empty($user)) return 0;
+    return max(0, intval($user['test_account_count'] ?? 0));
+}
+
+function v2raystore_getTestAccountLimitText($user){
+    $limit = v2raystore_getUserTestAccountLimit($user);
+    return $limit === 0 ? 'نامحدود' : ($limit . ' بار برای هر تست');
+}
+
+function v2raystore_canUserGetTestAccount($user, $userId = null, $planId = 0){
+    global $admin;
+    $userId = intval($userId ?: (is_array($user) ? ($user['userid'] ?? 0) : 0));
+    if($userId > 0 && intval($userId) === intval($admin)) return true;
+    if(!empty($user) && !empty($user['isAdmin'])) return true;
+    if($userId > 0 && is_array($user)){
+        v2raystore_cleanupStaleTestAccountProcessing($userId, $user);
+        $trial = (string)($user['freetrial'] ?? '');
+        if(v2raystore_isTestAccountProcessingState($trial)) return false;
+    }
+    $limit = v2raystore_getUserTestAccountLimit($user);
+    if($limit === 0) return true;
+    $planId = intval($planId);
+    if($planId > 0){
+        $plan = v2raystore_getTestPlanById($planId);
+        if(!$plan || intval($plan['active'] ?? 0) != 1) return false;
+        return v2raystore_userTestUsageCountForPlan($userId, $plan) < $limit;
+    }
+    // بدون انتخاب سرور، کافی است حداقل یکی از تست‌ها هنوز برای کاربر قابل دریافت باشد.
+    foreach(v2raystore_getActiveTestPlans() as $plan){
+        if(v2raystore_userTestUsageCountForPlan($userId, $plan) < $limit) return true;
+    }
+    return false;
+}
+
+function v2raystore_getUserTakenTestAccountLabels($userId, $plans = null){
+    $userId = intval($userId);
+    if($plans === null) $plans = v2raystore_getActiveTestPlans();
+    $labels = [];
+    foreach($plans as $plan){
+        $used = v2raystore_userTestUsageCountForPlan($userId, $plan);
+        if($used > 0) $labels[] = v2raystore_testPlanDisplayTitle($plan, true);
+    }
+    return array_values(array_unique($labels));
+}
+
+function v2raystore_getTestAccountMenuText($userId, $plans = null){
+    $plans = $plans === null ? v2raystore_getActiveTestPlans() : $plans;
+    $taken = v2raystore_getUserTakenTestAccountLabels($userId, $plans);
+    $msg = "🧪 <b>دریافت اکانت تست</b>\n\nسرور تست موردنظرت را انتخاب کن.";
+    if(count($taken) > 0){
+        $msg .= "\n\n✅ <b>از این سرورها قبلاً تست گرفته‌ای:</b>\n";
+        foreach($taken as $label) $msg .= "• " . v2raystore_h($label) . "\n";
+    }else{
+        $msg .= "\n\nهنوز از هیچ سروری اکانت تست نگرفته‌ای.";
+    }
+    return trim($msg);
+}
+
+function v2raystore_getTestAccountMenuKeys($userId, $plans = null){
+    global $buttonValues, $userInfo;
+    $plans = $plans === null ? v2raystore_getActiveTestPlans() : $plans;
+    $limit = v2raystore_getUserTestAccountLimit(is_array($userInfo) ? $userInfo : []);
+    $rows = [];
+    $pair = [];
+    foreach($plans as $plan){
+        $planId = intval($plan['id'] ?? 0);
+        $used = v2raystore_userTestUsageCountForPlan($userId, $plan);
+        $title = v2raystore_testPlanDisplayTitle($plan, true);
+        if($limit !== 0 && $used >= $limit) $title = '🔒 ' . $title;
+        else $title = '🧪 ' . $title;
+        if($limit > 1 && $used > 0) $title .= ' ' . $used . '/' . $limit;
+        $pair[] = ['text'=>$title, 'callback_data'=>'freeTrial' . $planId . '_normal', 'style'=>($limit !== 0 && $used >= $limit ? 'warning' : 'primary')];
+        if(count($pair) >= 1){ $rows[] = $pair; $pair = []; }
+    }
+    if(count($pair) > 0) $rows[] = $pair;
+    $rows[] = [[ 'text'=>$buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی', 'callback_data'=>'mainMenu', 'style'=>'primary' ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_markTestAccountUsed($userId, $planId = 0, $serverId = 0, $inboundId = 0, $orderId = 0){
+    global $connection;
+    $userId = intval($userId);
+    $planId = intval($planId);
+    if($userId <= 0) return false;
+
+    $scopeKey = '';
+    if($planId > 0){
+        $plan = v2raystore_getTestPlanById($planId);
+        if($plan){
+            $serverId = intval($plan['server_id'] ?? $serverId);
+            $inboundId = intval($plan['inbound_id'] ?? $inboundId);
+            $scopeKey = v2raystore_testPlanScopeKey($plan);
+        }
+    }
+    $serverId = intval($serverId);
+    $inboundId = intval($inboundId);
+    if($scopeKey === '' && $serverId > 0) $scopeKey = 's:' . $serverId . ':i:' . max(0, $inboundId);
+    if($scopeKey !== ''){
+        $createdAt = time();
+        $orderId = intval($orderId);
+        $stmt = @$connection->prepare("INSERT INTO `test_account_usage` (`userid`, `plan_id`, `server_id`, `inbound_id`, `scope_key`, `order_id`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        if($stmt){
+            $stmt->bind_param('iiiisii', $userId, $planId, $serverId, $inboundId, $scopeKey, $orderId, $createdAt);
+            @$stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    // شمارنده قدیمی فقط برای آمار و سازگاری نگه داشته می‌شود؛ محدودیت جدید از جدول استفاده هر سرور/اینباند خوانده می‌شود.
+    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), 0) + 1, `freetrial` = 'used' WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+    if($stmt){
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $changed = intval($stmt->affected_rows);
+        $stmt->close();
+        if($changed > 0) return true;
+    }
+    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), 0) + 1, `freetrial` = 'used' WHERE `userid` = ?");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $userId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_reserveTestAccountCreation($userId, $planId = 0){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+
+    $staleBefore = time() - 30;
+    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
+    if($stmt){
+        $stmt->bind_param('ii', $userId, $staleBefore);
+        $stmt->execute();
+        $stmt->close();
+    }
+
+    $lockValue = 'processing:' . time();
+    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` = 'used' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?))");
+    if(!$stmt && function_exists('v2raystore_ensureTestAccountManagementColumns')){
+        v2raystore_ensureTestAccountManagementColumns();
+        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` = 'used' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?))");
+    }
+    if(!$stmt) return false;
+    $now = time() - 30;
+    $stmt->bind_param('sii', $lockValue, $userId, $now);
+    $stmt->execute();
+    $changed = intval($stmt->affected_rows);
+    $stmt->close();
+    return $changed > 0;
+}
+
+function v2raystore_releaseTestAccountCreation($userId){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0) return false;
+    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $userId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_getTestPlanListText($activeOnly = false){
+    $plans = v2raystore_getTestPlans($activeOnly);
+    $msg = "🧪 <b>پلن‌های اکانت تست</b>\n\n";
+    if(empty($plans)) return $msg . "هنوز هیچ پلن تستی تعریف نشده است.";
+    foreach($plans as $plan){
+        $state = intval($plan['active'] ?? 0) === 1 ? 'فعال ✅' : 'غیرفعال ❌';
+        $msg .= "• #" . intval($plan['id']) . " - <b>" . v2raystore_h(v2raystore_testPlanDisplayTitle($plan, true)) . "</b>\n";
+        $msg .= "  وضعیت: <b>{$state}</b> | حجم: <b>" . v2raystore_h($plan['volume'] ?? '') . " GB</b> | مدت: <b>" . v2raystore_h($plan['days'] ?? '') . " روز</b> | ظرفیت: <b>" . v2raystore_h($plan['acount'] ?? '') . "</b>\n\n";
+    }
+    return trim($msg);
+}
+
+function v2raystore_getTestPlanListKeys(){
+    global $buttonValues;
+    $plans = v2raystore_getTestPlans(false);
+    $rows = [];
+    foreach($plans as $plan){
+        $rows[] = [[ 'text'=>'#' . intval($plan['id']) . ' ' . v2raystore_testPlanDisplayTitle($plan, false), 'callback_data'=>'testPlanDetails' . intval($plan['id']), 'style'=>'primary' ]];
+    }
+    $rows[] = [[ 'text'=>'➕ افزودن اکانت تست جدید', 'callback_data'=>'addTestPlan', 'style'=>'success' ]];
+    $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'testAccountManagement', 'style'=>'primary' ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_getTestPlanDetailsText($planId){
+    $plan = v2raystore_getTestPlanById($planId);
+    if(!$plan) return 'پلن تست پیدا نشد.';
+    $state = intval($plan['active'] ?? 0) === 1 ? 'فعال ✅' : 'غیرفعال ❌';
+    return "🧪 <b>جزئیات پلن تست #" . intval($plan['id']) . "</b>\n\n" .
+           "🖥 سرور/اینباند: <b>" . v2raystore_h(v2raystore_testPlanDisplayTitle($plan, true)) . "</b>\n" .
+           "وضعیت: <b>{$state}</b>\n" .
+           "🔋 حجم: <b>" . v2raystore_h($plan['volume'] ?? '') . " گیگ</b>\n" .
+           "⏰ مدت: <b>" . v2raystore_h($plan['days'] ?? '') . " روز</b>\n" .
+           "🚪 ظرفیت: <b>" . v2raystore_h($plan['acount'] ?? '') . "</b>\n" .
+           "👥 محدودیت IP: <b>" . v2raystore_h($plan['limitip'] ?? '') . "</b>\n" .
+           "📡 پروتکل/شبکه: <b>" . v2raystore_h(($plan['protocol'] ?? '') . ' / ' . ($plan['type'] ?? '')) . "</b>";
+}
+
+function v2raystore_getTestPlanDetailsKeys($planId){
+    global $buttonValues;
+    $plan = v2raystore_getTestPlanById($planId);
+    if(!$plan) return v2raystore_getTestPlanListKeys();
+    $id = intval($plan['id']);
+    $active = intval($plan['active'] ?? 0) === 1;
+    $rows = [];
+    $rows[] = [[ 'text'=>($active ? 'غیرفعال کردن ❌' : 'فعال کردن ✅'), 'callback_data'=>'toggleTestPlanState' . $id, 'style'=>($active ? 'warning' : 'success') ]];
+    $rows[] = [
+        ['text'=>'✏️ عنوان', 'callback_data'=>'editTestPlanField' . $id . '_title', 'style'=>'primary'],
+        ['text'=>'🔋 حجم', 'callback_data'=>'editTestPlanField' . $id . '_volume', 'style'=>'primary']
+    ];
+    $rows[] = [
+        ['text'=>'⏰ مدت', 'callback_data'=>'editTestPlanField' . $id . '_days', 'style'=>'primary'],
+        ['text'=>'🚪 ظرفیت', 'callback_data'=>'editTestPlanField' . $id . '_acount', 'style'=>'primary']
+    ];
+    $rows[] = [[ 'text'=>'👥 محدودیت IP', 'callback_data'=>'editTestPlanField' . $id . '_limitip', 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'🗑 حذف این تست', 'callback_data'=>'deleteTestPlanAsk' . $id, 'style'=>'danger' ]];
+    $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'testPlansList', 'style'=>'primary' ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
 function v2raystore_decodePlanMultiInboundIds($value){
     if($value === null) return [];
     if(is_array($value)) $raw = $value;
@@ -7579,135 +8011,7 @@ function v2raystore_testAccountProcessingTimestamp($value){
     return intval(substr($value, strrpos($value, ':') + 1));
 }
 
-function v2raystore_countUserCreatedTestAccounts($userId){
-    global $connection;
-    $userId = intval($userId);
-    if($userId <= 0 || !isset($connection) || !$connection) return 0;
-    $stmt = @$connection->prepare("SELECT COUNT(*) AS c FROM `orders_list` WHERE `userid` = ? AND COALESCE(`amount`,0) = 0");
-    if(!$stmt) return 0;
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    return max(0, intval($row['c'] ?? 0));
-}
-
-function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
-    global $connection;
-    $userId = intval($userId);
-    if($userId <= 0 || !is_array($user)) return false;
-    $trial = (string)($user['freetrial'] ?? '');
-    if(!v2raystore_isTestAccountProcessingState($trial)) return false;
-    $ts = v2raystore_testAccountProcessingTimestamp($trial);
-    if($ts > 0 && $ts >= time() - 120) return false;
-
-    $realCount = v2raystore_countUserCreatedTestAccounts($userId);
-    $newTrial = $realCount > 0 ? 'used' : null;
-    if(isset($connection) && $connection){
-        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ?, `test_account_count` = ? WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
-        if($stmt){
-            $stmt->bind_param('sii', $newTrial, $realCount, $userId);
-            $stmt->execute();
-            $stmt->close();
-        }
-    }
-    $user['freetrial'] = $newTrial;
-    $user['test_account_count'] = $realCount;
-    return true;
-}
-
-function v2raystore_getUserTestAccountUsedCount($user){
-    if(empty($user)) return 0;
-    $count = 0;
-    if(array_key_exists('test_account_count', $user)) $count = max(0, intval($user['test_account_count']));
-    $trial = (string)($user['freetrial'] ?? '');
-    if($trial !== '' && !v2raystore_isTestAccountProcessingState($trial)) $count = max($count, 1);
-    return $count;
-}
-
-function v2raystore_canUserGetTestAccount($user, $userId = null){
-    global $admin;
-    if(!empty($userId) && intval($userId) === intval($admin)) return true;
-    if(!empty($user) && !empty($user['isAdmin'])) return true;
-    if(!empty($userId) && is_array($user)){
-        v2raystore_cleanupStaleTestAccountProcessing($userId, $user);
-        $trial = (string)($user['freetrial'] ?? '');
-        if(v2raystore_isTestAccountProcessingState($trial)) return false;
-    }
-    $limit = v2raystore_getUserTestAccountLimit($user);
-    if($limit === 0) return true;
-    return v2raystore_getUserTestAccountUsedCount($user) < $limit;
-}
-
-function v2raystore_getTestAccountLimitText($user){
-    $limit = v2raystore_getUserTestAccountLimit($user);
-    return $limit === 0 ? 'نامحدود' : ($limit . ' بار');
-}
-
-function v2raystore_markTestAccountUsed($userId){
-    global $connection;
-    $userId = intval($userId);
-    if($userId <= 0) return false;
-
-    // رزرو فقط قفل می‌گذارد؛ شمارنده فقط بعد از ساخت موفق اکانت تست زیاد می‌شود.
-    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '' AND `freetrial` NOT LIKE 'processing:%', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
-    if($stmt){
-        $stmt->bind_param('i', $userId);
-        $stmt->execute();
-        $changed = intval($stmt->affected_rows);
-        $stmt->close();
-        if($changed > 0) return true;
-    }
-
-    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), IF(`freetrial` IS NOT NULL AND `freetrial` <> '', 1, 0)) + 1, `freetrial` = 'used' WHERE `userid` = ?");
-    if(!$stmt) return false;
-    $stmt->bind_param('i', $userId);
-    $ok = $stmt->execute();
-    $stmt->close();
-    return $ok;
-}
-
-function v2raystore_reserveTestAccountCreation($userId){
-    global $connection;
-    $userId = intval($userId);
-    if($userId <= 0) return false;
-
-    // اگر پردازش قبلی گیر کرده باشد، زود آزاد شود تا کاربر به خاطر یک تلاش ناموفق قفل نماند.
-    $staleBefore = time() - 120;
-    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
-    if($stmt){
-        $stmt->bind_param('ii', $userId, $staleBefore);
-        $stmt->execute();
-        $stmt->close();
-    }
-
-    $lockValue = 'processing:' . time();
-    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?)) AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
-    if(!$stmt && function_exists('v2raystore_ensureTestAccountManagementColumns')){
-        v2raystore_ensureTestAccountManagementColumns();
-        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?)) AND (COALESCE(`test_account_exempt`,0) = 1 OR COALESCE(`test_account_limit`,1) = 0 OR COALESCE(`test_account_count`,0) < COALESCE(`test_account_limit`,1))");
-    }
-    if(!$stmt) return false;
-    $now = time() - 120;
-    $stmt->bind_param('sii', $lockValue, $userId, $now);
-    $stmt->execute();
-    $changed = intval($stmt->affected_rows);
-    $stmt->close();
-    return $changed > 0;
-}
-
-function v2raystore_releaseTestAccountCreation($userId){
-    global $connection;
-    $userId = intval($userId);
-    if($userId <= 0) return false;
-    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
-    if(!$stmt) return false;
-    $stmt->bind_param('i', $userId);
-    $ok = $stmt->execute();
-    $stmt->close();
-    return $ok;
-}
-
+// Test account limit/usage helpers moved to per-server/per-inbound implementation above.
 
 function v2raystore_cleanTestRemarkPrefix($prefix){
     $prefix = trim((string)$prefix);
@@ -7836,10 +8140,15 @@ function v2raystore_getTestAccountManageKeys(){
     $testAutoDeleteTitle = ($testAutoDeleteState === 'on') ? 'روشن ✅' : 'خاموش ❌';
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users`"));
     if($res) $totalUsers = intval(($res->fetch_assoc())['c'] ?? 0);
-    $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `freetrial` IS NOT NULL OR COALESCE(`test_account_count`,0) > 0"));
+    $res = @($connection->query("SELECT COUNT(DISTINCT `userid`) AS c FROM `test_account_usage`"));
     if($res) $usedUsers = intval(($res->fetch_assoc())['c'] ?? 0);
+    if($usedUsers <= 0){
+        $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `freetrial` IS NOT NULL OR COALESCE(`test_account_count`,0) > 0"));
+        if($res) $usedUsers = intval(($res->fetch_assoc())['c'] ?? 0);
+    }
     $res = @($connection->query("SELECT COUNT(*) AS c FROM `users` WHERE `test_account_exempt` = 1 OR (`test_account_limit` IS NOT NULL AND `test_account_limit` >= 0)"));
     if($res) $customUsers = intval(($res->fetch_assoc())['c'] ?? 0);
+    $testPlansCount = count(function_exists('v2raystore_getTestPlans') ? v2raystore_getTestPlans(false) : []);
 
     return json_encode(['inline_keyboard'=>[
         [
@@ -7847,13 +8156,18 @@ function v2raystore_getTestAccountManageKeys(){
             ['text'=>'🧪 استفاده‌کرده: ' . $usedUsers, 'callback_data'=>'v2raystore', 'style'=>'primary']
         ],
         [
-            ['text'=>'⚙️ سقف اختصاصی: ' . $customUsers, 'callback_data'=>'v2raystore', 'style'=>'primary']
+            ['text'=>'⚙️ سقف اختصاصی: ' . $customUsers, 'callback_data'=>'v2raystore', 'style'=>'primary'],
+            ['text'=>'🧩 تست‌ها: ' . $testPlansCount, 'callback_data'=>'testPlansList', 'style'=>'primary']
+        ],
+        [
+            ['text'=>'🧩 مدیریت تست سرورها/اینباندها', 'callback_data'=>'testPlansList', 'style'=>'primary'],
+            ['text'=>'➕ افزودن اکانت تست', 'callback_data'=>'addTestPlan', 'style'=>'success']
         ],
         [
             ['text'=>'🏷 ریمارک تست: ' . $testRemarkPrefixTitle, 'callback_data'=>'v2raystore', 'style'=>'primary']
         ],
         [
-            ['text'=>'🔢 سقف پیش‌فرض تست: ' . $defaultTestLimit . ' بار', 'callback_data'=>'v2raystore', 'style'=>'primary']
+            ['text'=>'🔢 سقف پیش‌فرض هر تست: ' . $defaultTestLimit . ' بار', 'callback_data'=>'v2raystore', 'style'=>'primary']
         ],
         [
             ['text'=>'➕ افزودن ۱ تست به همه', 'callback_data'=>'adjustDefaultTestAccountLimit_plus', 'style'=>'success'],
@@ -9922,7 +10236,7 @@ function generateUID(){
 function checkStep($table){
     global $connection;
     
-    if($table == "server_plans") $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0");
+    if($table == "server_plans") $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `active` = 0 ORDER BY `id` DESC LIMIT 1");
     if($table == "server_categories") $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `active` = 0");
     
     $stmt->execute();
@@ -18032,7 +18346,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         $existingOrders = json_decode($payInfo['auto_approved_orders'] ?? '[]', true) ?: [];
         if(count($existingOrders) == 0) $existingOrders = v2raystore_payLinkedOrderIds($hashId);
         // اگر نسخه قدیمی سفارش را قبل از ساخت کانفیگ approved کرده باشد و هیچ سفارش لینک‌شده‌ای وجود نداشته باشد، امکان تلاش دوباره بده.
-        if(count($existingOrders) == 0 && intval($payInfo['admin_message_id'] ?? 0) > 0){
+        if(count($existingOrders) == 0){
             $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` = 'approved'");
             if($stmt){ $stmt->bind_param('s', $hashId); $stmt->execute(); $stmt->close(); }
             $payInfo['state'] = 'sent';
