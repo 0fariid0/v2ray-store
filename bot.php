@@ -9832,6 +9832,45 @@ function v2raystore_planMultiInboundManageView($planId){
 
 
 
+
+function v2raystore_inboundAddressManageView($serverId){
+    global $connection, $buttonValues;
+    $serverId = intval($serverId);
+    $stmt = @$connection->prepare("SELECT si.`title`, sc.* FROM `server_config` sc LEFT JOIN `server_info` si ON si.`id`=sc.`id` WHERE sc.`id`=? LIMIT 1");
+    if(!$stmt) return ['text'=>'خطا در خواندن سرور.', 'keyboard'=>json_encode(['inline_keyboard'=>[]])];
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $server = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$server) return ['text'=>'سرور پیدا نشد.', 'keyboard'=>json_encode(['inline_keyboard'=>[]])];
+    if(($server['type'] ?? '') !== 'sanaei_new'){
+        return [
+            'text'=>'🌐 آدرس اینباند فقط برای سنایی جدید فعال است. برای بقیه پنل‌ها همان آدرس سرور قبلی استفاده می‌شود.',
+            'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'showServerSettings'.$serverId.'_0']]]], JSON_UNESCAPED_UNICODE)
+        ];
+    }
+    $json = getJson($serverId);
+    $rows = ($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)) ? $json->obj : [];
+    $keyboard = [];
+    foreach($rows as $row){
+        if(!is_object($row)) continue;
+        $iid = intval($row->id ?? 0);
+        if($iid <= 0) continue;
+        $remark = trim((string)($row->remark ?? ''));
+        $protocol = trim((string)($row->protocol ?? ''));
+        $summary = function_exists('v2raystore_inboundAddressSummary') ? v2raystore_inboundAddressSummary($serverId, $iid, 24) : 'تنظیم';
+        $title = '#' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($protocol !== '' ? ' (' . $protocol . ')' : '') . ' | ' . $summary;
+        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 54) $title = mb_substr($title, 0, 51, 'UTF-8') . '...';
+        elseif(strlen($title) > 54) $title = substr($title, 0, 51) . '...';
+        $keyboard[] = [['text'=>$title, 'callback_data'=>'editInboundAddr_'.$serverId.'_'.$iid]];
+    }
+    if(empty($keyboard)) $keyboard[] = [['text'=>'هیچ اینباندی از پنل دریافت نشد','callback_data'=>'v2raystore']];
+    $keyboard[] = [['text'=>'⬅️ بازگشت','callback_data'=>'showServerSettings'.$serverId.'_0']];
+    $title = htmlspecialchars((string)($server['title'] ?? $serverId), ENT_QUOTES, 'UTF-8');
+    $text = "🌐 آدرس اینباندها\n\nسرور: <b>{$title}</b>\n\nبرای هر inbound می‌توانی یک یا چند دامنه/IP جداگانه ثبت کنی. لینک‌های همان inbound با همان آدرس‌ها ساخته می‌شوند.\nاگر برای inbound آدرس ثبت نکنی، رفتار قبلی ربات استفاده می‌شود.";
+    return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE)];
+}
+
 if(preg_match('/^v2raystoreplanmultiinbounds(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $view = v2raystore_planMultiInboundManageView($match[1]);
     editText($message_id, $view['text'], $view['keyboard'], 'HTML');
@@ -13011,6 +13050,33 @@ if(preg_match('/^toggleServerState(\d+)_(\d+)/',$data,$match) && ($from_id == $a
 if(preg_match('/^showServerSettings(\d+)_(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $keys = getServerConfigKeys($match[1], $match[2]);
     editText($message_id,"☑️ مدیریت سرور ها: $cname",$keys);
+}
+if(preg_match('/^manageInboundAddresses(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $serverId = intval($match[1]);
+    $view = v2raystore_inboundAddressManageView($serverId);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit();
+}
+if(preg_match('/^editInboundAddr_(\d+)_(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $serverId = intval($match[1]);
+    $inboundId = intval($match[2]);
+    $current = function_exists('v2raystore_getInboundAddressString') ? v2raystore_getInboundAddressString($serverId, $inboundId) : '';
+    delMessage();
+    sendMessage("🌐 آدرس‌های inbound #{$inboundId}\n\nآدرس فعلی:\n" . ($current !== '' ? $current : 'ثبت نشده / استفاده از حالت قبلی') . "\n\nیک یا چند دامنه/IP را هرکدام در یک خط ارسال کن.\nبرای خالی کردن این inbound، /empty را بفرست.", $cancelKey, 'HTML');
+    setUser('editInboundAddr_'.$serverId.'_'.$inboundId);
+    exit();
+}
+if(preg_match('/^editInboundAddr_(\d+)_(\d+)$/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $serverId = intval($match[1]);
+    $inboundId = intval($match[2]);
+    $value = trim((string)$text);
+    if($value === '/empty') $value = '';
+    if(function_exists('v2raystore_saveInboundAddressList')) v2raystore_saveInboundAddressList($serverId, $inboundId, $value);
+    sendMessage($mainValues['saved_successfuly'] ?? 'ذخیره شد.', $removeKeyboard);
+    setUser();
+    $view = v2raystore_inboundAddressManageView($serverId);
+    sendMessage($view['text'], $view['keyboard'], 'HTML');
+    exit();
 }
 if(preg_match('/^changesServerIp(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");

@@ -653,6 +653,117 @@ function v2raystore_ensureServerSubDomainColumn(){
 }
 v2raystore_ensureServerSubDomainColumn();
 
+
+function v2raystore_ensureServerInboundAddressesColumn(){
+    global $connection;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('SERVER_INBOUND_ADDRESSES_V1')) return;
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_config` LIKE 'inbound_addresses'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `server_config` ADD `inbound_addresses` text CHARACTER SET utf8mb4 COLLATE utf8mb4_persian_ci DEFAULT NULL AFTER `ip`"));
+    }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('SERVER_INBOUND_ADDRESSES_V1');
+}
+v2raystore_ensureServerInboundAddressesColumn();
+
+function v2raystore_normalizeInboundAddressList($addresses){
+    if(is_array($addresses)) $raw = $addresses;
+    else $raw = preg_split('/
+||
+|[,،;|]+/u', trim((string)$addresses));
+    $out = [];
+    foreach($raw as $item){
+        $host = function_exists('v2raystore_cleanSingleDomainHost') ? v2raystore_cleanSingleDomainHost($item) : trim((string)$item);
+        if($host !== '') $out[] = $host;
+    }
+    return array_values(array_unique($out));
+}
+
+function v2raystore_decodeInboundAddressMap($value){
+    if(is_array($value)) $raw = $value;
+    else{
+        $value = trim((string)$value);
+        if($value === '') return [];
+        $decoded = json_decode($value, true);
+        $raw = is_array($decoded) ? $decoded : [];
+    }
+    $map = [];
+    foreach($raw as $inboundId => $addresses){
+        if(is_array($addresses) && isset($addresses['id']) && isset($addresses['addresses'])){
+            $inboundId = $addresses['id'];
+            $addresses = $addresses['addresses'];
+        }
+        $iid = intval($inboundId);
+        if($iid <= 0) continue;
+        $list = v2raystore_normalizeInboundAddressList($addresses);
+        if(!empty($list)) $map[(string)$iid] = $list;
+    }
+    return $map;
+}
+
+function v2raystore_encodeInboundAddressMap($map){
+    $map = v2raystore_decodeInboundAddressMap($map);
+    return !empty($map) ? json_encode($map, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
+}
+
+function v2raystore_getServerInboundAddressMap($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0) return [];
+    if(!isset($GLOBALS['v2raystore_server_inbound_address_cache']) || !is_array($GLOBALS['v2raystore_server_inbound_address_cache'])) $GLOBALS['v2raystore_server_inbound_address_cache'] = [];
+    if(array_key_exists($serverId, $GLOBALS['v2raystore_server_inbound_address_cache'])) return $GLOBALS['v2raystore_server_inbound_address_cache'][$serverId];
+    $value = '';
+    $stmt = @$connection->prepare("SELECT `inbound_addresses` FROM `server_config` WHERE `id`=? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('i', $serverId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $value = $row['inbound_addresses'] ?? '';
+    }
+    return $GLOBALS['v2raystore_server_inbound_address_cache'][$serverId] = v2raystore_decodeInboundAddressMap($value);
+}
+
+function v2raystore_getInboundAddressList($serverId, $inboundId){
+    $map = v2raystore_getServerInboundAddressMap($serverId);
+    $iid = (string)intval($inboundId);
+    return isset($map[$iid]) && is_array($map[$iid]) ? array_values($map[$iid]) : [];
+}
+
+function v2raystore_getInboundAddressString($serverId, $inboundId){
+    $list = v2raystore_getInboundAddressList($serverId, $inboundId);
+    return !empty($list) ? implode("
+", $list) : '';
+}
+
+function v2raystore_saveInboundAddressList($serverId, $inboundId, $addresses){
+    global $connection;
+    $serverId = intval($serverId);
+    $inboundId = intval($inboundId);
+    if($serverId <= 0 || $inboundId <= 0) return false;
+    $map = v2raystore_getServerInboundAddressMap($serverId);
+    $list = v2raystore_normalizeInboundAddressList($addresses);
+    if(empty($list)) unset($map[(string)$inboundId]);
+    else $map[(string)$inboundId] = $list;
+    $json = v2raystore_encodeInboundAddressMap($map);
+    $stmt = @$connection->prepare("UPDATE `server_config` SET `inbound_addresses`=? WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $json, $serverId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    if(isset($GLOBALS['v2raystore_server_inbound_address_cache'])) unset($GLOBALS['v2raystore_server_inbound_address_cache'][$serverId]);
+    return $ok;
+}
+
+function v2raystore_inboundAddressSummary($serverId, $inboundId, $limit = 32){
+    $list = v2raystore_getInboundAddressList($serverId, $inboundId);
+    if(empty($list)) return 'آدرس عمومی سرور/پنل';
+    $txt = implode('، ', array_slice($list, 0, 2));
+    if(count($list) > 2) $txt .= ' +' . (count($list) - 2);
+    if(function_exists('mb_strlen') && mb_strlen($txt, 'UTF-8') > $limit) $txt = mb_substr($txt, 0, max(1, $limit - 3), 'UTF-8') . '...';
+    elseif(strlen($txt) > $limit) $txt = substr($txt, 0, max(1, $limit - 3)) . '...';
+    return $txt;
+}
+
 function v2raystore_ensureExtraUserColumns(){
     global $connection;
     if(v2raystore_schemaPatchDone('USERS_ACCESS_JOIN_CARD_V2')) return;
@@ -8018,9 +8129,13 @@ function getServerConfigKeys($serverId,$offset = 0){
             ['text'=>$reality,'callback_data'=>"changeRealityState$id"],
             ['text'=>"reality",'callback_data'=>"v2raystore"],
             ]:[]),
+        (($serverConfig['type'] == "sanaei_new") ?
+        [
+            ['text'=>"🌐 آدرس‌های اینباند",'callback_data'=>"manageInboundAddresses$id"],
+            ] :
         [
             ['text'=>"♻️ تغییر آیپی های سرور",'callback_data'=>"changesServerIp$id"],
-            ],
+            ]),
         [
             ['text'=>"♻️ تغییر security setting",'callback_data'=>"editsServertlsSettings$id"],
             ]
@@ -11817,6 +11932,10 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
     $response_header = $server_info['response_header'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
     $serverType = $server_info['type'];
+    if($serverType == 'sanaei_new' && intval($inbound_id) > 0 && function_exists('v2raystore_getInboundAddressString') && v2raystore_normalizePlanDomainInput($customDomain) === ''){
+        $inboundAddressOverride = v2raystore_getInboundAddressString($server_id, $inbound_id);
+        if($inboundAddressOverride !== '') $customDomain = $inboundAddressOverride;
+    }
     if($serverType == 'sanaei_new' && $rahgozar == false && $customPath == false && intval($customPort) == 0 && $customSni === null && v2raystore_normalizePlanDomainInput($customDomain) === ''){
         $panelLinks = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uniqid, $inbound_id);
         if(!empty($panelLinks)) return $panelLinks;
@@ -11916,6 +12035,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
             }
         }else{
             if($row->id == $inbound_id) {
+                if(isset($row->protocol) && trim((string)$row->protocol) !== '') $protocol = strtolower((string)$row->protocol);
                 if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = json_decode($row->settings);
                     $clients = $settings->clients;
@@ -17826,8 +17946,23 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
             $vray_link = json_encode($response->vray_links, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }else{
             $token = RandomString(30);
-            $subLink = ($linkOptions['sub'] ?? false) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : '';
-            $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+            $planInboundIdsForLinks = ($serverType == 'sanaei_new' && function_exists('v2raystore_planInboundIds')) ? v2raystore_planInboundIds($file_detail, false) : [];
+            if(empty($planInboundIdsForLinks) && intval($inbound_id) > 0) $planInboundIdsForLinks = [intval($inbound_id)];
+            $primaryInboundForSub = !empty($planInboundIdsForLinks) ? intval($planInboundIdsForLinks[0]) : intval($inbound_id);
+            $subLink = ($linkOptions['sub'] ?? false) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $primaryInboundForSub, $remark) : '';
+            if($serverType == 'sanaei_new' && count($planInboundIdsForLinks) > 1){
+                $vraylink = [];
+                foreach($planInboundIdsForLinks as $multiInboundId){
+                    $multiInboundId = intval($multiInboundId);
+                    if($multiInboundId <= 0) continue;
+                    $linksForInbound = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $multiInboundId, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+                    if(is_array($linksForInbound)) $vraylink = array_merge($vraylink, $linksForInbound);
+                    elseif(!empty($linksForInbound)) $vraylink[] = $linksForInbound;
+                }
+                $vraylink = array_values(array_unique(array_filter(array_map('strval', $vraylink))));
+            }else{
+                $vraylink = getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
+            }
             $vray_link = json_encode($vraylink, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
         $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType, $linkOptions);
