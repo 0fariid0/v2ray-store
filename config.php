@@ -3277,16 +3277,22 @@ function v2raystore_helpDetectTutorialApp($row){
         $hay = (string)$row;
     }
 
-    // ترتیب مهم است: اول V2rayNG بررسی می‌شود تا با V2rayN قاطی نشود.
-    if(preg_match('/(^|[^a-z0-9])v2ray\s*ng([^a-z0-9]|$)/iu', $hay) || stripos($hay, 'android') !== false || (function_exists('mb_stripos') && mb_stripos($hay, 'اندروید', 0, 'UTF-8') !== false) || strpos($hay, 'اندروید') !== false){
-        return 'v2rayng';
-    }
-    if(preg_match('/(^|[^a-z0-9])v2ray\s*n(?!g)([^a-z0-9]|$)/iu', $hay) || stripos($hay, 'windows') !== false || (function_exists('mb_stripos') && mb_stripos($hay, 'ویندوز', 0, 'UTF-8') !== false) || strpos($hay, 'ویندوز') !== false){
-        return 'v2rayn';
-    }
-    if(stripos($hay, 'streisand') !== false || stripos($hay, 'iphone') !== false || stripos($hay, 'ios') !== false || (function_exists('mb_stripos') && mb_stripos($hay, 'آیفون', 0, 'UTF-8') !== false) || (function_exists('mb_stripos') && mb_stripos($hay, 'استرایسند', 0, 'UTF-8') !== false) || strpos($hay, 'آیفون') !== false || strpos($hay, 'استرایسند') !== false){
-        return 'streisand';
-    }
+    $has = function($needle) use ($hay){
+        if($needle === '') return false;
+        if(function_exists('mb_stripos')) return mb_stripos($hay, $needle, 0, 'UTF-8') !== false;
+        return stripos($hay, $needle) !== false;
+    };
+
+    // تشخیص بر اساس پلتفرم را اول انجام می‌دهیم تا موردهایی مثل "windows v2rayng"
+    // اشتباهاً به عنوان V2rayNG ذخیره/نمایش داده نشوند. V2rayNG برای اندروید است و V2rayN برای ویندوز.
+    if($has('android') || $has('اندروید')) return 'v2rayng';
+    if($has('windows') || $has('ویندوز') || preg_match('/(^|[^a-z0-9])win([^a-z0-9]|$)/iu', $hay)) return 'v2rayn';
+    if($has('iphone') || $has('ios') || $has('آیفون') || $has('استرایسند') || $has('streisand')) return 'streisand';
+
+    // بعد از پلتفرم، نام خود برنامه بررسی می‌شود. این regex اجازه نمی‌دهد V2rayN داخل V2rayNG حساب شود.
+    if(preg_match('/(^|[^a-z0-9])v2ray\s*ng([^a-z0-9]|$)/iu', $hay)) return 'v2rayng';
+    if(preg_match('/(^|[^a-z0-9])v2ray\s*n(?!g)([^a-z0-9]|$)/iu', $hay)) return 'v2rayn';
+
     return '';
 }
 
@@ -3470,23 +3476,38 @@ function v2raystore_helpUserMenuText($type){
     return $msg;
 }
 
+function v2raystore_helpDefaultSoftwareLinksByApp(){
+    return [
+        'v2rayng' => ['title'=>'V2rayNG', 'link'=>'https://github.com/2dust/v2rayNG/releases'],
+        'v2rayn' => ['title'=>'V2rayN', 'link'=>'https://github.com/2dust/v2rayN/releases'],
+        'streisand' => ['title'=>'Streisand', 'link'=>'https://apps.apple.com/us/app/streisand/id6450534064'],
+    ];
+}
+
 function v2raystore_helpSoftwareLinksByApp(){
     global $connection;
     $out = ['by_app'=>[], 'other'=>[]];
     $stmt = @$connection->prepare("SELECT `title`, `link` FROM `needed_sofwares` WHERE `status`=1");
-    if(!$stmt) return $out;
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while($res && ($file = $res->fetch_assoc())){
-        $title = trim((string)($file['title'] ?? ''));
-        $link = trim((string)($file['link'] ?? ''));
-        if($title === '' || !preg_match('/^https?:\/\//i', $link)) continue;
-        $app = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($title) : '';
-        $item = ['title'=>$title, 'link'=>$link];
-        if($app !== '' && !isset($out['by_app'][$app])) $out['by_app'][$app] = $item;
-        else $out['other'][] = $item;
+    if($stmt){
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while($res && ($file = $res->fetch_assoc())){
+            $title = trim((string)($file['title'] ?? ''));
+            $link = trim((string)($file['link'] ?? ''));
+            if($title === '' || !preg_match('/^https?:\/\//i', $link)) continue;
+            $app = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($title) : '';
+            $item = ['title'=>$title, 'link'=>$link];
+            if($app !== '' && !isset($out['by_app'][$app])) $out['by_app'][$app] = $item;
+            else $out['other'][] = $item;
+        }
+        $stmt->close();
     }
-    $stmt->close();
+
+    // اگر لینک دانلود یکی از سه برنامه در دیتابیس نبود، لینک رسمی پیش‌فرض استفاده می‌شود
+    // تا در بخش آموزش اتصال هر برنامه دقیقاً روبه‌روی دکمه آموزش خودش دکمه دانلود داشته باشد.
+    foreach(v2raystore_helpDefaultSoftwareLinksByApp() as $app => $item){
+        if(!isset($out['by_app'][$app])) $out['by_app'][$app] = $item;
+    }
     return $out;
 }
 
@@ -3497,34 +3518,42 @@ function v2raystore_helpUserMenuKeys($type){
 
     if($cfg['type'] === 'tutorial'){
         $softwareLinks = v2raystore_helpSoftwareLinksByApp();
-        $usedApps = [];
+        $tutorialsByApp = [];
+        $otherTutorials = [];
+
         foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
             $app = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($row) : '';
+            if($app !== '' && !isset($tutorialsByApp[$app])) $tutorialsByApp[$app] = $row;
+            else $otherTutorials[] = $row;
+        }
+
+        // چیدمان ثابت و تمیز: هر برنامه فقط یک ردیف دارد؛ آموزش و دانلود روبه‌روی هم.
+        // این باعث می‌شود دکمه دانلود V2rayN دیگر جدا نیفتد و با V2rayNG اشتباه نشود.
+        foreach(['v2rayng', 'v2rayn', 'streisand'] as $app){
+            if(!isset($tutorialsByApp[$app])) continue;
+            $row = $tutorialsByApp[$app];
             $buttons = [[
                 'text' => '📚 آموزش ' . $row['title'],
                 'callback_data' => $cfg['item_prefix'] . intval($row['id']),
                 'style' => 'primary'
             ]];
-            if($app !== '' && isset($softwareLinks['by_app'][$app])){
+            if(isset($softwareLinks['by_app'][$app])){
                 $buttons[] = [
                     'text' => '⬇️ دانلود ' . v2raystore_appTutorialTitle($app),
                     'url' => $softwareLinks['by_app'][$app]['link']
                 ];
-                $usedApps[$app] = true;
             }
             $rows[] = $buttons;
         }
 
-        $extraDownloadButtons = [];
-        foreach($softwareLinks['by_app'] as $app => $file){
-            if(isset($usedApps[$app])) continue;
-            $extraDownloadButtons[] = ['text'=>'⬇️ ' . $file['title'], 'url'=>$file['link']];
-        }
-        foreach($softwareLinks['other'] as $file){
-            $extraDownloadButtons[] = ['text'=>'⬇️ ' . $file['title'], 'url'=>$file['link']];
-        }
-        foreach(array_chunk($extraDownloadButtons, 2) as $chunk){
-            $rows[] = $chunk;
+        // اگر مدیر آموزش اضافه‌ای ساخته باشد، فقط خود آموزش نمایش داده می‌شود؛
+        // لینک‌های دانلود اضافه پایین منو پخش نمی‌شوند تا صفحه شلوغ و نامرتب نشود.
+        foreach($otherTutorials as $row){
+            $rows[] = [[
+                'text' => '📚 آموزش ' . $row['title'],
+                'callback_data' => $cfg['item_prefix'] . intval($row['id']),
+                'style' => 'primary'
+            ]];
         }
     }else{
         foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
