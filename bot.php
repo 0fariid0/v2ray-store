@@ -585,7 +585,7 @@ if(preg_match('/^testPlanDetails(\d+)$/', $data ?? '', $m) && ($from_id == $admi
 }
 if(preg_match('/^toggleTestPlanState(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $pid = intval($m[1]);
-    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND COALESCE(`price`,0)=0");
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
     $stmt->bind_param("i", $pid);
     $stmt->execute();
     $stmt->close();
@@ -602,7 +602,7 @@ if(preg_match('/^deleteTestPlanAsk(\d+)$/', $data ?? '', $m) && ($from_id == $ad
 }
 if(preg_match('/^deleteTestPlanConfirm(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $pid = intval($m[1]);
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND COALESCE(`price`,0)=0 LIMIT 1");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0) LIMIT 1");
     $stmt->bind_param("i", $pid);
     $stmt->execute();
     $stmt->close();
@@ -623,16 +623,16 @@ if(preg_match('/^editTestPlanField\|(\d+)\|(title|volume|days|acount|limitip)$/'
     if(in_array($field, ['volume','days'], true)){
         if(!is_numeric($value) || floatval($value) <= 0){ sendMessage('❌ مقدار باید عددی و بزرگتر از صفر باشد.', $cancelKey, 'HTML'); exit(); }
         $num = floatval($value);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
         $stmt->bind_param("di", $num, $pid);
     }elseif(in_array($field, ['acount','limitip'], true)){
         if(!preg_match('/^\d+$/', $value)){ sendMessage('❌ مقدار باید عدد صحیح باشد.', $cancelKey, 'HTML'); exit(); }
         $num = intval($value);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
         $stmt->bind_param("ii", $num, $pid);
     }else{
         if($value === ''){ sendMessage('❌ عنوان نمی‌تواند خالی باشد.', $cancelKey, 'HTML'); exit(); }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
         $stmt->bind_param("si", $value, $pid);
     }
     $stmt->execute();
@@ -772,7 +772,7 @@ if(($userInfo['step'] ?? '') == 'addTestPlanTitle' && $text != $buttonValues['ca
     $protocol = trim((string)($ctx['protocol'] ?? 'vless')); $net = trim((string)($ctx['type'] ?? 'tcp'));
     if($sid <= 0 || $volume <= 0 || $days <= 0){ sendMessage('❌ اطلاعات مرحله ناقص است. دوباره از افزودن اکانت تست شروع کن.', $removeKeyboard, 'HTML'); setUser('', 'temp'); setUser(); exit(); }
     $now = time();
-    $stmt = $connection->prepare("INSERT INTO `server_plans` (`fileid`, `catid`, `server_id`, `inbound_id`, `acount`, `limitip`, `title`, `protocol`, `days`, `volume`, `type`, `price`, `descr`, `pic`, `active`, `step`, `date`) VALUES ('', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', 1, 10, ?)");
+    $stmt = $connection->prepare("INSERT INTO `server_plans` (`fileid`, `catid`, `server_id`, `inbound_id`, `acount`, `limitip`, `title`, `protocol`, `days`, `volume`, `type`, `price`, `is_test_plan`, `descr`, `pic`, `active`, `step`, `date`) VALUES ('', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, '', '', 1, 10, ?)");
     $stmt->bind_param("iiiissddsi", $sid, $iid, $acount, $limitip, $title, $protocol, $days, $volume, $net, $now);
     $ok = $stmt->execute();
     $newId = intval($connection->insert_id);
@@ -6495,7 +6495,6 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
     $stmt->execute();
     $file_detail = $stmt->get_result()->fetch_assoc();
     $stmt->close();
-
     $days = $file_detail['days'];
     $date = time();
     $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
@@ -8618,17 +8617,18 @@ if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin 
 if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $id = intval($match[1]);
     $testPlanForLimit = function_exists('v2raystore_getTestPlanById') ? v2raystore_getTestPlanById($id) : null;
+    $__v2raystoreManagedTestPlan = is_array($testPlanForLimit);
  
-    if(function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id, $id) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
+    if($__v2raystoreManagedTestPlan && function_exists('v2raystore_canUserGetTestAccount') && !v2raystore_canUserGetTestAccount($userInfo, $from_id, $id)){
         $used = function_exists('v2raystore_getUserTestAccountUsedCount') ? v2raystore_getUserTestAccountUsedCount($userInfo, $id) : 1;
         $limit = function_exists('v2raystore_getTestAccountLimitText') ? v2raystore_getTestAccountLimitText($userInfo) : '1 بار';
-        $serverText = $testPlanForLimit && function_exists('v2raystore_testPlanDisplayTitle') ? v2raystore_testPlanDisplayTitle($testPlanForLimit, true) : 'این سرور';
+        $serverText = function_exists('v2raystore_testPlanDisplayTitle') ? v2raystore_testPlanDisplayTitle($testPlanForLimit, true) : 'این سرور';
         $taken = function_exists('v2raystore_getUserTakenTestAccountLabels') ? v2raystore_getUserTakenTestAccountLabels($from_id) : [];
         $takenText = count($taken) ? "
 گرفته‌شده: " . implode('، ', $taken) : '';
-        alert("⚠️ از {$serverText} قبلاً کانفیگ تست گرفته‌ای. تعداد استفاده از این مورد: {$used} | سقف مجاز: {$limit}" . $takenText, true);
+        alert("⚠️ شما قبلاً از {$serverText} کانفیگ تست دریافت کرده‌اید. تعداد استفاده از این مورد: {$used} | سقف مجاز: {$limit}" . $takenText, true);
         exit;
-    }elseif(!function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
+    }elseif(!$__v2raystoreManagedTestPlan && !function_exists('v2raystore_canUserGetTestAccount') && $userInfo['freetrial'] == 'used' and !($from_id == $admin) && (!function_exists('v2raystore_agentNormalPercentValue') || v2raystore_agentNormalPercentValue($userInfo) < 100)){
         alert('⚠️شما قبلا هدیه رایگان خود را دریافت کردید');
         exit;
     }
@@ -8638,6 +8638,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $stmt->execute();
     $file_detail = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    $__v2raystoreManagedTestPlan = function_exists('v2raystore_isTestPlanRow') ? v2raystore_isTestPlanRow($file_detail) : (intval($file_detail['price'] ?? 0) === 0);
 
     $days = $file_detail['days'];
     $date = time();
@@ -8699,7 +8700,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }
     });
 
-    if(function_exists('v2raystore_reserveTestAccountCreation')){
+    if($__v2raystoreManagedTestPlan && function_exists('v2raystore_reserveTestAccountCreation')){
         if(!v2raystore_reserveTestAccountCreation($from_id, $id)){
             alert('⏳ درخواست قبلی اکانت تست هنوز در حال پردازش است یا چند لحظه پیش ثبت شده. لطفاً کمی صبر کن و دوباره تلاش کن.', true);
             exit;
@@ -8742,10 +8743,12 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
             $remark = "{$srv_remark}-{$from_id}-{$rnd}";
         }
     }
-    if(function_exists('v2raystore_applyTestRemarkPrefix')){
-        $remark = v2raystore_applyTestRemarkPrefix($remark);
-    }else{
-        $remark = 'test-' . $remark;
+    if($__v2raystoreManagedTestPlan){
+        if(function_exists('v2raystore_applyTestRemarkPrefix')){
+            $remark = v2raystore_applyTestRemarkPrefix($remark);
+        }else{
+            $remark = 'test-' . $remark;
+        }
     }
     
     if($portType == "auto"){
@@ -8815,7 +8818,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $__v2raystoreSubLink = isset($subLink) ? $subLink : '';
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
-        $__v2raystoreIsTestAccount = (intval($price ?? 0) === 0);
+        $__v2raystoreIsTestAccount = !empty($__v2raystoreManagedTestPlan);
         $__v2raystoreTestHeading = $__v2raystoreIsTestAccount ? '🧪 اکانت تست شما آماده شد' : null;
         $__v2raystoreTestExtra = $__v2raystoreIsTestAccount ? "🔋 حجم اکانت تست: <b>{$volume} گیگ</b>
 ⏰ مدت اعتبار تست: <b>{$days} روز</b>
@@ -8894,7 +8897,7 @@ if($subLink != "") $acc_text .= "
     $stmt->execute();
     $newOrderId = intval($connection->insert_id);
     $stmt->close();
-    v2raystore_notifyTestAccountTaken($newOrderId, $from_id, $file_detail['title'] ?? '', $remark, $volume, $days);
+    if(!empty($__v2raystoreManagedTestPlan) && function_exists('v2raystore_notifyTestAccountTaken')) v2raystore_notifyTestAccountTaken($newOrderId, $from_id, $file_detail['title'] ?? '', $remark, $volume, $days);
     
     if($inbound_id == 0) {
         $stmt = $connection->prepare("UPDATE `server_info` SET `ucount` = `ucount` - 1 WHERE `id`=?");
@@ -8908,15 +8911,19 @@ if($subLink != "") $acc_text .= "
         $stmt->close();
     }
 
-    if(function_exists('v2raystore_markTestAccountUsed')){
-        $__v2raystoreMarkedTest = v2raystore_markTestAccountUsed($from_id, $id, $server_id, $inbound_id, $newOrderId);
-        if(!$__v2raystoreMarkedTest){
-            // پلن روی پنل ساخته شده؛ حتی اگر ثبت جدول مصرف خطا داد، کاربر نباید دوباره همان تست را بی‌نهایت بگیرد.
+    if(!empty($__v2raystoreManagedTestPlan)){
+        if(function_exists('v2raystore_markTestAccountUsed')){
+            $__v2raystoreMarkedTest = v2raystore_markTestAccountUsed($from_id, $id, $server_id, $inbound_id, $newOrderId);
+            if(!$__v2raystoreMarkedTest){
+                // پلن روی پنل ساخته شده؛ حتی اگر ثبت جدول مصرف خطا داد، کاربر نباید دوباره همان تست را بی‌نهایت بگیرد.
+                setUser('used','freetrial');
+            }
+            if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
+        }else{
             setUser('used','freetrial');
+            if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
         }
-        if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
     }else{
-        setUser('used','freetrial');
         if(isset($__v2raystoreTestReserved)) $__v2raystoreTestReserved = false;
     }    
 }

@@ -569,7 +569,7 @@ function v2raystore_ensureTestAccountPlansSchema(){
     ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
 
     // نسخه‌های قبلی اکانت تست را به‌صورت پلن صفر تومانی نگه می‌داشتند؛ از این به بعد همان‌ها به بخش مدیریت تست منتقل می‌شوند.
-    if($exists && $exists->num_rows > 0){ @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0 AND COALESCE(`active`,0) = 1")); }
+    @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0"));
 
     if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2')) return;
     @($connection->query("INSERT INTO `test_account_usage` (`userid`, `plan_id`, `server_id`, `inbound_id`, `scope_key`, `order_id`, `created_at`)
@@ -591,13 +591,13 @@ function v2raystore_isTestPlanRow($plan){
 }
 
 function v2raystore_testPlanActiveSql($activeOnly = true){
-    $sql = "COALESCE(sp.`price`,0) = 0";
+    $sql = "(COALESCE(sp.`is_test_plan`,0) = 1 OR COALESCE(sp.`price`,0) = 0)";
     if($activeOnly) $sql .= " AND sp.`active` = 1";
     return $sql;
 }
 
 function v2raystore_normalPlanSql($activeOnly = true){
-    $sql = "COALESCE(`price`,0) != 0";
+    $sql = "COALESCE(`is_test_plan`,0) = 0 AND COALESCE(`price`,0) != 0";
     if($activeOnly) $sql .= " AND `active` = 1";
     return $sql;
 }
@@ -670,15 +670,13 @@ function v2raystore_testPlanScopeKey($plan){
 function v2raystore_testPlanDisplayTitle($plan, $withScope = true){
     if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
     if(!is_array($plan)) return 'اکانت تست';
+    $title = trim((string)($plan['title'] ?? ''));
+    if($title !== '') return $title;
+
     $serverTitle = trim((string)($plan['server_title'] ?? ''));
     if($serverTitle === '') $serverTitle = 'سرور ' . intval($plan['server_id'] ?? 0);
     $flag = trim((string)($plan['server_flag'] ?? ''));
-    $title = trim((string)($plan['title'] ?? ''));
     $base = trim(($flag !== '' ? $flag . ' ' : '') . $serverTitle);
-    $hasPersianTest = function_exists('mb_stripos') ? (mb_stripos($title, 'تست', 0, 'UTF-8') !== false) : (stripos($title, 'تست') !== false);
-    if($title !== '' && stripos($title, 'test') === false && !$hasPersianTest){
-        $base .= ' - ' . $title;
-    }
     if($withScope) $base .= ' (' . v2raystore_getPlanScopeInboundText($plan) . ')';
     return trim($base);
 }
@@ -4349,10 +4347,12 @@ function v2raystore_extractPaymentHashFromAction($value){
 
 function v2raystore_purchaseActionBlockReason($callbackData = '', $userStep = ''){
     global $from_id, $admin, $userInfo;
+    $callbackData = (string)$callbackData;
+    // اکانت تست از مسیر خرید جداست؛ بسته بودن فروش نباید دریافت تست را قفل کند.
+    if($callbackData !== '' && preg_match('/^(getTestAccount|freeTrial\d+_)/', $callbackData)) return '';
     $isAdmin = ($from_id == $admin) || (!empty($userInfo['isAdmin']));
     if($isAdmin) return '';
 
-    $callbackData = (string)$callbackData;
     $userStep = (string)$userStep;
 
     $newPatterns = [
@@ -4362,7 +4362,6 @@ function v2raystore_purchaseActionBlockReason($callbackData = '', $userStep = ''
         '/^selectPlan\d+_\d+_/',
         '/^selectCustomPlan\d+_\d+_/',
         '/^selectCustomePlan\d+_\d+_/',
-        '/^freeTrial\d+_/',
         '/^haveDiscountSelectPlan_/',
         '/^haveDiscountCustom_/',
     ];
