@@ -568,6 +568,14 @@ function v2raystore_ensureTestAccountPlansSchema(){
         KEY `idx_order_id` (`order_id`)
     ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
 
+    @($connection->query("CREATE TABLE IF NOT EXISTS `test_account_locks` (
+        `userid` bigint(20) NOT NULL,
+        `plan_id` int(11) NOT NULL DEFAULT 0,
+        `created_at` int(11) NOT NULL DEFAULT 0,
+        PRIMARY KEY (`userid`),
+        KEY `idx_created_at` (`created_at`)
+    ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
+
     // نسخه‌های قبلی اکانت تست را به‌صورت پلن صفر تومانی نگه می‌داشتند؛ از این به بعد همان‌ها به بخش مدیریت تست منتقل می‌شوند.
     @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0"));
 
@@ -583,6 +591,25 @@ function v2raystore_ensureTestAccountPlansSchema(){
     if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2');
 }
 v2raystore_ensureTestAccountPlansSchema();
+
+function v2raystore_ensureTestAccountFastIndexes(){
+    global $connection;
+    if(!isset($connection) || !$connection) return;
+    if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('TEST_ACCOUNT_FAST_INDEXES_V1')) return;
+
+    $idx = @($connection->query("SHOW INDEX FROM `users` WHERE `Key_name` = 'idx_users_userid'"));
+    if($idx && $idx->num_rows == 0){
+        @($connection->query("ALTER TABLE `users` ADD INDEX `idx_users_userid` (`userid`)"));
+    }
+
+    $idx = @($connection->query("SHOW INDEX FROM `orders_list` WHERE `Key_name` = 'idx_orders_user_file'"));
+    if($idx && $idx->num_rows == 0){
+        @($connection->query("ALTER TABLE `orders_list` ADD INDEX `idx_orders_user_file` (`userid`, `fileid`)"));
+    }
+
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('TEST_ACCOUNT_FAST_INDEXES_V1');
+}
+v2raystore_ensureTestAccountFastIndexes();
 
 function v2raystore_isTestPlanRow($plan){
     if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
@@ -721,7 +748,6 @@ function v2raystore_countUserCreatedTestAccounts($userId, $planId = 0){
 }
 
 function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
-    global $connection;
     $userId = intval($userId);
     if($userId <= 0 || !is_array($user)) return false;
     if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, $user)) return false;
@@ -730,19 +756,28 @@ function v2raystore_cleanupStaleTestAccountProcessing($userId, &$user = null){
     $ts = v2raystore_testAccountProcessingTimestamp($trial);
     if($ts > 0 && $ts >= time() - 30) return false;
 
+    // قفل قدیمی روی ستون users.freetrial باعث قفل شدن جدول users و هنگ ربات می‌شد.
+    // از این نسخه قفل ساخت تست در جدول سبک test_account_locks نگه‌داری می‌شود؛ اینجا فقط حافظه همین درخواست را پاک می‌کنیم.
     $realCount = v2raystore_countUserCreatedTestAccounts($userId);
-    $newTrial = $realCount > 0 ? 'used' : null;
-    if(isset($connection) && $connection){
-        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ?, `test_account_count` = ? WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
-        if($stmt){
-            $stmt->bind_param('sii', $newTrial, $realCount, $userId);
-            $stmt->execute();
-            $stmt->close();
-        }
-    }
-    $user['freetrial'] = $newTrial;
+    $user['freetrial'] = $realCount > 0 ? 'used' : null;
     $user['test_account_count'] = $realCount;
     return true;
+}
+
+function v2raystore_hasActiveTestAccountCreationLock($userId, $planId = 0){
+    global $connection;
+    $userId = intval($userId);
+    if($userId <= 0 || !isset($connection) || !$connection) return false;
+    $staleBefore = time() - 90;
+    @($connection->query("DELETE FROM `test_account_locks` WHERE `created_at` < " . intval($staleBefore)));
+
+    $stmt = @$connection->prepare("SELECT `plan_id`, `created_at` FROM `test_account_locks` WHERE `userid` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return !empty($row);
 }
 
 function v2raystore_getUserTestAccountUsedCount($user, $planId = 0){
@@ -759,14 +794,16 @@ function v2raystore_getTestAccountLimitText($user){
 }
 
 function v2raystore_canUserGetTestAccount($user, $userId = null, $planId = 0){
-    global $admin;
     $userId = intval($userId ?: (is_array($user) ? ($user['userid'] ?? 0) : 0));
     if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, $user)) return true;
+
     if($userId > 0 && is_array($user)){
         v2raystore_cleanupStaleTestAccountProcessing($userId, $user);
-        $trial = (string)($user['freetrial'] ?? '');
-        if(v2raystore_isTestAccountProcessingState($trial)) return false;
     }
+    if($userId > 0 && function_exists('v2raystore_hasActiveTestAccountCreationLock') && v2raystore_hasActiveTestAccountCreationLock($userId, $planId)){
+        return false;
+    }
+
     $limit = v2raystore_getUserTestAccountLimit($user);
     if($limit === 0) return true;
     $planId = intval($planId);
@@ -837,7 +874,10 @@ function v2raystore_markTestAccountUsed($userId, $planId = 0, $serverId = 0, $in
     $userId = intval($userId);
     $planId = intval($planId);
     if($userId <= 0) return false;
-    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return true;
+    if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)){
+        if(function_exists('v2raystore_releaseTestAccountCreation')) v2raystore_releaseTestAccountCreation($userId);
+        return true;
+    }
 
     $scopeKey = '';
     if($planId > 0){
@@ -851,57 +891,40 @@ function v2raystore_markTestAccountUsed($userId, $planId = 0, $serverId = 0, $in
     $serverId = intval($serverId);
     $inboundId = intval($inboundId);
     if($scopeKey === '' && $serverId > 0) $scopeKey = 's:' . $serverId . ':i:' . max(0, $inboundId);
+
+    $ok = false;
     if($scopeKey !== ''){
         $createdAt = time();
         $orderId = intval($orderId);
         $stmt = @$connection->prepare("INSERT INTO `test_account_usage` (`userid`, `plan_id`, `server_id`, `inbound_id`, `scope_key`, `order_id`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?)");
         if($stmt){
             $stmt->bind_param('iiiisii', $userId, $planId, $serverId, $inboundId, $scopeKey, $orderId, $createdAt);
-            @$stmt->execute();
+            $ok = @$stmt->execute();
             $stmt->close();
         }
     }
 
-    // شمارنده قدیمی فقط برای آمار و سازگاری نگه داشته می‌شود؛ محدودیت جدید از جدول استفاده هر سرور/اینباند خوانده می‌شود.
-    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), 0) + 1, `freetrial` = 'used' WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
-    if($stmt){
-        $stmt->bind_param('i', $userId);
-        $stmt->execute();
-        $changed = intval($stmt->affected_rows);
-        $stmt->close();
-        if($changed > 0) return true;
-    }
-    $stmt = @$connection->prepare("UPDATE `users` SET `test_account_count` = GREATEST(COALESCE(`test_account_count`,0), 0) + 1, `freetrial` = 'used' WHERE `userid` = ?");
-    if(!$stmt) return false;
-    $stmt->bind_param('i', $userId);
-    $ok = $stmt->execute();
-    $stmt->close();
+    if(function_exists('v2raystore_releaseTestAccountCreation')) v2raystore_releaseTestAccountCreation($userId);
+
+    // برای جلوگیری از هنگ، محدودیت اصلی فقط از test_account_usage خوانده می‌شود و دیگر روی users.freetrial قفل/آپدیت سنگین نمی‌زنیم.
     return $ok;
 }
 
 function v2raystore_reserveTestAccountCreation($userId, $planId = 0){
     global $connection;
     $userId = intval($userId);
+    $planId = intval($planId);
     if($userId <= 0) return false;
     if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return true;
+    if(!isset($connection) || !$connection) return false;
 
-    $staleBefore = time() - 30;
-    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?");
-    if($stmt){
-        $stmt->bind_param('ii', $userId, $staleBefore);
-        $stmt->execute();
-        $stmt->close();
-    }
+    $staleBefore = time() - 90;
+    @($connection->query("DELETE FROM `test_account_locks` WHERE `created_at` < " . intval($staleBefore)));
 
-    $lockValue = 'processing:' . time();
-    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` = 'used' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?))");
-    if(!$stmt && function_exists('v2raystore_ensureTestAccountManagementColumns')){
-        v2raystore_ensureTestAccountManagementColumns();
-        $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ? WHERE `userid` = ? AND (`freetrial` IS NULL OR `freetrial` = '' OR `freetrial` = 'used' OR (`freetrial` LIKE 'processing:%' AND CAST(SUBSTRING_INDEX(`freetrial`, ':', -1) AS UNSIGNED) < ?))");
-    }
+    $now = time();
+    $stmt = @$connection->prepare("INSERT IGNORE INTO `test_account_locks` (`userid`, `plan_id`, `created_at`) VALUES (?, ?, ?)");
     if(!$stmt) return false;
-    $now = time() - 30;
-    $stmt->bind_param('sii', $lockValue, $userId, $now);
+    $stmt->bind_param('iii', $userId, $planId, $now);
     $stmt->execute();
     $changed = intval($stmt->affected_rows);
     $stmt->close();
@@ -913,7 +936,8 @@ function v2raystore_releaseTestAccountCreation($userId){
     $userId = intval($userId);
     if($userId <= 0) return false;
     if(function_exists('v2raystore_isTestAccountAdminUser') && v2raystore_isTestAccountAdminUser($userId, null)) return true;
-    $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = IF(COALESCE(`test_account_count`,0) > 0, 'used', NULL) WHERE `userid` = ? AND `freetrial` LIKE 'processing:%'");
+    if(!isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("DELETE FROM `test_account_locks` WHERE `userid` = ?");
     if(!$stmt) return false;
     $stmt->bind_param('i', $userId);
     $ok = $stmt->execute();
