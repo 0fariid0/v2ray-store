@@ -945,6 +945,120 @@ function v2raystore_releaseTestAccountCreation($userId){
     return $ok;
 }
 
+function v2raystore_getTestPlanUsageStats($plan){
+    global $connection;
+    if(!is_array($plan) && is_numeric($plan)) $plan = v2raystore_getTestPlanById(intval($plan));
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    $stats = ['usage_count'=>0, 'user_count'=>0, 'scope_key'=>'', 'plan_ids'=>[]];
+    if(!is_array($plan) || !isset($connection) || !$connection) return $stats;
+
+    $scopeKey = v2raystore_testPlanScopeKey($plan);
+    $stats['scope_key'] = $scopeKey;
+    $plans = v2raystore_getTestPlans(false);
+    foreach($plans as $item){
+        if(v2raystore_testPlanScopeKey($item) === $scopeKey) $stats['plan_ids'][] = intval($item['id'] ?? 0);
+    }
+    $stats['plan_ids'] = array_values(array_unique(array_filter($stats['plan_ids'], function($v){ return $v > 0; })));
+    if($scopeKey === '') return $stats;
+
+    $stmt = @$connection->prepare("SELECT COUNT(*) AS c, COUNT(DISTINCT `userid`) AS u FROM `test_account_usage` WHERE `scope_key` = ?");
+    if($stmt){
+        $stmt->bind_param('s', $scopeKey);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $stats['usage_count'] = max(0, intval($row['c'] ?? 0));
+        $stats['user_count'] = max(0, intval($row['u'] ?? 0));
+    }
+    return $stats;
+}
+
+function v2raystore_getTestPlanResetListText(){
+    $plans = v2raystore_getTestPlans(false);
+    $msg = "♻️ <b>ریست جداگانه اکانت تست سرورها/اینباندها</b>\n\n" .
+           "از این بخش فقط سابقه دریافت تست همان سرور/اینباند پاک می‌شود و تست‌های بقیه سرورها دست‌نخورده می‌مانند.\n\n";
+    if(empty($plans)) return $msg . "هنوز هیچ اکانت تستی تعریف نشده است.";
+    foreach($plans as $plan){
+        $stats = v2raystore_getTestPlanUsageStats($plan);
+        $state = intval($plan['active'] ?? 0) === 1 ? 'فعال' : 'غیرفعال';
+        $msg .= "• #" . intval($plan['id']) . " - <b>" . v2raystore_h(v2raystore_testPlanDisplayTitle($plan, true)) . "</b>\n";
+        $msg .= "  وضعیت: <b>{$state}</b> | کاربران استفاده‌کرده: <b>" . intval($stats['user_count']) . "</b> | تعداد تست: <b>" . intval($stats['usage_count']) . "</b>\n\n";
+    }
+    return trim($msg);
+}
+
+function v2raystore_getTestPlanResetListKeys(){
+    global $buttonValues;
+    $plans = v2raystore_getTestPlans(false);
+    $rows = [];
+    foreach($plans as $plan){
+        $stats = v2raystore_getTestPlanUsageStats($plan);
+        $title = '♻️ ' . v2raystore_testPlanDisplayTitle($plan, false) . ' (' . intval($stats['user_count']) . ')';
+        $rows[] = [[ 'text'=>$title, 'callback_data'=>'resetTestPlanUsageAsk' . intval($plan['id']), 'style'=>'warning' ]];
+    }
+    $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'testAccountManagement', 'style'=>'primary' ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_resetTestAccountUsageForPlan($planId){
+    global $connection;
+    $planId = intval($planId);
+    $result = ['ok'=>false, 'plan'=>null, 'deleted'=>0, 'users'=>0, 'scope_key'=>''];
+    if($planId <= 0 || !isset($connection) || !$connection) return $result;
+    $plan = v2raystore_getTestPlanById($planId);
+    if(!$plan) return $result;
+    $result['plan'] = $plan;
+    $scopeKey = v2raystore_testPlanScopeKey($plan);
+    $result['scope_key'] = $scopeKey;
+    if($scopeKey === '') return $result;
+
+    $stats = v2raystore_getTestPlanUsageStats($plan);
+    $result['users'] = intval($stats['user_count'] ?? 0);
+
+    $affectedUsers = [];
+    $stmt = @$connection->prepare("SELECT DISTINCT `userid` FROM `test_account_usage` WHERE `scope_key` = ? LIMIT 5000");
+    if($stmt){
+        $stmt->bind_param('s', $scopeKey);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while($row = $res->fetch_assoc()) $affectedUsers[] = intval($row['userid'] ?? 0);
+        $stmt->close();
+    }
+
+    $stmt = @$connection->prepare("DELETE FROM `test_account_usage` WHERE `scope_key` = ?");
+    if(!$stmt) return $result;
+    $stmt->bind_param('s', $scopeKey);
+    $ok = @$stmt->execute();
+    $deleted = intval($stmt->affected_rows);
+    $stmt->close();
+    if(!$ok) return $result;
+    $result['deleted'] = max(0, $deleted);
+    $result['ok'] = true;
+
+    $planIds = $stats['plan_ids'] ?? [$planId];
+    $planIds = array_values(array_unique(array_filter(array_map('intval', $planIds), function($v){ return $v > 0; })));
+    if(count($planIds) > 0){
+        $in = implode(',', $planIds);
+        @($connection->query("DELETE FROM `test_account_locks` WHERE `plan_id` IN ($in)"));
+    }
+
+    // ستون‌های قدیمی فقط برای سازگاری نگه‌داری می‌شوند؛ محدودیت اصلی از جدول test_account_usage خوانده می‌شود.
+    if(!empty($affectedUsers)){
+        $affectedUsers = array_values(array_unique(array_filter($affectedUsers, function($v){ return $v > 0; })));
+        foreach($affectedUsers as $uid){
+            $remaining = v2raystore_countUserCreatedTestAccounts($uid);
+            $trial = $remaining > 0 ? 'used' : null;
+            $stmt = @$connection->prepare("UPDATE `users` SET `freetrial` = ?, `test_account_count` = ? WHERE `userid` = ?");
+            if($stmt){
+                $stmt->bind_param('sii', $trial, $remaining, $uid);
+                @$stmt->execute();
+                $stmt->close();
+            }
+        }
+    }
+    return $result;
+}
+
 function v2raystore_getTestPlanListText($activeOnly = false){
     $plans = v2raystore_getTestPlans($activeOnly);
     $msg = "🧪 <b>پلن‌های اکانت تست</b>\n\n";
@@ -976,6 +1090,7 @@ function v2raystore_getTestPlanDetailsText($planId){
     return "🧪 <b>جزئیات پلن تست #" . intval($plan['id']) . "</b>\n\n" .
            "🖥 سرور/اینباند: <b>" . v2raystore_h(v2raystore_testPlanDisplayTitle($plan, true)) . "</b>\n" .
            "وضعیت: <b>{$state}</b>\n" .
+           "👤 استفاده‌شده: <b>" . intval(v2raystore_getTestPlanUsageStats($plan)['user_count'] ?? 0) . " کاربر</b>\n" .
            "🔋 حجم: <b>" . v2raystore_h($plan['volume'] ?? '') . " گیگ</b>\n" .
            "⏰ مدت: <b>" . v2raystore_h($plan['days'] ?? '') . " روز</b>\n" .
            "🚪 ظرفیت: <b>" . v2raystore_h($plan['acount'] ?? '') . "</b>\n" .
@@ -1000,6 +1115,7 @@ function v2raystore_getTestPlanDetailsKeys($planId){
         ['text'=>'🚪 ظرفیت', 'callback_data'=>'editTestPlanField' . $id . '_acount', 'style'=>'primary']
     ];
     $rows[] = [[ 'text'=>'👥 محدودیت IP', 'callback_data'=>'editTestPlanField' . $id . '_limitip', 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'♻️ ریست سابقه همین تست', 'callback_data'=>'resetTestPlanUsageAsk' . $id, 'style'=>'warning' ]];
     $rows[] = [[ 'text'=>'🗑 حذف این تست', 'callback_data'=>'deleteTestPlanAsk' . $id, 'style'=>'danger' ]];
     $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'testPlansList', 'style'=>'primary' ]];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
@@ -8237,6 +8353,9 @@ function v2raystore_getTestAccountManageKeys(){
         [
             ['text'=>'♻️ ریست تست یک کاربر', 'callback_data'=>'resetOneTestAccount', 'style'=>'primary'],
             ['text'=>'✏️ تنظیم سقف یک کاربر', 'callback_data'=>'setTestAccountLimit', 'style'=>'success']
+        ],
+        [
+            ['text'=>'♻️ ریست تست یک سرور/اینباند', 'callback_data'=>'resetTestPlanUsageList', 'style'=>'warning']
         ],
         [
             ['text'=>'🔴 بازگشت به سقف پیش‌فرض', 'callback_data'=>'removeTestAccountLimit', 'style'=>'danger'],

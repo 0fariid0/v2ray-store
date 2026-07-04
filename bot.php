@@ -829,6 +829,50 @@ if($data == "resetAllTestAccountsConfirm" && ($from_id == $admin || $userInfo['i
     editText($message_id, "✅ سابقه استفاده از اکانت تست برای همه کاربران با موفقیت ریست شد.", v2raystore_getTestAccountManageKeys(), "HTML");
     exit();
 }
+if($data == "resetTestPlanUsageList" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_getTestPlanResetListText(), v2raystore_getTestPlanResetListKeys(), "HTML");
+    exit();
+}
+if(preg_match('/^resetTestPlanUsageAsk(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($m[1]);
+    $plan = function_exists('v2raystore_getTestPlanById') ? v2raystore_getTestPlanById($pid) : null;
+    if(!$plan){
+        alert('اکانت تست پیدا نشد.', true);
+        exit();
+    }
+    $stats = function_exists('v2raystore_getTestPlanUsageStats') ? v2raystore_getTestPlanUsageStats($plan) : ['user_count'=>0, 'usage_count'=>0];
+    $title = function_exists('v2raystore_testPlanDisplayTitle') ? v2raystore_testPlanDisplayTitle($plan, true) : ('تست #' . $pid);
+    $safeTitle = function_exists('v2raystore_h') ? v2raystore_h($title) : htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $msg = "⚠️ <b>تایید ریست جداگانه اکانت تست</b>\n\n" .
+           "مورد انتخابی: <b>{$safeTitle}</b>\n" .
+           "کاربران استفاده‌کرده: <b>" . intval($stats['user_count'] ?? 0) . "</b>\n" .
+           "تعداد رکورد تست: <b>" . intval($stats['usage_count'] ?? 0) . "</b>\n\n" .
+           "با تایید، فقط سابقه دریافت همین سرور/اینباند پاک می‌شود و تست‌های بقیه سرورها دست‌نخورده می‌مانند.";
+    editText($message_id, $msg, json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ بله، همین تست ریست شود', 'callback_data'=>'resetTestPlanUsageConfirm' . $pid, 'style'=>'danger']],
+        [['text'=>'📋 بازگشت به لیست ریست', 'callback_data'=>'resetTestPlanUsageList', 'style'=>'primary']],
+        [['text'=>'⬅️ جزئیات تست', 'callback_data'=>'testPlanDetails' . $pid, 'style'=>'primary']]
+    ]], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+if(preg_match('/^resetTestPlanUsageConfirm(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($m[1]);
+    $result = function_exists('v2raystore_resetTestAccountUsageForPlan') ? v2raystore_resetTestAccountUsageForPlan($pid) : ['ok'=>false];
+    if(empty($result['ok'])){
+        alert('ریست این اکانت تست انجام نشد. دوباره بررسی کن.', true);
+        exit();
+    }
+    $plan = $result['plan'] ?? (function_exists('v2raystore_getTestPlanById') ? v2raystore_getTestPlanById($pid) : null);
+    $title = $plan && function_exists('v2raystore_testPlanDisplayTitle') ? v2raystore_testPlanDisplayTitle($plan, true) : ('تست #' . $pid);
+    $safeTitle = function_exists('v2raystore_h') ? v2raystore_h($title) : htmlspecialchars($title, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $msg = "✅ <b>ریست جداگانه انجام شد</b>\n\n" .
+           "مورد ریست‌شده: <b>{$safeTitle}</b>\n" .
+           "کاربران آزادشده: <b>" . intval($result['users'] ?? 0) . "</b>\n" .
+           "رکوردهای حذف‌شده: <b>" . intval($result['deleted'] ?? 0) . "</b>\n\n" .
+           "اکانت تست سرورها/اینباندهای دیگر دست‌نخورده باقی ماند.";
+    editText($message_id, $msg, v2raystore_getTestPlanResetListKeys(), "HTML");
+    exit();
+}
 if($data == "resetOneTestAccount" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
     sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید سابقه اکانت تست او ریست شود ارسال کنید.", $cancelKey, "HTML");
