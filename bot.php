@@ -1233,6 +1233,51 @@ if(preg_match('/^toggleAdminServerSaleAccess(\d+)_(\d+)$/', $data ?? '', $match)
     alert('دسترسی فروش این سرور برای ادمین بروزرسانی شد.');
     exit();
 }
+if(preg_match('/^agentServerSalesAccess(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agentExists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$agentExists){
+        alert('نماینده پیدا نشد.', true);
+        exit();
+    }
+    editText(
+        $message_id,
+        v2raystore_getAdminServerSalesAccessText($agentId, 'نماینده'),
+        v2raystore_getAdminServerSalesAccessKeys($agentId, 'agentPercentDetails' . $agentId, 'toggleAgentServerSaleAccess'),
+        'HTML'
+    );
+    exit();
+}
+if(preg_match('/^toggleAgentServerSaleAccess(\d+)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agentExists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$agentExists){
+        alert('نماینده پیدا نشد.', true);
+        exit();
+    }
+    $ok = function_exists('v2raystore_toggleAdminServerSaleAccess') ? v2raystore_toggleAdminServerSaleAccess($agentId, $serverId) : false;
+    if(!$ok){
+        alert('تغییر دسترسی انجام نشد.', true);
+        exit();
+    }
+    editText(
+        $message_id,
+        v2raystore_getAdminServerSalesAccessText($agentId, 'نماینده'),
+        v2raystore_getAdminServerSalesAccessKeys($agentId, 'agentPercentDetails' . $agentId, 'toggleAgentServerSaleAccess'),
+        'HTML'
+    );
+    alert('دسترسی فروش این سرور برای نماینده بروزرسانی شد.');
+    exit();
+}
 if(preg_match('/^toggleAdminReceipt(\d+)$/',$data,$match) && intval($from_id) === intval($admin)){
     $targetAdminId = intval($match[1]);
     if($targetAdminId === intval($admin)){

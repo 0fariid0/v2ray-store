@@ -687,7 +687,10 @@ function v2raystore_canUserBuyFromServer($serverId, $userId, $userInfo = null, $
     $userId = intval($userId);
     if($serverId <= 0) return false;
     if(!v2raystore_isServerSaleClosed($serverId)) return true;
-    if(!v2raystore_isAdminUserId($userId, $userInfo)) return false;
+
+    // اگر فروش سرور بسته باشد، فقط ادمین اصلی یا هر ادمین/نماینده‌ای
+    // که از بخش دسترسی فروش سرورهای بسته مجاز شده باشد می‌تواند خرید ثبت کند.
+    // قبلاً اینجا فقط isAdmin چک می‌شد و دسترسی نماینده‌ها اثر نمی‌کرد.
     return v2raystore_adminHasClosedServerSaleAccess($userId, $serverId);
 }
 
@@ -729,9 +732,11 @@ function v2raystore_toggleAdminServerSaleAccess($adminId, $serverId){
     return $ok;
 }
 
-function v2raystore_getAdminServerSalesAccessText($targetAdminId){
+function v2raystore_getAdminServerSalesAccessText($targetAdminId, $targetLabel = 'ادمین'){
     global $connection;
     $targetAdminId = intval($targetAdminId);
+    $targetLabel = trim((string)$targetLabel);
+    if($targetLabel === '') $targetLabel = 'ادمین';
     $name = (string)$targetAdminId;
     if(isset($connection) && $connection){
         $stmt = @$connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid`=? LIMIT 1");
@@ -748,8 +753,8 @@ function v2raystore_getAdminServerSalesAccessText($targetAdminId){
         }
     }
     return "🖥 <b>دسترسی فروش سرورهای بسته</b>\n\n" .
-           "ادمین: <code>" . v2raystore_h($name) . "</code>\n\n" .
-           "اگر فروش یک سرور برای کاربران بسته باشد، فقط ادمین اصلی و ادمین‌هایی که اینجا مجاز می‌کنی می‌توانند آن سرور را انتخاب کنند.";
+           v2raystore_h($targetLabel) . ": <code>" . v2raystore_h($name) . "</code>\n\n" .
+           "اگر فروش یک سرور برای کاربران بسته باشد، فقط ادمین اصلی و ادمین/نماینده‌هایی که اینجا مجاز می‌کنی می‌توانند آن سرور را انتخاب و برای کاربر ثبت کنند.";
 }
 
 
@@ -787,12 +792,16 @@ function v2raystore_getAdminServerSalesAdminsKeys(){
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 
-function v2raystore_getAdminServerSalesAccessKeys($targetAdminId){
+function v2raystore_getAdminServerSalesAccessKeys($targetAdminId, $backCallback = 'adminsList', $togglePrefix = 'toggleAdminServerSaleAccess'){
     global $connection, $buttonValues;
     $targetAdminId = intval($targetAdminId);
+    $backCallback = trim((string)$backCallback);
+    if($backCallback === '') $backCallback = 'adminsList';
+    $togglePrefix = preg_replace('/[^A-Za-z0-9_]/', '', (string)$togglePrefix);
+    if($togglePrefix === '') $togglePrefix = 'toggleAdminServerSaleAccess';
     $keys = [];
     if(!isset($connection) || !$connection){
-        return json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'] ?? 'بازگشت','callback_data'=>'adminsList']]]], JSON_UNESCAPED_UNICODE);
+        return json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'] ?? 'بازگشت','callback_data'=>$backCallback]]]], JSON_UNESCAPED_UNICODE);
     }
     $res = @($connection->query("SELECT `id`, `title`, `flag`, COALESCE(`sale_closed`,0) AS `sale_closed` FROM `server_info` WHERE `active`=1 ORDER BY `id` ASC"));
     if($res && $res->num_rows > 0){
@@ -806,12 +815,12 @@ function v2raystore_getAdminServerSalesAccessKeys($targetAdminId){
             $accessText = $allowed ? '✅ مجاز' : '❌ غیرمجاز';
             $btn = $accessText . ' | ' . $saleText . ' | ' . trim($flag . ' ' . $title);
             if(function_exists('mb_strlen') && mb_strlen($btn, 'UTF-8') > 58) $btn = mb_substr($btn, 0, 55, 'UTF-8') . '...';
-            $keys[] = [['text'=>$btn, 'callback_data'=>'toggleAdminServerSaleAccess'.$targetAdminId.'_'.$sid]];
+            $keys[] = [['text'=>$btn, 'callback_data'=>$togglePrefix . $targetAdminId . '_' . $sid]];
         }
     }else{
         $keys[] = [['text'=>'سرور فعالی پیدا نشد', 'callback_data'=>'v2raystore']];
     }
-    $keys[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>'adminsList']];
+    $keys[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>$backCallback]];
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 
@@ -8860,6 +8869,9 @@ function getAgentDiscounts($agentId){
     $keys[] = [
         ['text'=>'سقف روزانه: ' . ($limits['daily_cap'] > 0 ? $limits['daily_cap'] : 'نامحدود'), 'callback_data'=>'editAgentDailyCap_' . $agentId],
         ['text'=>'سقف اعتبار: ' . ($limits['credit_cap'] > 0 ? number_format($limits['credit_cap']) : 'نامحدود'), 'callback_data'=>'editAgentCreditCap_' . $agentId]
+    ];
+    $keys[] = [
+        ['text'=>'🛒 دسترسی فروش سرورهای بسته', 'callback_data'=>'agentServerSalesAccess' . $agentId]
     ];
     $keys[] = [
         ['text'=>'📊 گزارش فروش و سود', 'callback_data'=>'agentProReport_' . $agentId],
