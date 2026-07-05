@@ -13391,6 +13391,31 @@ if(($data=='serversSetting' || preg_match('/^nextServerPage(\d+)/',$data,$match)
     
     editText($message_id,"☑️ مدیریت سرور ها:",$keys);
 }
+if(($data == 'serverSalesManagement' || preg_match('/^serverSalesManagement_(\d+)$/', $data ?? '', $serverSalesPageMatch)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(intval($from_id) !== intval($admin)){
+        alert('فقط ادمین اصلی می‌تواند مدیریت فروش سرورها را تغییر دهد.', true);
+        exit();
+    }
+    $offset = isset($serverSalesPageMatch[1]) ? intval($serverSalesPageMatch[1]) : 0;
+    editText($message_id, function_exists('v2raystore_getServerSalesManagementText') ? v2raystore_getServerSalesManagementText() : '🛒 مدیریت فروش سرورها', function_exists('v2raystore_getServerSalesManagementKeys') ? v2raystore_getServerSalesManagementKeys($offset) : getServerListKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleServerUserSalesList(\d+)_(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(intval($from_id) !== intval($admin)){
+        alert('فقط ادمین اصلی می‌تواند فروش اختصاصی سرورها را تغییر دهد.', true);
+        exit();
+    }
+    $serverId = intval($match[1]);
+    $offset = intval($match[2]);
+    $ok = function_exists('v2raystore_toggleServerUserSale') ? v2raystore_toggleServerUserSale($serverId) : false;
+    if(!$ok){
+        alert('تغییر وضعیت فروش سرور انجام نشد.', true);
+        exit();
+    }
+    editText($message_id, function_exists('v2raystore_getServerSalesManagementText') ? v2raystore_getServerSalesManagementText() : '🛒 مدیریت فروش سرورها', function_exists('v2raystore_getServerSalesManagementKeys') ? v2raystore_getServerSalesManagementKeys($offset) : getServerListKeys(), 'HTML');
+    alert('وضعیت فروش این سرور برای کاربران بروزرسانی شد.');
+    exit();
+}
 if(preg_match('/^toggleServerState(\d+)_(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("UPDATE `server_info` SET `state` = IF(`state` = 0,1,0) WHERE `id`=?");
     $stmt->bind_param("i", $match[1]);

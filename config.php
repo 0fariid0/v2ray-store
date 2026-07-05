@@ -611,6 +611,232 @@ function v2raystore_ensureTestAccountFastIndexes(){
 }
 v2raystore_ensureTestAccountFastIndexes();
 
+
+if(!function_exists('v2raystore_h')){
+    function v2raystore_h($value){
+        return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+function v2raystore_ensureServerSalesAccessSchema(){
+    global $connection;
+    if(!isset($connection) || !$connection) return;
+
+    // این بخش عمداً همیشه چک می‌شود؛ ممکن است در نسخه‌های قبلی مارک پچ ثبت شده باشد
+    // اما ستون/جدول به هر دلیل واقعاً ساخته نشده باشد.
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_info` LIKE 'sale_closed'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `server_info` ADD `sale_closed` tinyint(1) NOT NULL DEFAULT 0 AFTER `state`"));
+    }
+    @($connection->query("CREATE TABLE IF NOT EXISTS `admin_server_sales_access` (
+        `admin_userid` bigint(20) NOT NULL,
+        `server_id` int(11) NOT NULL,
+        `created_at` int(11) NOT NULL DEFAULT 0,
+        PRIMARY KEY (`admin_userid`,`server_id`),
+        KEY `idx_server_id` (`server_id`)
+    ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('SERVER_SALES_ACCESS_V1');
+}
+v2raystore_ensureServerSalesAccessSchema();
+
+function v2raystore_isServerSaleClosed($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("SELECT COALESCE(`sale_closed`,0) AS `sale_closed` FROM `server_info` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row && intval($row['sale_closed'] ?? 0) === 1;
+}
+
+function v2raystore_isAdminUserId($userId, $userInfo = null){
+    global $connection, $admin;
+    $userId = intval($userId);
+    if($userId !== 0 && $userId === intval($admin ?? 0)) return true;
+    if(is_array($userInfo) && !empty($userInfo['isAdmin'])) return true;
+    if($userId === 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("SELECT `isAdmin` FROM `users` WHERE `userid`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $userId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row && !empty($row['isAdmin']);
+}
+
+function v2raystore_adminHasClosedServerSaleAccess($adminId, $serverId){
+    global $connection, $admin;
+    $adminId = intval($adminId);
+    $serverId = intval($serverId);
+    if($adminId !== 0 && $adminId === intval($admin ?? 0)) return true;
+    if($adminId <= 0 || $serverId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("SELECT 1 FROM `admin_server_sales_access` WHERE `admin_userid`=? AND `server_id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('ii', $adminId, $serverId);
+    $stmt->execute();
+    $ok = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_canUserBuyFromServer($serverId, $userId, $userInfo = null, $buyType = ''){
+    $serverId = intval($serverId);
+    $userId = intval($userId);
+    if($serverId <= 0) return false;
+    if(!v2raystore_isServerSaleClosed($serverId)) return true;
+    if(!v2raystore_isAdminUserId($userId, $userInfo)) return false;
+    return v2raystore_adminHasClosedServerSaleAccess($userId, $serverId);
+}
+
+function v2raystore_serverSaleClosedMessage(){
+    return 'فروش این سرور فعلاً برای کاربران بسته است.';
+}
+
+function v2raystore_toggleServerUserSale($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("UPDATE `server_info` SET `sale_closed` = IF(COALESCE(`sale_closed`,0)=1,0,1) WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $serverId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_toggleAdminServerSaleAccess($adminId, $serverId){
+    global $connection;
+    $adminId = intval($adminId);
+    $serverId = intval($serverId);
+    if($adminId <= 0 || $serverId <= 0 || !isset($connection) || !$connection) return false;
+    if(v2raystore_adminHasClosedServerSaleAccess($adminId, $serverId)){
+        $stmt = @$connection->prepare("DELETE FROM `admin_server_sales_access` WHERE `admin_userid`=? AND `server_id`=? LIMIT 1");
+        if(!$stmt) return false;
+        $stmt->bind_param('ii', $adminId, $serverId);
+        $ok = $stmt->execute();
+        $stmt->close();
+        return $ok;
+    }
+    $time = time();
+    $stmt = @$connection->prepare("INSERT IGNORE INTO `admin_server_sales_access` (`admin_userid`, `server_id`, `created_at`) VALUES (?, ?, ?)");
+    if(!$stmt) return false;
+    $stmt->bind_param('iii', $adminId, $serverId, $time);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_getAdminServerSalesAccessText($targetAdminId){
+    global $connection;
+    $targetAdminId = intval($targetAdminId);
+    $name = (string)$targetAdminId;
+    if(isset($connection) && $connection){
+        $stmt = @$connection->prepare("SELECT `name`, `username` FROM `users` WHERE `userid`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $targetAdminId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row){
+                $display = trim((string)($row['name'] ?? ''));
+                if($display === '') $display = trim((string)($row['username'] ?? ''));
+                if($display !== '') $name = $display . ' (' . $targetAdminId . ')';
+            }
+        }
+    }
+    return "🖥 <b>دسترسی فروش سرورهای بسته</b>\n\n" .
+           "ادمین: <code>" . v2raystore_h($name) . "</code>\n\n" .
+           "اگر فروش یک سرور برای کاربران بسته باشد، فقط ادمین اصلی و ادمین‌هایی که اینجا مجاز می‌کنی می‌توانند آن سرور را انتخاب کنند.";
+}
+
+function v2raystore_getAdminServerSalesAccessKeys($targetAdminId){
+    global $connection, $buttonValues;
+    $targetAdminId = intval($targetAdminId);
+    $keys = [];
+    if(!isset($connection) || !$connection){
+        return json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'] ?? 'بازگشت','callback_data'=>'adminsList']]]], JSON_UNESCAPED_UNICODE);
+    }
+    $res = @($connection->query("SELECT `id`, `title`, `flag`, COALESCE(`sale_closed`,0) AS `sale_closed` FROM `server_info` WHERE `active`=1 ORDER BY `id` ASC"));
+    if($res && $res->num_rows > 0){
+        while($server = $res->fetch_assoc()){
+            $sid = intval($server['id'] ?? 0);
+            $title = trim((string)($server['title'] ?? ''));
+            $flag = trim((string)($server['flag'] ?? ''));
+            $closed = intval($server['sale_closed'] ?? 0) === 1;
+            $allowed = v2raystore_adminHasClosedServerSaleAccess($targetAdminId, $sid);
+            $saleText = $closed ? 'فروش بسته' : 'فروش باز';
+            $accessText = $allowed ? '✅ مجاز' : '❌ غیرمجاز';
+            $btn = $accessText . ' | ' . $saleText . ' | ' . trim($flag . ' ' . $title);
+            if(function_exists('mb_strlen') && mb_strlen($btn, 'UTF-8') > 58) $btn = mb_substr($btn, 0, 55, 'UTF-8') . '...';
+            $keys[] = [['text'=>$btn, 'callback_data'=>'toggleAdminServerSaleAccess'.$targetAdminId.'_'.$sid]];
+        }
+    }else{
+        $keys[] = [['text'=>'سرور فعالی پیدا نشد', 'callback_data'=>'v2raystore']];
+    }
+    $keys[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>'adminsList']];
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
+
+function v2raystore_getServerSalesManagementText(){
+    return "🛒 <b>مدیریت فروش سرورها</b>
+
+" .
+           "از اینجا فروش هر سرور را برای کاربران عادی باز یا بسته کن.
+" .
+           "اگر فروش سروری بسته باشد، فقط ادمین اصلی و ادمین‌هایی که از بخش <b>مدیران</b> برای همان سرور مجاز شده‌اند می‌توانند از آن سرور فروش بزنند.";
+}
+
+function v2raystore_getServerSalesManagementKeys($offset = 0){
+    global $connection, $buttonValues;
+    $offset = max(0, intval($offset));
+    $limit = 12;
+    $keys = [];
+    if(!isset($connection) || !$connection){
+        return json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'] ?? 'بازگشت','callback_data'=>'serversSetting']]]], JSON_UNESCAPED_UNICODE);
+    }
+    $stmt = @$connection->prepare("SELECT `id`, `title`, `flag`, COALESCE(`sale_closed`,0) AS `sale_closed` FROM `server_info` WHERE `active`=1 ORDER BY `id` ASC LIMIT ? OFFSET ?");
+    if($stmt){
+        $stmt->bind_param('ii', $limit, $offset);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $stmt->close();
+    }else{
+        $res = false;
+    }
+    if($res && $res->num_rows > 0){
+        while($server = $res->fetch_assoc()){
+            $sid = intval($server['id'] ?? 0);
+            $title = trim((string)($server['title'] ?? ''));
+            $flag = trim((string)($server['flag'] ?? ''));
+            $name = trim($flag . ' ' . $title);
+            if($name === '') $name = 'سرور #' . $sid;
+            if(function_exists('mb_strlen') && mb_strlen($name, 'UTF-8') > 38) $name = mb_substr($name, 0, 35, 'UTF-8') . '...';
+            elseif(strlen($name) > 38) $name = substr($name, 0, 35) . '...';
+            $closed = intval($server['sale_closed'] ?? 0) === 1;
+            $state = $closed ? '🚫 بسته برای کاربران' : '✅ باز برای کاربران';
+            $keys[] = [
+                ['text'=>$state, 'callback_data'=>'toggleServerUserSalesList' . $sid . '_' . $offset],
+                ['text'=>$name, 'callback_data'=>'showServerSettings' . $sid . '_' . $offset]
+            ];
+        }
+    }else{
+        $keys[] = [['text'=>'سرور فعالی پیدا نشد', 'callback_data'=>'v2raystore']];
+    }
+
+    $pager = [];
+    if($offset > 0) $pager[] = ['text'=>'« صفحه قبلی', 'callback_data'=>'serverSalesManagement_' . max(0, $offset - $limit)];
+    if($res && $res->num_rows >= $limit) $pager[] = ['text'=>'صفحه بعدی »', 'callback_data'=>'serverSalesManagement_' . ($offset + $limit)];
+    if(!empty($pager)) $keys[] = $pager;
+
+    $keys[] = [['text'=>'👥 دسترسی اختصاصی مدیرها', 'callback_data'=>'adminsList']];
+    $keys[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>'serversSetting']];
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
 function v2raystore_isTestPlanRow($plan){
     if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
     if(!is_array($plan)) return false;
@@ -8702,6 +8928,8 @@ function getServerConfigKeys($serverId,$offset = 0){
     $flagv2raystore = $cty['flag'];
     $remarkv2raystore = $cty['remark'];
     $ucount = $cty['ucount'];
+    $saleClosed = intval($cty['sale_closed'] ?? 0) === 1;
+    $serverSaleState = $saleClosed ? 'بسته برای کاربران 🚫' : 'باز برای کاربران ✅';
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
@@ -8764,6 +8992,10 @@ function getServerConfigKeys($serverId,$offset = 0){
         [
             ['text'=>$ucount,'callback_data'=>"editServerMax$id"],
             ['text'=>"ظرفیت سرور",'callback_data'=>"v2raystore"]
+            ],
+        [
+            ['text'=>$serverSaleState,'callback_data'=>"toggleServerUserSales{$id}_{$offset}"],
+            ['text'=>"🛒 فروش سرور",'callback_data'=>"v2raystore"]
             ]
             ],
             ($serverConfig['type'] != "marzban"?[
@@ -8883,6 +9115,7 @@ function getServerListKeys($offset = 0){
         ['text'=>'➕ ثبت سرور xui','callback_data'=>"addNewServer"],
         ['text'=>"➕ ثبت سرور مرزبان",'callback_data'=>"addNewMarzbanPanel"]
         ];
+    $keys[] = [['text'=>'🛒 مدیریت فروش سرورها', 'callback_data'=>'serverSalesManagement']];
     $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
@@ -9363,6 +9596,9 @@ function getAdminsKeys(){
                 ['text'=>"❌ حذف ادمین", 'callback_data'=>"delAdmin" . $uid],
                 ['text'=>$receiptText, 'callback_data'=>"toggleAdminReceipt" . $uid]
             ];
+            if($uid !== $mainAdminId){
+                $keys[] = [['text'=>"🛒 دسترسی فروش سرورهای بسته", 'callback_data'=>"adminServerSales" . $uid]];
+            }
         }
     }else{
         $keys[] = [['text'=>"لیست ادمین های فرعی خالی است ❕",'callback_data'=>"v2raystore"]];
