@@ -44,6 +44,14 @@ if(function_exists('v2raystore_pro_handle_bot_update')){
     v2raystore_pro_handle_bot_update();
 }
 
+// دکمه‌های نمایشی/عنوانی نباید هیچ استپی را اجرا کنند.
+// قبلاً callback عمومی v2raystore روی بعضی منوها باعث می‌شد متن پیام callback
+// به عنوان ورودی مرحله‌های قبلی پردازش شود و منو ناخواسته به بخش‌های دیگر مثل حذف بپرد.
+if(isset($data) && (in_array($data, ['v2raystore', 'noop'], true) || preg_match('/^noop_/', (string)$data))){
+    alert('این دکمه فقط عنوان است.');
+    exit();
+}
+
 if(preg_match('/^appTutorial_(v2rayng|v2rayn|streisand)$/', $data ?? '', $match)){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
         alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
@@ -1195,6 +1203,27 @@ if($data=='botReports' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
 }
 if($data=="adminsList" && $from_id == $admin){
     editText($message_id, "لیست ادمین ها",getAdminsKeys());
+}
+if(preg_match('/^adminServerSales(\d+)$/', $data ?? '', $match) && intval($from_id) === intval($admin)){
+    $targetAdminId = intval($match[1]);
+    editText($message_id, v2raystore_getAdminServerSalesAccessText($targetAdminId), v2raystore_getAdminServerSalesAccessKeys($targetAdminId), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleAdminServerSaleAccess(\d+)_(\d+)$/', $data ?? '', $match) && intval($from_id) === intval($admin)){
+    $targetAdminId = intval($match[1]);
+    $serverId = intval($match[2]);
+    if($targetAdminId === intval($admin)){
+        alert('ادمین اصلی همیشه به همه سرورها دسترسی دارد.', true);
+        exit();
+    }
+    $ok = function_exists('v2raystore_toggleAdminServerSaleAccess') ? v2raystore_toggleAdminServerSaleAccess($targetAdminId, $serverId) : false;
+    if(!$ok){
+        alert('تغییر دسترسی انجام نشد.', true);
+        exit();
+    }
+    editText($message_id, v2raystore_getAdminServerSalesAccessText($targetAdminId), v2raystore_getAdminServerSalesAccessKeys($targetAdminId), 'HTML');
+    alert('دسترسی فروش این سرور برای ادمین بروزرسانی شد.');
+    exit();
 }
 if(preg_match('/^toggleAdminReceipt(\d+)$/',$data,$match) && intval($from_id) === intval($admin)){
     $targetAdminId = intval($match[1]);
@@ -2638,10 +2667,15 @@ if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy
     }
     $keyboard = [];
     while($cat = $respd->fetch_assoc()){
-        $id = $cat['id'];
+        $id = intval($cat['id']);
+        if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($id, $from_id, $userInfo ?? null, $buyType)) continue;
         $name = $cat['title'];
         $flag = $cat['flag'];
         $keyboard[] = ['text' => "$flag $name", 'callback_data' => "selectServer{$id}_{$buyType}"];
+    }
+    if(empty($keyboard)){
+        alert($mainValues['no_server_available'] ?? 'در حال حاضر سروری برای خرید فعال نیست.', true);
+        exit;
     }
     $keyboard = array_chunk($keyboard,1);
     $keyboard[] = [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]];
@@ -3809,16 +3843,15 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
     $afterMsgState = (strlen(trim($afterMsg)) > 0) ? "فعال ✅" : "خاموش 🚫";
 
     $keys = json_encode(['inline_keyboard'=>[
-        [['text'=>"📦 عملیات گروهی", 'callback_data'=>"v2raystore", 'style'=>'primary']],
+        [['text'=>"📦 عملیات گروهی", 'callback_data'=>"noop_update_group", 'style'=>'primary']],
         [['text'=>"✅ همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive", 'style'=>'success'], ['text'=>"👤 فقط یک کاربر",'callback_data'=>"updateConfigsUser", 'style'=>'primary']],
         [['text'=>"🧩 یک کانفیگ",'callback_data'=>"updateConfigsOne", 'style'=>'primary'], ['text'=>"🌐 بر اساس دامنه/ساب",'callback_data'=>"updateConfigsByDomain", 'style'=>'primary']],
 
-        [['text'=>"🧰 ابزارها", 'callback_data'=>"v2raystore", 'style'=>'primary']],
-        [['text'=>"➕ افزودن دستی برای کاربر",'callback_data'=>"manualAttachConfig", 'style'=>'success'], ['text'=>"✉️ پیام پس از آپدیت",'callback_data'=>"updateConfigsAfterMessage", 'style'=>'primary']],
+        [['text'=>"✉️ پیام پس از آپدیت",'callback_data'=>"updateConfigsAfterMessage", 'style'=>'primary']],
 
         [['text'=>"🚀 شروع / ادامه",'callback_data'=>"updateConfigsRun", 'style'=>'success'], ['text'=>"📊 وضعیت",'callback_data'=>"updateConfigsStatus", 'style'=>'primary']],
         [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop", 'style'=>'danger']],
-        [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]],
+        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE);
 
     $txt = "♻️ پنل مدیریت به‌روزرسانی و ارسال کانفیگ‌ها\n\n".
@@ -3867,7 +3900,7 @@ if($userInfo['step'] == 'manualAttachConfigLink' && $text != $buttonValues['canc
     setUser('', 'temp');
     setUser();
     if(!$ok){
-        sendMessage("❌ ثبت دستی انجام نشد:\n\n" . $result, json_encode(['inline_keyboard'=>[[['text'=>'↩️ تلاش دوباره','callback_data'=>'manualAttachConfig'], ['text'=>'⬅️ بازگشت','callback_data'=>'updateConfigsMenu']]]]), 'HTML');
+        sendMessage("❌ ثبت دستی انجام نشد:\n\n" . $result, json_encode(['inline_keyboard'=>[[['text'=>'↩️ تلاش دوباره','callback_data'=>'manualAttachConfig'], ['text'=>'⬅️ بازگشت','callback_data'=>'adminConfigsMenu']]]]), 'HTML');
         exit();
     }
     $msg = "✅ کانفیگ با موفقیت ثبت شد.\n\n" .
@@ -3877,7 +3910,7 @@ if($userInfo['step'] == 'manualAttachConfigLink' && $text != $buttonValues['canc
            "📡 سرور: <code>" . intval($result['server_id']) . "</code>\n" .
            "🔢 Inbound: <code>" . intval($result['inbound_id']) . "</code>";
     if(!empty($result['sub_link'])) $msg .= "\n\n🌐 subscription:\n<code>" . $result['sub_link'] . "</code>";
-    sendMessage($msg, json_encode(['inline_keyboard'=>[[['text'=>'➕ افزودن کانفیگ دیگر','callback_data'=>'manualAttachConfig']], [['text'=>'⬅️ بازگشت','callback_data'=>'updateConfigsMenu']]]]), 'HTML');
+    sendMessage($msg, json_encode(['inline_keyboard'=>[[['text'=>'➕ افزودن کانفیگ دیگر','callback_data'=>'manualAttachConfig']], [['text'=>'⬅️ بازگشت','callback_data'=>'adminConfigsMenu']]]]), 'HTML');
     exit();
 }
 
@@ -5103,6 +5136,10 @@ if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|no_config|no_
 }
 if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true)) ) {
     $sid = intval($match['serverId']);
+    if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($sid, $from_id, $userInfo ?? null, $match['buyType'])){
+        alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
+        exit();
+    }
 
     if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewServerMatch)){
         $renewOrderId = intval($renewServerMatch[1]);
@@ -5165,6 +5202,10 @@ if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) &&
 if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+)/',$data,$match) && ($botState['sellState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)) {
     $call_id = intval($match['categoryId']);
     $sid = intval($match['serverId']);
+    if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($sid, $from_id, $userInfo ?? null, $match['buyType'])){
+        alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
+        exit();
+    }
 
     if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewCategoryMatch)){
         $renewOrderId = intval($renewCategoryMatch[1]);
@@ -5223,7 +5264,11 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
 }
 if(preg_match('/selectCustomPlan(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+)/',$data,$match) && ($botState['sellState']=="on" || $from_id == $admin || $userInfo['isAdmin'] == true)) {
     $call_id = $match['categoryId'];
-    $sid = $match['serverId'];
+    $sid = intval($match['serverId']);
+    if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($sid, $from_id, $userInfo ?? null, $match['buyType'])){
+        alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
+        exit();
+    }
     $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0 order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
@@ -5403,6 +5448,15 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$respd){
+        alert($mainValues['no_plan_available'] ?? 'پلن پیدا نشد.', true);
+        exit();
+    }
+    $planServerIdForSale = intval($respd['server_id'] ?? 0);
+    if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($planServerIdForSale, $from_id, $userInfo ?? null, $match['buyType'] ?? '')){
+        alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
+        exit();
+    }
     
     $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `id`=?");
     $stmt->bind_param("i", $respd['catid']);
@@ -5618,6 +5672,15 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$respd){
+        alert($mainValues['no_plan_available'] ?? 'پلن پیدا نشد.', true);
+        exit();
+    }
+    $planServerIdForSale = intval($respd['server_id'] ?? 0);
+    if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($planServerIdForSale, $from_id, $userInfo ?? null, $match['buyType'] ?? '')){
+        alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
+        exit();
+    }
     
     $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `id`=?");
     $stmt->bind_param("i", $respd['catid']);
@@ -9450,6 +9513,15 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
     $stmt->execute();
     $respd = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$respd){
+        alert($mainValues['no_plan_available'] ?? 'پلن پیدا نشد.', true);
+        exit();
+    }
+    $planServerIdForSale = intval($respd['server_id'] ?? 0);
+    if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($planServerIdForSale, $from_id, $userInfo ?? null, $match['buyType'] ?? '')){
+        alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
+        exit();
+    }
     
     $stmt = $connection->prepare("SELECT * FROM `server_categories` WHERE `id`=?");
     $stmt->bind_param("i", $respd['catid']);
@@ -13331,6 +13403,23 @@ if(preg_match('/^toggleServerState(\d+)_(\d+)/',$data,$match) && ($from_id == $a
     $keys = getServerListKeys($match[2]);
     editText($message_id,"☑️ مدیریت سرور ها:",$keys);
 }
+if(preg_match('/^toggleServerUserSales(\d+)_(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(intval($from_id) !== intval($admin)){
+        alert('فقط ادمین اصلی می‌تواند فروش اختصاصی سرورها را تغییر دهد.', true);
+        exit();
+    }
+    $serverId = intval($match[1]);
+    $offset = intval($match[2]);
+    $ok = function_exists('v2raystore_toggleServerUserSale') ? v2raystore_toggleServerUserSale($serverId) : false;
+    if(!$ok){
+        alert('تغییر وضعیت فروش سرور انجام نشد.', true);
+        exit();
+    }
+    $keys = getServerConfigKeys($serverId, $offset);
+    editText($message_id, '☑️ مدیریت سرور ها:', $keys);
+    alert('وضعیت فروش این سرور برای کاربران بروزرسانی شد.');
+    exit();
+}
 if(preg_match('/^showServerSettings(\d+)_(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $keys = getServerConfigKeys($match[1], $match[2]);
     editText($message_id,"☑️ مدیریت سرور ها: $cname",$keys);
@@ -14913,15 +15002,18 @@ function getAdminConfigsMenuKeys(){
     global $buttonValues;
     $keys = [];
     $keys[] = [
-        ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu'],
-        ['text'=>$buttonValues['create_account'] ?? 'ساخت اکانت', 'callback_data'=>'createMultipleAccounts']
+        ['text'=>'➕ افزودن کانفیگ به کاربر', 'callback_data'=>'manualAttachConfig', 'style'=>'success'],
+        ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu']
     ];
     $keys[] = [
-        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu'],
-        ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu']
+        ['text'=>$buttonValues['create_account'] ?? 'ساخت اکانت', 'callback_data'=>'createMultipleAccounts'],
+        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu']
     ];
     $keys[] = [
-        ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement'],
+        ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu'],
+        ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement']
+    ];
+    $keys[] = [
         ['text'=>'⏱ تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu']
     ];
     $keys[] = v2raystore_adminSectionBackRow();
