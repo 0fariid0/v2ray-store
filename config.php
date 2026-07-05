@@ -752,6 +752,41 @@ function v2raystore_getAdminServerSalesAccessText($targetAdminId){
            "اگر فروش یک سرور برای کاربران بسته باشد، فقط ادمین اصلی و ادمین‌هایی که اینجا مجاز می‌کنی می‌توانند آن سرور را انتخاب کنند.";
 }
 
+
+function v2raystore_getAdminServerSalesAdminsText(){
+    return "🛒 <b>دسترسی فروش سرورهای بسته</b>\n\n" .
+           "از اینجا ادمین فرعی موردنظر را انتخاب کن و مشخص کن کدام سرورهای بسته را اجازه فروش داشته باشد.\n\n" .
+           "ادمین اصلی همیشه به همه سرورها دسترسی دارد و نیازی به تنظیم جداگانه ندارد.";
+}
+
+function v2raystore_getAdminServerSalesAdminsKeys(){
+    global $connection, $buttonValues, $admin;
+    $keys = [];
+    $mainAdminId = intval($admin ?? 0);
+    if(isset($connection) && $connection){
+        $stmt = @$connection->prepare("SELECT `userid`, `name`, `username` FROM `users` WHERE `isAdmin` = true ORDER BY `id` DESC");
+        if($stmt){
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while($user = $res->fetch_assoc()){
+                $uid = intval($user['userid'] ?? 0);
+                if($uid <= 0 || $uid === $mainAdminId) continue;
+                $displayName = trim((string)($user['name'] ?? ''));
+                if($displayName === '') $displayName = trim((string)($user['username'] ?? ''));
+                if($displayName === '') $displayName = (string)$uid;
+                $keys[] = [['text'=>'👤 ' . $displayName . ' | تنظیم دسترسی فروش', 'callback_data'=>'adminServerSales' . $uid]];
+            }
+            $stmt->close();
+        }
+    }
+    if(empty($keys)){
+        $keys[] = [['text'=>'ادمین فرعی برای تنظیم دسترسی پیدا نشد', 'callback_data'=>'v2raystore']];
+        $keys[] = [['text'=>'➕ افزودن ادمین', 'callback_data'=>'addNewAdmin']];
+    }
+    $keys[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>'adminsList']];
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
 function v2raystore_getAdminServerSalesAccessKeys($targetAdminId){
     global $connection, $buttonValues;
     $targetAdminId = intval($targetAdminId);
@@ -9577,8 +9612,9 @@ function getAdminsKeys(){
     $keys = array();
     $mainAdminId = intval($admin ?? 0);
     if($mainAdminId != 0){
-        $keys[] = [['text'=>"👑 ادمین اصلی: همیشه دریافت فیش روشن است", 'callback_data'=>"v2raystore"]];
+        $keys[] = [['text'=>"👑 ادمین اصلی: همیشه به همه سرورها دسترسی دارد", 'callback_data'=>"v2raystore"]];
     }
+    $keys[] = [['text'=>"🛒 دسترسی فروش سرورهای بسته", 'callback_data'=>"adminServerSalesAdminsList"]];
     
     $stmt = $connection->prepare("SELECT `userid`, `name`, `username`, COALESCE(`receive_order_receipts`, 0) AS `receive_order_receipts` FROM `users` WHERE `isAdmin` = true ORDER BY `id` DESC");
     $stmt->execute();

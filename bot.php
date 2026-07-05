@@ -1204,6 +1204,14 @@ if($data=='botReports' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
 if($data=="adminsList" && $from_id == $admin){
     editText($message_id, "لیست ادمین ها",getAdminsKeys());
 }
+if($data == 'adminServerSalesAdminsList' && intval($from_id) === intval($admin)){
+    if(function_exists('v2raystore_getAdminServerSalesAdminsText') && function_exists('v2raystore_getAdminServerSalesAdminsKeys')){
+        editText($message_id, v2raystore_getAdminServerSalesAdminsText(), v2raystore_getAdminServerSalesAdminsKeys(), 'HTML');
+    }else{
+        alert('فایل config.php جدید جایگزین نشده است.', true);
+    }
+}
+
 if(preg_match('/^adminServerSales(\d+)$/', $data ?? '', $match) && intval($from_id) === intval($admin)){
     $targetAdminId = intval($match[1]);
     editText($message_id, v2raystore_getAdminServerSalesAccessText($targetAdminId), v2raystore_getAdminServerSalesAccessKeys($targetAdminId), 'HTML');
@@ -13390,31 +13398,6 @@ if(($data=='serversSetting' || preg_match('/^nextServerPage(\d+)/',$data,$match)
     else $keys = getServerListKeys();
     
     editText($message_id,"☑️ مدیریت سرور ها:",$keys);
-}
-if(($data == 'serverSalesManagement' || preg_match('/^serverSalesManagement_(\d+)$/', $data ?? '', $serverSalesPageMatch)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    if(intval($from_id) !== intval($admin)){
-        alert('فقط ادمین اصلی می‌تواند مدیریت فروش سرورها را تغییر دهد.', true);
-        exit();
-    }
-    $offset = isset($serverSalesPageMatch[1]) ? intval($serverSalesPageMatch[1]) : 0;
-    editText($message_id, function_exists('v2raystore_getServerSalesManagementText') ? v2raystore_getServerSalesManagementText() : '🛒 مدیریت فروش سرورها', function_exists('v2raystore_getServerSalesManagementKeys') ? v2raystore_getServerSalesManagementKeys($offset) : getServerListKeys(), 'HTML');
-    exit();
-}
-if(preg_match('/^toggleServerUserSalesList(\d+)_(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    if(intval($from_id) !== intval($admin)){
-        alert('فقط ادمین اصلی می‌تواند فروش اختصاصی سرورها را تغییر دهد.', true);
-        exit();
-    }
-    $serverId = intval($match[1]);
-    $offset = intval($match[2]);
-    $ok = function_exists('v2raystore_toggleServerUserSale') ? v2raystore_toggleServerUserSale($serverId) : false;
-    if(!$ok){
-        alert('تغییر وضعیت فروش سرور انجام نشد.', true);
-        exit();
-    }
-    editText($message_id, function_exists('v2raystore_getServerSalesManagementText') ? v2raystore_getServerSalesManagementText() : '🛒 مدیریت فروش سرورها', function_exists('v2raystore_getServerSalesManagementKeys') ? v2raystore_getServerSalesManagementKeys($offset) : getServerListKeys(), 'HTML');
-    alert('وضعیت فروش این سرور برای کاربران بروزرسانی شد.');
-    exit();
 }
 if(preg_match('/^toggleServerState(\d+)_(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("UPDATE `server_info` SET `state` = IF(`state` = 0,1,0) WHERE `id`=?");
