@@ -2434,6 +2434,24 @@ function v2raystore_switchPercentToGb($remainingGb, $percent, $minGb = 0){
     return min($remainingGb, round($deduct, 2));
 }
 
+function v2raystore_switchReversePercentToGb($remainingGb, $percent, $minGb = 0){
+    $remainingGb = max(0, floatval($remainingGb));
+    $percent = min(100, max(0, floatval($percent)));
+    $minGb = max(0, floatval($minGb));
+    if($remainingGb <= 0 || $percent <= 0) return 0;
+
+    // معکوس درصد باید حجم را به حالت قبل از کسر برگرداند.
+    // مثال: اگر مسیر 1 به 2 برابر 50٪ کسر باشد، حجم 100 به 50 تبدیل می‌شود.
+    // برگشت از 2 به 1 باید 50 گیگ اضافه کند، یعنی حجم فعلی دو برابر شود؛ نه اینکه فقط 50٪ به آن اضافه شود.
+    if($percent >= 100){
+        $add = $remainingGb;
+    }else{
+        $add = $remainingGb * ($percent / (100 - $percent));
+    }
+    if($minGb > 0) $add = max($minGb, $add);
+    return round($add, 2);
+}
+
 function v2raystore_setSwitchPairCostGb($fromServerId, $toServerId, $gb){
     global $connection;
     $fromServerId = intval($fromServerId);
@@ -2541,9 +2559,9 @@ function v2raystore_calcSwitchDeductionGb($order, $targetServerId, $remainingGb 
     }elseif($reversePairPercent !== null){
         $pairMode = 'reverse_percent';
         $percentUsed = $reversePairPercent;
-        $amount = v2raystore_switchPercentToGb($remainingForPercent, $reversePairPercent, $settings['min_gb']);
+        $amount = v2raystore_switchReversePercentToGb($remainingForPercent, $reversePairPercent, $settings['min_gb']);
         $changeType = 'add';
-        $reason = 'مسیر برگشتیِ درصد اختصاصی ادمین: ' . v2raystore_switchFormatGb($reversePairPercent) . '% به حجم باقی‌مانده اضافه می‌شود';
+        $reason = 'مسیر برگشتیِ درصد اختصاصی ادمین به صورت معکوس محاسبه می‌شود؛ مثلاً اگر مسیر رفت 50٪ کم کند، برگشت حجم فعلی را دو برابر می‌کند';
     }elseif($reversePairCost !== null && floatval($reversePairCost) > 0){
         $pairMode = 'reverse_fixed';
         $amount = $reversePairCost;
@@ -2683,7 +2701,7 @@ function v2raystore_getSwitchSettingsMenuText(){
            "🕘 سقف کاربر عادی: <b>" . v2raystore_switchDailyLimitText($s['daily_limit']) . "</b>
 
 " .
-           "ادمین از محدودیت روزانه معاف است. برای نامحدود کردن کاربر عادی عدد <code>0</code> را وارد کنید. اگر برای مسیر خاص درصد تعیین کنید، همان درصد اولویت دارد؛ اگر درصد مسیر نباشد ولی حجم ثابت مسیر باشد، همان حجم ثابت اعمال می‌شود.";
+           "ادمین از محدودیت روزانه معاف است. برای نامحدود کردن کاربر عادی عدد <code>0</code> را وارد کنید. اگر برای مسیر خاص درصد تعیین کنید، همان درصد اولویت دارد؛ اگر درصد مسیر نباشد ولی حجم ثابت مسیر باشد، همان حجم ثابت اعمال می‌شود. مسیر برگشتیِ درصدی به صورت معکوس حساب می‌شود؛ مثلاً ۵۰٪ کسر از ۱ به ۲ یعنی برگشت از ۲ به ۱ حجم فعلی را دو برابر می‌کند.";
 
     $stmt = @$connection->prepare("SELECT * FROM `server_switch_costs` ORDER BY `from_server_id`, `to_server_id` LIMIT 20");
     if($stmt){

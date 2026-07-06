@@ -1685,7 +1685,7 @@ if(preg_match('/^switchPairPercentTo(\d+)_(\d+)$/', $data, $match) && ($from_id 
     delMessage();
     $fromTitle = v2raystore_switchGetServerTitle($match[1]);
     $toTitle = v2raystore_switchGetServerTitle($match[2]);
-    sendMessage("📊 درصد کسر اختصاصی مسیر زیر را وارد کنید:\n\n<b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nمثال: <code>15</code> یعنی ۱۵٪ از حجم باقی‌مانده کم شود.\nبرای سرویس ۳۰ گیگ می‌شود ۴.۵ گیگ و برای سرویس ۵ گیگ می‌شود ۰.۷۵ گیگ.", $cancelKey, "HTML");
+    sendMessage("📊 درصد کسر اختصاصی مسیر زیر را وارد کنید:\n\n<b>" . htmlspecialchars($fromTitle, ENT_QUOTES, 'UTF-8') . " ➜ " . htmlspecialchars($toTitle, ENT_QUOTES, 'UTF-8') . "</b>\n\nمثال: <code>15</code> یعنی ۱۵٪ از حجم باقی‌مانده کم شود.\nبرای سرویس ۳۰ گیگ می‌شود ۴.۵ گیگ و برای سرویس ۵ گیگ می‌شود ۰.۷۵ گیگ.\n\nمسیر برگشتی خودکار معکوس حساب می‌شود؛ مثلاً اگر این مسیر را <code>50</code> بگذاری، برگشت از مقصد به مبدا حجم فعلی را دو برابر می‌کند.", $cancelKey, "HTML");
     setUser('editSwitchPairPercent' . intval($match[1]) . '_' . intval($match[2]));
     exit();
 }
