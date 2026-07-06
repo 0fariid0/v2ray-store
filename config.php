@@ -576,7 +576,8 @@ function v2raystore_ensureTestAccountPlansSchema(){
         KEY `idx_created_at` (`created_at`)
     ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_persian_ci"));
 
-    // نسخه‌های قبلی اکانت تست را به‌صورت پلن صفر تومانی نگه می‌داشتند؛ از این به بعد همان‌ها به بخش مدیریت تست منتقل می‌شوند.
+    // اکانت تست فقط پلنی است که قیمت آن صفر باشد. اگر به هر دلیل روی پلن پولی فلگ تست مانده باشد، پاک می‌شود تا پلن پولی وارد مدیریت تست نشود.
+    @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 0 WHERE COALESCE(`price`,0) != 0"));
     @($connection->query("UPDATE `server_plans` SET `is_test_plan` = 1 WHERE COALESCE(`price`,0) = 0"));
 
     if(function_exists('v2raystore_schemaPatchDone') && v2raystore_schemaPatchDone('TEST_ACCOUNT_USAGE_MIGRATE_V2')) return;
@@ -884,17 +885,17 @@ function v2raystore_getServerSalesManagementKeys($offset = 0){
 function v2raystore_isTestPlanRow($plan){
     if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
     if(!is_array($plan)) return false;
-    return intval($plan['is_test_plan'] ?? 0) === 1 || intval($plan['price'] ?? 0) === 0;
+    return intval($plan['price'] ?? 0) === 0;
 }
 
 function v2raystore_testPlanActiveSql($activeOnly = true){
-    $sql = "(COALESCE(sp.`is_test_plan`,0) = 1 OR COALESCE(sp.`price`,0) = 0)";
+    $sql = "COALESCE(sp.`price`,0) = 0";
     if($activeOnly) $sql .= " AND sp.`active` = 1";
     return $sql;
 }
 
 function v2raystore_normalPlanSql($activeOnly = true){
-    $sql = "COALESCE(`is_test_plan`,0) = 0 AND COALESCE(`price`,0) != 0";
+    $sql = "COALESCE(`price`,0) != 0";
     if($activeOnly) $sql .= " AND `active` = 1";
     return $sql;
 }

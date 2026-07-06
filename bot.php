@@ -593,7 +593,7 @@ if(preg_match('/^testPlanDetails(\d+)$/', $data ?? '', $m) && ($from_id == $admi
 }
 if(preg_match('/^toggleTestPlanState(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $pid = intval($m[1]);
-    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND COALESCE(`price`,0)=0");
     $stmt->bind_param("i", $pid);
     $stmt->execute();
     $stmt->close();
@@ -610,7 +610,7 @@ if(preg_match('/^deleteTestPlanAsk(\d+)$/', $data ?? '', $m) && ($from_id == $ad
 }
 if(preg_match('/^deleteTestPlanConfirm(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $pid = intval($m[1]);
-    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0) LIMIT 1");
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `id`=? AND COALESCE(`price`,0)=0 LIMIT 1");
     $stmt->bind_param("i", $pid);
     $stmt->execute();
     $stmt->close();
@@ -631,16 +631,16 @@ if(preg_match('/^editTestPlanField\|(\d+)\|(title|volume|days|acount|limitip)$/'
     if(in_array($field, ['volume','days'], true)){
         if(!is_numeric($value) || floatval($value) <= 0){ sendMessage('❌ مقدار باید عددی و بزرگتر از صفر باشد.', $cancelKey, 'HTML'); exit(); }
         $num = floatval($value);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
         $stmt->bind_param("di", $num, $pid);
     }elseif(in_array($field, ['acount','limitip'], true)){
         if(!preg_match('/^\d+$/', $value)){ sendMessage('❌ مقدار باید عدد صحیح باشد.', $cancelKey, 'HTML'); exit(); }
         $num = intval($value);
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `$field`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
         $stmt->bind_param("ii", $num, $pid);
     }else{
         if($value === ''){ sendMessage('❌ عنوان نمی‌تواند خالی باشد.', $cancelKey, 'HTML'); exit(); }
-        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND (COALESCE(`is_test_plan`,0)=1 OR COALESCE(`price`,0)=0)");
+        $stmt = $connection->prepare("UPDATE `server_plans` SET `title`=? WHERE `id`=? AND COALESCE(`price`,0)=0");
         $stmt->bind_param("si", $value, $pid);
     }
     $stmt->execute();
