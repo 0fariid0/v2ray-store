@@ -11213,7 +11213,7 @@ if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
         ]], JSON_UNESCAPED_UNICODE), 'HTML');
         exit();
     }else{
-        if($domainChanged && !(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order))){
+        if($domainChanged && !(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order))){
             $keys[] = [['text'=>'🔄 بروزرسانی کانفیگ', 'callback_data'=>'updateConfigConnectionLink' . $oid]];
         }
         if($expire <= time() || (is_array($summary) && isset($summary['remaining_gb']) && $summary['remaining_gb'] !== null && floatval($summary['remaining_gb']) <= 0)){
@@ -11528,7 +11528,7 @@ if(preg_match('/updateConfigConnectionLink(\d+)/', $data,$match)){
         exit();
     }
 
-    if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+    if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
         alert("ℹ️ این سرویس با لینک ساب ارسال می‌شود؛ بروزرسانی لینک عادی برای آن غیرفعال است. ساب را داخل برنامه Update کنید.", true);
         exit();
     }
@@ -11608,7 +11608,7 @@ if(preg_match('/^updateAllMyConfigs_(\d+)/', $data, $match)){
 
     while($order = $res->fetch_assoc()){
         $processed++;
-        if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+        if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
             continue;
         }
         $links = farid_generateUpdatedVrayLinks($order);
@@ -11709,7 +11709,7 @@ if(preg_match('/^updateAllUserConfigs(\d+)_(\d+)/', $data, $match) && ($from_id 
 
     while($order = $res->fetch_assoc()){
         $processed++;
-        if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+        if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
             continue;
         }
         $links = farid_generateUpdatedVrayLinks($order);
@@ -12441,7 +12441,6 @@ if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
     $toTitle = v2raystore_switchGetServerTitle($sid);
     $afterGb = ($changeType === 'add') ? ($remainingGb + $changeGb) : max(0, $remainingGb - $changeGb);
     $priceDiff = number_format(intval($cost['price_diff'] ?? 0));
-    $reason = htmlspecialchars((string)($cost['reason'] ?? ''), ENT_QUOTES, 'UTF-8');
     $changeLine = ($changeType === 'add')
         ? "🔺 حجم افزایشی: <b>" . v2raystore_switchFormatGb($changeGb) . " GB</b>\n"
         : "🔻 حجم کسرشونده: <b>" . v2raystore_switchFormatGb($changeGb) . " GB</b>\n";
@@ -12452,9 +12451,8 @@ if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
            "📦 حجم فعلی: <b>" . v2raystore_switchFormatGb($remainingGb) . " GB</b>\n" .
            $changeLine .
            "✅ حجم بعد از تغییر: <b>" . v2raystore_switchFormatGb($afterGb) . " GB</b>\n" .
-           "💰 اختلاف قیمت شناسایی‌شده: <b>{$priceDiff} تومان</b>\n" .
-           "🧮 روش محاسبه: {$reason}\n\n" .
-           "بعد از تأیید، کانفیگ از سرور قبلی حذف می‌شود و لینک جدید در یک پیام جداگانه برای کاربر ارسال می‌شود.";
+           "💰 اختلاف قیمت شناسایی‌شده: <b>{$priceDiff} تومان</b>\n\n" .
+           "بعد از تأیید، کانفیگ از سرور قبلی حذف می‌شود و لینک/ساب جدید در یک پیام جداگانه برای کاربر ارسال می‌شود.";
     $keyboard = json_encode(['inline_keyboard'=>[
         [['text'=>'✅ تأیید و تغییر سرور', 'callback_data'=>'confirmSwitchServer' . $sid . '_' . $oid, 'style'=>'success']],
         [['text'=>'⬅️ بازگشت به انتخاب سرور', 'callback_data'=>'switchLocation' . $oid]],
@@ -12487,7 +12485,16 @@ if(preg_match('/^confirmSwitchServer(\d+)_(\d+)$/', $data, $match)){
                  "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
                  $resultChangeLine .
                  "📦 حجم باقی‌مانده جدید: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
-        farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+        $deliveryOptions = is_array($result['delivery_options'] ?? null) ? $result['delivery_options'] : ['config'=>true, 'sub'=>false];
+        $subLink = trim((string)($result['sub_link'] ?? ''));
+        if(!empty($deliveryOptions['sub']) && empty($deliveryOptions['config']) && $subLink !== '' && function_exists('farid_sendUpdatedSubToUser')){
+            farid_sendUpdatedSubToUser($ownerId, $newRemark, $subLink, $extra, '🌎 لینک ساب سرویس شما بعد از تغییر سرور');
+        }elseif(!empty($deliveryOptions['sub']) && !empty($deliveryOptions['config']) && $subLink !== '' && function_exists('farid_sendUpdatedSubToUser')){
+            farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, '', '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+            farid_sendUpdatedSubToUser($ownerId, $newRemark, $subLink, $extra, '🌎 لینک ساب سرویس شما بعد از تغییر سرور');
+        }else{
+            farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+        }
     }
     if(function_exists('v2raystore_notifyServerSwitch')){
         v2raystore_notifyServerSwitch($result, $from_id, $isAdminSwitch);
@@ -12504,7 +12511,7 @@ if(preg_match('/^confirmSwitchServer(\d+)_(\d+)$/', $data, $match)){
            "📍 مقصد: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
            $resultChangeLine .
            "📦 حجم باقی‌مانده: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
-           "لینک جدید در پیام جداگانه برای کاربر ارسال شد.";
+           "لینک/ساب جدید در پیام جداگانه برای کاربر ارسال شد.";
     editText($message_id, $msg, json_encode(['inline_keyboard'=>[
         [['text'=>'📄 مشاهده جزئیات سرویس', 'callback_data'=>$backCb]],
         [['text'=>$buttonValues['back_to_main'] ?? 'منوی اصلی', 'callback_data'=>'mainMenu']],
@@ -12642,7 +12649,16 @@ if(preg_match('/^switchServer(\d+)_(\d+)$/',$data,$match)){
                  "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
                  $resultChangeLine .
                  "📦 حجم باقی‌مانده جدید: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>";
-        farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+        $deliveryOptions = is_array($result['delivery_options'] ?? null) ? $result['delivery_options'] : ['config'=>true, 'sub'=>false];
+        $subLink = trim((string)($result['sub_link'] ?? ''));
+        if(!empty($deliveryOptions['sub']) && empty($deliveryOptions['config']) && $subLink !== '' && function_exists('farid_sendUpdatedSubToUser')){
+            farid_sendUpdatedSubToUser($ownerId, $newRemark, $subLink, $extra, '🌎 لینک ساب سرویس شما بعد از تغییر سرور');
+        }elseif(!empty($deliveryOptions['sub']) && !empty($deliveryOptions['config']) && $subLink !== '' && function_exists('farid_sendUpdatedSubToUser')){
+            farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, '', '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+            farid_sendUpdatedSubToUser($ownerId, $newRemark, $subLink, $extra, '🌎 لینک ساب سرویس شما بعد از تغییر سرور');
+        }else{
+            farid_sendUpdatedConfigToUser($ownerId, $newRemark, $links, $extra, '🌎 لینک جدید سرویس شما بعد از تغییر سرور');
+        }
     }
     if(function_exists('v2raystore_notifyServerSwitch')){
         v2raystore_notifyServerSwitch($result, $from_id, $isAdminSwitch);
@@ -12658,7 +12674,7 @@ if(preg_match('/^switchServer(\d+)_(\d+)$/',$data,$match)){
            "📍 سرور جدید: <b>" . htmlspecialchars((string)($result['target_title'] ?? ''), ENT_QUOTES, 'UTF-8') . "</b>\n" .
            $resultChangeLine .
            "📦 حجم باقی‌مانده: <b>" . v2raystore_switchFormatGb($result['remaining_gb_after'] ?? 0) . " GB</b>\n\n" .
-           "لینک جدید در یک پیام جداگانه برای کاربر ارسال شد.";
+           "لینک/ساب جدید در یک پیام جداگانه برای کاربر ارسال شد.";
     editText($message_id, $msg, json_encode(['inline_keyboard'=>[
         [['text'=>'🔙 بازگشت به جزئیات کانفیگ', 'callback_data'=>'orderDetails' . intval($result['order_id'] ?? $oid)]],
         [['text'=>$buttonValues['back_to_main'] ?? 'منوی اصلی', 'callback_data'=>'mainMenu']],
@@ -15479,7 +15495,7 @@ function farid_attachUpdateConfigButton($keyboardJson, $orderId){
     if(!is_array($data) || !isset($data['inline_keyboard'])) return $keyboardJson;
 
     $orderId = intval($orderId);
-    if(function_exists('farid_orderIdIsSubOnly') && farid_orderIdIsSubOnly($orderId)) return $keyboardJson;
+    if(function_exists('farid_orderIdHasSubDelivery') && farid_orderIdHasSubDelivery($orderId)) return $keyboardJson;
     $cb = "updateConfigConnectionLink" . $orderId;
 
     foreach($data['inline_keyboard'] as $row){
@@ -16383,6 +16399,25 @@ function farid_orderIsSubOnly($order){
     return function_exists('v2raystore_isSubOnlyOrder') && v2raystore_isSubOnlyOrder($order);
 }
 
+function farid_orderHasSubDelivery($order){
+    if(function_exists('v2raystore_orderUsesSubscription')) return v2raystore_orderUsesSubscription($order);
+    if(function_exists('v2raystore_isSubOnlyOrder')) return v2raystore_isSubOnlyOrder($order);
+    return false;
+}
+
+function farid_orderIdHasSubDelivery($orderId){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param("i", $orderId);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $order ? farid_orderHasSubDelivery($order) : false;
+}
+
 function farid_orderIdIsSubOnly($orderId){
     global $connection;
     $orderId = intval($orderId);
@@ -16921,7 +16956,7 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
                 $stats['failed']++;
                 continue;
             }
-            if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+            if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
                 continue;
             }
 
@@ -17029,7 +17064,7 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
                 continue;
             }
 
-            if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+            if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
                 continue;
             }
             $links = farid_generateUpdatedVrayLinks($order);
@@ -17075,7 +17110,7 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
             $processedNow++;
             $stats['processed']++;
 
-            if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+            if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
                 continue;
             }
             $links = farid_generateUpdatedVrayLinks($order);
@@ -17136,7 +17171,7 @@ function farid_updateAndSendOneOrder($oid, $requestedBy = 0){
     $stmt->close();
 
     if(!$order) return false;
-    if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)) return false;
+    if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)) return false;
 
     $links = farid_generateUpdatedVrayLinks($order);
     if($links == null) return false;
@@ -18019,6 +18054,18 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $logChangeGb = ($changeType === 'add') ? (-1 * $changeGb) : $changeGb;
     v2raystore_recordSwitchLog($orderId, $ownerId, $oldServerId, $targetServerId, $oldRemark, $newRemark, $logChangeGb);
 
+    $newOrderForDelivery = $order;
+    $newOrderForDelivery['server_id'] = $targetServerId;
+    $newOrderForDelivery['fileid'] = $targetPlanId;
+    $newOrderForDelivery['inbound_id'] = $newInboundId;
+    $newOrderForDelivery['token'] = $newToken;
+    $newOrderForDelivery['uuid'] = $newUuid;
+    $newOrderForDelivery['protocol'] = $newProtocol;
+    $newOrderForDelivery['link'] = $linkJson;
+    $newOrderForDelivery['remark'] = $newRemark;
+    $deliveryOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($newOrderForDelivery) : ['config'=>true, 'sub'=>false];
+    $subLink = (!empty($deliveryOptions['sub']) && function_exists('v2raystore_orderCurrentSubLink')) ? v2raystore_orderCurrentSubLink($newOrderForDelivery) : '';
+
     return [
         'ok' => true,
         'order_id' => $orderId,
@@ -18029,6 +18076,8 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
         'old_remark' => $oldRemark,
         'new_remark' => $newRemark,
         'links' => $links,
+        'sub_link' => $subLink,
+        'delivery_options' => $deliveryOptions,
         'deduct_gb' => ($changeType === 'deduct' ? $changeGb : 0),
         'change_gb' => $changeGb,
         'change_type' => $changeType,

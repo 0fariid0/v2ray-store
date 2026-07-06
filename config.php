@@ -3524,6 +3524,12 @@ function v2raystore_isSubOnlyOrder($order){
     return !empty($opts['sub']) && empty($opts['config']);
 }
 
+function v2raystore_orderUsesSubscription($order){
+    if(!is_array($order)) return false;
+    $opts = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null);
+    return !empty($opts['sub']);
+}
+
 function v2raystore_orderCurrentSubLink($order){
     if(!is_array($order) || !function_exists('v2raystore_makeCustomerSubLink')) return '';
     return v2raystore_makeCustomerSubLink(
