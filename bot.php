@@ -77,6 +77,62 @@ if(preg_match('/^agSendMode(\d+)_(\d+)$/', $data ?? '', $match) && ($from_id == 
     exit();
 }
 
+
+if(preg_match('/^agSendToggle(\d+)_(\d+)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $offset = max(0, intval($match[3]));
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt){ alert('خطا در خواندن نماینده.', true); exit(); }
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$exists){ alert('نماینده پیدا نشد.', true); exit(); }
+
+    $next = function_exists('v2raystore_toggleAgentServerDeliveryMode') ? v2raystore_toggleAgentServerDeliveryMode($agentId, $serverId) : false;
+    if($next === false){
+        alert('تغییر نحوه ارسال انجام نشد.', true);
+        exit();
+    }
+    $txt = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیم ارسال سرورها';
+    $keys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $res = editText($message_id, $txt, $keys, 'HTML');
+    if(!is_object($res) || empty($res->ok)){
+        sendMessage($txt, $keys, 'HTML');
+    }
+    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next, 'پیش‌فرض سرور ⚙️') : $next;
+    alert('نحوه ارسال تغییر کرد: ' . $label);
+    exit();
+}
+
+if(preg_match('/^agSendSale(\d+)_(\d+)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $offset = max(0, intval($match[3]));
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt){ alert('خطا در خواندن نماینده.', true); exit(); }
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$exists){ alert('نماینده پیدا نشد.', true); exit(); }
+
+    $next = function_exists('v2raystore_toggleAgentServerSaleState') ? v2raystore_toggleAgentServerSaleState($agentId, $serverId) : false;
+    if($next === false){
+        alert('تغییر وضعیت فروش انجام نشد.', true);
+        exit();
+    }
+    $txt = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیم ارسال سرورها';
+    $keys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $res = editText($message_id, $txt, $keys, 'HTML');
+    if(!is_object($res) || empty($res->ok)){
+        sendMessage($txt, $keys, 'HTML');
+    }
+    alert($next === 'on' ? 'فروش این سرور برای نماینده باز شد.' : 'فروش این سرور برای نماینده بسته شد.');
+    exit();
+}
+
 if(preg_match('/^agSendSet(\d+)_(\d+)_(default|both|config|sub)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
     $agentId = intval($match[1]);
     $serverId = intval($match[2]);

@@ -778,6 +778,96 @@ function v2raystore_toggleAgentServerDeliveryMode($agentId, $serverId){
     return v2raystore_setAgentServerDeliveryMode($agentId, $serverId, $next) ? $next : false;
 }
 
+
+function v2raystore_agentServerSaleStatesNormalize($raw){
+    if(!is_array($raw)) $raw = [];
+    $out = [];
+    foreach($raw as $serverId=>$state){
+        $serverId = (string)intval($serverId);
+        if($serverId === '0') continue;
+        $state = strtolower(trim((string)$state));
+        if(in_array($state, ['on','open','enable','enabled','allow','allowed','1','true','yes'], true)) $out[$serverId] = 'on';
+        elseif(in_array($state, ['off','close','closed','disable','disabled','deny','denied','0','false','no'], true)) $out[$serverId] = 'off';
+    }
+    return $out;
+}
+
+function v2raystore_agentServerSaleState($agentUserOrId, $serverId){
+    $serverId = intval($serverId);
+    if($serverId <= 0) return 'default';
+    $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
+    if(!v2raystore_isAgentUser($agent)) return 'default';
+    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
+    $serverSales = v2raystore_agentServerSaleStatesNormalize($discounts['server_sales'] ?? []);
+    return $serverSales[(string)$serverId] ?? 'default';
+}
+
+function v2raystore_agentServerSaleAllowed($agentUserOrId, $serverId){
+    $serverId = intval($serverId);
+    if($serverId <= 0) return false;
+    $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
+    if(!v2raystore_isAgentUser($agent)) return false;
+    $state = v2raystore_agentServerSaleState($agent, $serverId);
+    if($state === 'on') return true;
+    if($state === 'off') return false;
+
+    // حالت پیش‌فرض: همان تنظیم عمومی سرور اعمال می‌شود.
+    // اگر سرور برای کاربران باز باشد، نماینده هم می‌تواند بفروشد.
+    // اگر سرور برای کاربران بسته باشد، فقط دسترسی قدیمی «سرورهای بسته» اثر می‌کند.
+    if(!v2raystore_isServerSaleClosed($serverId)) return true;
+    return v2raystore_adminHasClosedServerSaleAccess(intval($agent['userid'] ?? 0), $serverId);
+}
+
+function v2raystore_setAgentServerSaleState($agentId, $serverId, $state){
+    global $connection;
+    $agentId = intval($agentId);
+    $serverId = intval($serverId);
+    $state = strtolower(trim((string)$state));
+    if($agentId <= 0 || $serverId <= 0 || !isset($connection) || !$connection) return false;
+    if(!in_array($state, ['default','on','off'], true)) $state = 'default';
+    $stmt = @$connection->prepare("SELECT `discount_percent` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return false;
+
+    $discounts = v2raystore_agentPricingDecode($row['discount_percent'] ?? null);
+    $serverSales = v2raystore_agentServerSaleStatesNormalize($discounts['server_sales'] ?? []);
+    if($state === 'default') unset($serverSales[(string)$serverId]);
+    else $serverSales[(string)$serverId] = $state;
+    $discounts['server_sales'] = $serverSales;
+
+    // برای سازگاری با قابلیت قبلی دسترسی فروش سرورهای بسته:
+    // وقتی فروش را برای نماینده باز می‌کنیم، دسترسی قدیمی هم ثبت می‌شود.
+    // وقتی فروش را برای نماینده می‌بندیم، آن دسترسی هم حذف می‌شود تا سرور بسته واقعاً باز نماند.
+    if($state === 'on'){
+        $time = time();
+        $stmt2 = @$connection->prepare("INSERT IGNORE INTO `admin_server_sales_access` (`admin_userid`, `server_id`, `created_at`) VALUES (?, ?, ?)");
+        if($stmt2){ $stmt2->bind_param('iii', $agentId, $serverId, $time); $stmt2->execute(); $stmt2->close(); }
+    }elseif($state === 'off'){
+        $stmt2 = @$connection->prepare("DELETE FROM `admin_server_sales_access` WHERE `admin_userid`=? AND `server_id`=? LIMIT 1");
+        if($stmt2){ $stmt2->bind_param('ii', $agentId, $serverId); $stmt2->execute(); $stmt2->close(); }
+    }
+
+    $encoded = json_encode($discounts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = @$connection->prepare("UPDATE `users` SET `discount_percent`=? WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $encoded, $agentId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_toggleAgentServerSaleState($agentId, $serverId){
+    $agentId = intval($agentId);
+    $serverId = intval($serverId);
+    $allowed = v2raystore_agentServerSaleAllowed($agentId, $serverId);
+    $next = $allowed ? 'off' : 'on';
+    return v2raystore_setAgentServerSaleState($agentId, $serverId, $next) ? $next : false;
+}
+
 function v2raystore_extractRuntimeServerId($payInfo = null, $order = null, $explicitServerId = 0){
     global $connection;
     $explicitServerId = intval($explicitServerId);
@@ -915,10 +1005,10 @@ if(!function_exists('v2raystore_agentDeliveryServerRows')){
         $where = '';
         $statusCol = v2raystore_agentDeliveryServerStatusColumn();
         if($statusCol !== '') $where = "WHERE `{$statusCol}` = 1";
-        $sql = "SELECT `id`, `title`, `flag` FROM `server_info` {$where} ORDER BY `id` DESC LIMIT " . ($limit + 1) . " OFFSET " . $offset;
+        $sql = "SELECT `id`, `title`, `flag`, COALESCE(`sale_closed`,0) AS `sale_closed`, COALESCE(`delivery_mode`, 'default') AS `delivery_mode` FROM `server_info` {$where} ORDER BY `id` DESC LIMIT " . ($limit + 1) . " OFFSET " . $offset;
         $res = @($connection->query($sql));
         if(!$res && $where !== ''){
-            $sql = "SELECT `id`, `title`, `flag` FROM `server_info` ORDER BY `id` DESC LIMIT " . ($limit + 1) . " OFFSET " . $offset;
+            $sql = "SELECT `id`, `title`, `flag`, COALESCE(`sale_closed`,0) AS `sale_closed`, COALESCE(`delivery_mode`, 'default') AS `delivery_mode` FROM `server_info` ORDER BY `id` DESC LIMIT " . ($limit + 1) . " OFFSET " . $offset;
             $res = @($connection->query($sql));
         }
         $rows = [];
@@ -936,13 +1026,11 @@ if(!function_exists('v2raystore_getAgentDeliveryMenuText')){
         $name = is_array($agent) ? trim((string)($agent['name'] ?? '')) : '';
         if($name === '') $name = (string)$agentId;
         $name = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
-        return "🚚 <b>تنظیم ارسال سرورها برای نماینده</b>\n\n" .
+        return "🚚 <b>تنظیم ارسال و فروش سرورها برای نماینده</b>\n\n" .
                "نماینده: <b>{$name}</b>\n\n" .
-               "برای هر سرور جدا انتخاب کن کانفیگ با چه حالتی برای مشتری‌های این نماینده ارسال شود:\n" .
-               "• ساب + لینک\n" .
-               "• فقط لینک\n" .
-               "• فقط ساب\n" .
-               "• پیش‌فرض سرور";
+               "برای هر سرور دو دکمه داری:\n" .
+               "• فروش نماینده: با هر بار زدن، فروش همان سرور برای این نماینده باز/بسته می‌شود.\n" .
+               "• نحوه ارسال: با هر بار زدن بین این حالت‌ها می‌چرخد: پیش‌فرض سرور، ساب + لینک، فقط لینک، فقط ساب.";
     }
 }
 
@@ -951,8 +1039,8 @@ if(!function_exists('v2raystore_getAgentDeliveryMenuKeys')){
         global $buttonValues;
         $agentId = intval($agentId);
         $offset = max(0, intval($offset));
-        $limit = 5;
-        $rows = v2raystore_agentDeliveryServerRows($limit, $offset);
+        $limit = 6;
+        $rows = function_exists('v2raystore_agentDeliveryServerRows') ? v2raystore_agentDeliveryServerRows($limit, $offset) : [];
         $hasNext = count($rows) > $limit;
         if($hasNext) $rows = array_slice($rows, 0, $limit);
         $keys = [];
@@ -964,21 +1052,18 @@ if(!function_exists('v2raystore_getAgentDeliveryMenuKeys')){
             if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 36) $title = mb_substr($title, 0, 33, 'UTF-8') . '...';
             elseif(strlen($title) > 36) $title = substr($title, 0, 33) . '...';
 
+            $saleAllowed = function_exists('v2raystore_agentServerSaleAllowed') ? v2raystore_agentServerSaleAllowed($agentId, $sid) : true;
+            $saleLabel = $saleAllowed ? 'فروش نماینده: باز ✅' : 'فروش نماینده: بسته 🚫';
+
             $agentMode = function_exists('v2raystore_agentServerDeliveryMode') ? v2raystore_agentServerDeliveryMode($agentId, $sid) : 'default';
-            $serverMode = function_exists('v2raystore_getServerDeliveryMode') ? v2raystore_getServerDeliveryMode($sid) : 'default';
+            $serverMode = function_exists('v2raystore_getServerDeliveryMode') ? v2raystore_getServerDeliveryMode($sid) : (($srv['delivery_mode'] ?? 'default'));
             $serverLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️') : $serverMode;
             $currentLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($agentMode, 'پیش‌فرض سرور: ' . $serverLabel) : $agentMode;
 
-            $p = function($mode) use ($agentMode){ return ($agentMode === $mode ? '✅ ' : ''); };
             $keys[] = [['text'=>'🖥 ' . $title, 'callback_data'=>'noop']];
-            $keys[] = [['text'=>'وضعیت فعلی: ' . $currentLabel, 'callback_data'=>'noop']];
             $keys[] = [
-                ['text'=>$p('both') . 'ساب + لینک', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_both_' . $offset],
-                ['text'=>$p('config') . 'فقط لینک', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_config_' . $offset]
-            ];
-            $keys[] = [
-                ['text'=>$p('sub') . 'فقط ساب', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_sub_' . $offset],
-                ['text'=>$p('default') . 'پیش‌فرض سرور', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_default_' . $offset]
+                ['text'=>'🛒 ' . $saleLabel, 'callback_data'=>'agSendSale' . $agentId . '_' . $sid . '_' . $offset],
+                ['text'=>'🔗 ارسال: ' . $currentLabel, 'callback_data'=>'agSendToggle' . $agentId . '_' . $sid . '_' . $offset]
             ];
         }
         if(!$keys){
@@ -1041,11 +1126,20 @@ function v2raystore_canUserBuyFromServer($serverId, $userId, $userInfo = null, $
     $serverId = intval($serverId);
     $userId = intval($userId);
     if($serverId <= 0) return false;
+
+    // برای نماینده‌ها، تنظیم فروش هر سرور در صفحه «تنظیم ارسال سرورها» اولویت دارد.
+    // off یعنی حتی اگر سرور برای کاربران باز باشد، این نماینده آن را نمی‌بیند/نمی‌فروشد.
+    // on یعنی حتی اگر سرور برای کاربران بسته باشد، این نماینده مجاز به فروش آن است.
+    if(function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo)){
+        $state = function_exists('v2raystore_agentServerSaleState') ? v2raystore_agentServerSaleState($userInfo, $serverId) : 'default';
+        if($state === 'off') return false;
+        if($state === 'on') return true;
+    }
+
     if(!v2raystore_isServerSaleClosed($serverId)) return true;
 
     // اگر فروش سرور بسته باشد، فقط ادمین اصلی یا هر ادمین/نماینده‌ای
     // که از بخش دسترسی فروش سرورهای بسته مجاز شده باشد می‌تواند خرید ثبت کند.
-    // قبلاً اینجا فقط isAdmin چک می‌شد و دسترسی نماینده‌ها اثر نمی‌کرد.
     return v2raystore_adminHasClosedServerSaleAccess($userId, $serverId);
 }
 
@@ -2965,6 +3059,7 @@ function v2raystore_agentPricingDecode($raw){
     if(!isset($data['servers']) || !is_array($data['servers'])) $data['servers'] = [];
     if(!isset($data['links']) || !is_array($data['links'])) $data['links'] = [];
     if(!isset($data['server_links']) || !is_array($data['server_links'])) $data['server_links'] = [];
+    if(!isset($data['server_sales']) || !is_array($data['server_sales'])) $data['server_sales'] = [];
 
     $normalizeLinkState = function($value){
         if(is_bool($value)) return $value ? 'on' : 'off';
@@ -2987,6 +3082,16 @@ function v2raystore_agentPricingDecode($raw){
         if($mode !== 'default' && in_array($mode, ['both','config','sub'], true)) $normalizedServerLinks[$serverId] = $mode;
     }
     $data['server_links'] = $normalizedServerLinks;
+
+    $normalizedServerSales = [];
+    foreach(($data['server_sales'] ?? []) as $serverId=>$state){
+        $serverId = (string)intval($serverId);
+        if($serverId === '0') continue;
+        $state = strtolower(trim((string)$state));
+        if(in_array($state, ['on','open','enable','enabled','allow','allowed','1','true','yes'], true)) $normalizedServerSales[$serverId] = 'on';
+        elseif(in_array($state, ['off','close','closed','disable','disabled','deny','denied','0','false','no'], true)) $normalizedServerSales[$serverId] = 'off';
+    }
+    $data['server_sales'] = $normalizedServerSales;
     if(!isset($data['limits']) || !is_array($data['limits'])) $data['limits'] = [];
     $buyState = strtolower(trim((string)($data['limits']['buying'] ?? 'on')));
     $data['limits']['buying'] = in_array($buyState, ['off','disable','disabled','0','false'], true) ? 'off' : 'on';
