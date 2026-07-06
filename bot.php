@@ -10351,6 +10351,45 @@ if(preg_match('/planDetails(\d+)/', $data,$match) && ($from_id == $admin || $use
         exit;
     }else editText($message_id, "ویرایش تنظیمات پلن", $keys, "HTML");
 }
+if(preg_match('/^v2raystoreplantoggleactive(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($match[1]);
+
+    $stmt = $connection->prepare("SELECT `id`, `price`, `step`, `active` FROM `server_plans` WHERE `id`=? LIMIT 1");
+    $stmt->bind_param("i", $pid);
+    $stmt->execute();
+    $planRow = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if(!$planRow){
+        alert("پلن پیدا نشد.", true);
+        exit;
+    }
+    if(intval($planRow['price'] ?? 0) === 0){
+        alert("فعال/غیرفعال کردن اکانت تست فقط از بخش مدیریت اکانت تست انجام می‌شود.", true);
+        exit;
+    }
+    if(intval($planRow['step'] ?? 0) !== 10){
+        alert("این پلن هنوز کامل ثبت نشده و قابل تغییر وضعیت نیست.", true);
+        exit;
+    }
+
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `active` = IF(`active`=1,0,1) WHERE `id`=? AND COALESCE(`price`,0) != 0 AND `step`=10 LIMIT 1");
+    $stmt->bind_param("i", $pid);
+    $stmt->execute();
+    $changed = $stmt->affected_rows;
+    $stmt->close();
+
+    if($changed > 0) alert("وضعیت پلن تغییر کرد.");
+    else alert("وضعیت پلن تغییر نکرد.", true);
+
+    $keys = getPlanDetailsKeys($pid);
+    if($keys == null){
+        editText($message_id, "پلن پیدا نشد.", getMainKeys());
+    }else{
+        editText($message_id, "ویرایش تنظیمات پلن", $keys, "HTML");
+    }
+    exit;
+}
 if(preg_match('/^v2raystoreplanacclist(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `fileid`=?");
     $stmt->bind_param("i", $match[1]);

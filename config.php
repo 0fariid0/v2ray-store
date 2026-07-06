@@ -9942,6 +9942,8 @@ function getPlanDetailsKeys($planId){
         $customSni = $pd['custom_sni']??" ";
         $customDomain = trim($pd['custom_domain'] ?? "");
         $customDomainText = $customDomain !== "" ? $customDomain : "پیش‌فرض";
+        $planActive = intval($pd['active'] ?? 0) === 1;
+        $planActiveText = $planActive ? "✅ فعال" : "🚫 غیرفعال";
 
         $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 AND `fileid`=?");
         $stmt->bind_param("i", $id);
@@ -9976,6 +9978,7 @@ function getPlanDetailsKeys($planId){
             (($server_info['type'] ?? '') == "sanaei_new" ? [['text'=>(function_exists('v2raystore_planMultiInboundSummary') ? v2raystore_planMultiInboundSummary($pd) : 'تنظیم'), 'callback_data'=>"v2raystoreplanmultiinbounds$id"], ['text'=>"🚪 چند اینباند برای پلن", 'callback_data'=>"v2raystore"]] : []),
             [['text'=>"✏️ ویرایش توضیحات",'callback_data'=>"v2raystoreplaneditdes$id"]],
             [['text'=>number_format($price) . " تومان",'callback_data'=>"v2raystoreplanrial$id"],['text'=>"💰 قیمت پلن",'callback_data'=>"v2raystore"]],
+            [['text'=>$planActiveText,'callback_data'=>"v2raystoreplantoggleactive$id"],['text'=>"🔌 وضعیت فروش پلن",'callback_data'=>"v2raystore"]],
             [['text'=>"♻️ دریافت لیست اکانت ها",'callback_data'=>"v2raystoreplanacclist$id"]],
             ($server_info['type'] == "marzban"?[['text'=>"انتخاب Host",'callback_data'=>"marzbanHostSettings" . $id]]:[]),
             [['text'=>"✂️ حذف",'callback_data'=>"v2raystoreplandelete$id"]],
