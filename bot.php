@@ -17919,16 +17919,24 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     if($newVolumeGb <= 0) return ['ok'=>false, 'message'=>'بعد از تغییر سرور، حجم قابل استفاده‌ای باقی نمی‌ماند.'];
 
     $targetPlan = $cost['target_plan'] ?? null;
-    if(!is_array($targetPlan)) $targetPlan = v2raystore_switchGetPlan($order['fileid'] ?? 0);
-    $targetPlanId = intval($cost['target_plan_id'] ?? ($order['fileid'] ?? 0));
-    if($targetPlanId <= 0) $targetPlanId = intval($order['fileid'] ?? 0);
+    if(!is_array($targetPlan) || intval($targetPlan['server_id'] ?? 0) !== $targetServerId){
+        $currentPlanForSwitch = function_exists('v2raystore_switchGetPlan') ? v2raystore_switchGetPlan($order['fileid'] ?? 0) : null;
+        $targetPlan = function_exists('v2raystore_switchFindEquivalentPlan') ? v2raystore_switchFindEquivalentPlan($currentPlanForSwitch, $targetServerId) : null;
+    }
+    if(!is_array($targetPlan) || intval($targetPlan['server_id'] ?? 0) !== $targetServerId){
+        return ['ok'=>false, 'message'=>'برای سرور مقصد پلن فعال متناظر پیدا نشد. لطفاً برای سرور مقصد یک پلن فعال با اینباند صحیح تعریف کنید.'];
+    }
+    $targetPlanId = intval($targetPlan['id'] ?? 0);
+    if($targetPlanId <= 0){
+        return ['ok'=>false, 'message'=>'شناسه پلن مقصد معتبر نیست. لطفاً تنظیمات پلن سرور مقصد را بررسی کنید.'];
+    }
     $custom = farid_switchPlanCustomFields($targetPlan);
     $newRemark = farid_switchMakeRemark($targetServerId, $ownerId);
     $oldRemark = (string)($order['remark'] ?? '');
     $uuid = trim((string)($order['uuid'] ?? ''));
     $sourceInboundId = intval($order['inbound_id'] ?? 0);
-    $targetInboundId = intval($targetPlan['inbound_id'] ?? 0);
-    if($targetInboundId <= 0 && $sourceInboundId > 0) $targetInboundId = $sourceInboundId;
+    $targetInboundIds = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($targetPlan, true) : [];
+    $targetInboundId = !empty($targetInboundIds) ? intval($targetInboundIds[0]) : intval($targetPlan['inbound_id'] ?? 0);
     $links = [];
     $deleteOldAction = null;
     $newToken = (string)($order['token'] ?? '');
@@ -17991,7 +17999,25 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
             }
 
             $targetInbound = farid_switchFindXuiInboundInfo($targetServerId, $targetInboundId, $uuid) ?: $targetInbound;
-            $links = farid_switchBuildInboundLinks($targetServerId, $uuid, $protocol, $newRemark, $targetInbound, $targetInboundId, $custom);
+            if(function_exists('v2raystore_buildPlanInboundConnectionLinks')){
+                $links = v2raystore_buildPlanInboundConnectionLinks(
+                    $targetServerId,
+                    $uuid,
+                    $protocol,
+                    $newRemark,
+                    intval($targetInbound['port'] ?? 0),
+                    (string)($targetInbound['netType'] ?? ''),
+                    $targetInboundId,
+                    false,
+                    $custom['customPath'] ?? false,
+                    $custom['customPort'] ?? 0,
+                    array_key_exists('customSni', $custom) ? ($custom['customSni'] ?? '') : '',
+                    $custom['customDomain'] ?? null,
+                    $targetPlanId
+                );
+            }else{
+                $links = farid_switchBuildInboundLinks($targetServerId, $uuid, $protocol, $newRemark, $targetInbound, $targetInboundId, $custom);
+            }
             $deleteOldAction = ($sourceInboundId > 0)
                 ? ['type'=>'client', 'inbound_id'=>$sourceInboundId, 'uuid'=>$uuid]
                 : ['type'=>'inbound', 'uuid'=>$uuid];

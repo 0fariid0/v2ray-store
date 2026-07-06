@@ -2348,6 +2348,24 @@ function v2raystore_switchGetPlan($planId){
     return $row ?: null;
 }
 
+function v2raystore_switchRunPlanQuery($sql, $types = '', $params = []){
+    global $connection;
+    $stmt = @$connection->prepare($sql);
+    if(!$stmt) return null;
+    if($types !== '' && !empty($params)){
+        $refs = [$types];
+        foreach($params as $k => $v){
+            $params[$k] = $v;
+            $refs[] = &$params[$k];
+        }
+        @call_user_func_array([$stmt, 'bind_param'], $refs);
+    }
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
 function v2raystore_switchFindEquivalentPlan($currentPlan, $targetServerId){
     global $connection;
     if(!is_array($currentPlan)) return null;
@@ -2359,38 +2377,59 @@ function v2raystore_switchFindEquivalentPlan($currentPlan, $targetServerId){
     $title = trim((string)($currentPlan['title'] ?? ''));
     $type = trim((string)($currentPlan['type'] ?? ''));
     $protocol = trim((string)($currentPlan['protocol'] ?? ''));
+    $sourceHasInbound = intval($currentPlan['inbound_id'] ?? 0) > 0;
+
+    // مقصد باید حتماً پلنی از همان سرور مقصد باشد؛ هیچ‌وقت از fileid / inbound سرور مبدا به عنوان مقصد استفاده نکنیم.
+    $inboundPriority = $sourceHasInbound ? "IF(`inbound_id` > 0, 0, 1)" : "IF(`inbound_id` = 0, 0, 1)";
+    $baseWhere = "`server_id` = ? AND `active` = 1 AND COALESCE(`price`,0) != 0";
 
     // Exact volume/days/title first.
-    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `active` = 1 AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 AND `title` = ? ORDER BY `price` DESC LIMIT 1");
-    if($stmt){
-        $stmt->bind_param('idds', $targetServerId, $volume, $days, $title);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+    if($title !== ''){
+        $row = v2raystore_switchRunPlanQuery(
+            "SELECT * FROM `server_plans` WHERE {$baseWhere} AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 AND `title` = ? ORDER BY {$inboundPriority}, `price` DESC LIMIT 1",
+            'idds', [$targetServerId, $volume, $days, $title]
+        );
         if($row) return $row;
     }
 
     // Same volume/days/protocol/type.
-    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `active` = 1 AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 AND `protocol` = ? AND `type` = ? ORDER BY `price` DESC LIMIT 1");
-    if($stmt){
-        $stmt->bind_param('iddss', $targetServerId, $volume, $days, $protocol, $type);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+    if($protocol !== '' || $type !== ''){
+        $row = v2raystore_switchRunPlanQuery(
+            "SELECT * FROM `server_plans` WHERE {$baseWhere} AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 AND `protocol` = ? AND `type` = ? ORDER BY {$inboundPriority}, `price` DESC LIMIT 1",
+            'iddss', [$targetServerId, $volume, $days, $protocol, $type]
+        );
         if($row) return $row;
     }
 
     // Same volume/days fallback.
-    $stmt = @$connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `active` = 1 AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 ORDER BY `price` DESC LIMIT 1");
-    if($stmt){
-        $stmt->bind_param('idd', $targetServerId, $volume, $days);
-        $stmt->execute();
-        $row = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+    $row = v2raystore_switchRunPlanQuery(
+        "SELECT * FROM `server_plans` WHERE {$baseWhere} AND ABS(`volume` - ?) < 0.001 AND ABS(`days` - ?) < 0.001 ORDER BY {$inboundPriority}, `price` DESC LIMIT 1",
+        'idd', [$targetServerId, $volume, $days]
+    );
+    if($row) return $row;
+
+    // If there is no exact equivalent, still pick a real active paid plan from the destination server,
+    // so the switch uses the destination server's configured inbound instead of only changing the remark.
+    if($protocol !== '' || $type !== ''){
+        $row = v2raystore_switchRunPlanQuery(
+            "SELECT * FROM `server_plans` WHERE {$baseWhere} AND `protocol` = ? AND `type` = ? ORDER BY {$inboundPriority}, ABS(`volume` - ?), ABS(`days` - ?), `price` DESC LIMIT 1",
+            'issdd', [$targetServerId, $protocol, $type, max(0,$volume), max(0,$days)]
+        );
         if($row) return $row;
     }
 
-    return null;
+    if($protocol !== ''){
+        $row = v2raystore_switchRunPlanQuery(
+            "SELECT * FROM `server_plans` WHERE {$baseWhere} AND `protocol` = ? ORDER BY {$inboundPriority}, ABS(`volume` - ?), ABS(`days` - ?), `price` DESC LIMIT 1",
+            'isdd', [$targetServerId, $protocol, max(0,$volume), max(0,$days)]
+        );
+        if($row) return $row;
+    }
+
+    return v2raystore_switchRunPlanQuery(
+        "SELECT * FROM `server_plans` WHERE {$baseWhere} ORDER BY {$inboundPriority}, ABS(`volume` - ?), ABS(`days` - ?), `price` DESC LIMIT 1",
+        'idd', [$targetServerId, max(0,$volume), max(0,$days)]
+    );
 }
 
 function v2raystore_getSwitchPairCostGb($fromServerId, $toServerId){
@@ -2529,6 +2568,9 @@ function v2raystore_calcSwitchDeductionGb($order, $targetServerId, $remainingGb 
 
     $currentPlan = v2raystore_switchGetPlan($order['fileid'] ?? 0);
     $targetPlan = v2raystore_switchFindEquivalentPlan($currentPlan, $targetServerId);
+    if(is_array($targetPlan) && intval($targetPlan['server_id'] ?? 0) !== $targetServerId){
+        $targetPlan = null;
+    }
 
     $sourcePrice = is_array($currentPlan) ? floatval($currentPlan['price'] ?? 0) : floatval($order['amount'] ?? 0);
     $targetPrice = is_array($targetPlan) ? floatval($targetPlan['price'] ?? 0) : $sourcePrice;
@@ -2616,7 +2658,7 @@ function v2raystore_calcSwitchDeductionGb($order, $targetServerId, $remainingGb 
         'target_price' => intval($targetPrice),
         'price_diff' => intval(abs($targetPrice - $sourcePrice)),
         'current_plan_id' => is_array($currentPlan) ? intval($currentPlan['id']) : 0,
-        'target_plan_id' => is_array($targetPlan) ? intval($targetPlan['id']) : intval($order['fileid'] ?? 0),
+        'target_plan_id' => is_array($targetPlan) ? intval($targetPlan['id']) : 0,
         'target_plan' => is_array($targetPlan) ? $targetPlan : null,
         'settings' => $settings,
     ];
