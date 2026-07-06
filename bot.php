@@ -2022,6 +2022,46 @@ if(preg_match('/^toggleAgentLink_(config|sub)_(\d+)$/',$data,$match) && ($from_i
     exit();
 }
 
+
+if(preg_match('/^agentServerDelivery_(\\d+)_(\\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $offset = intval($match[2]);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agentExists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$agentExists){
+        alert('نماینده پیدا نشد.', true);
+        exit();
+    }
+    editText(
+        $message_id,
+        function_exists('v2raystore_getAgentServerDeliveryText') ? v2raystore_getAgentServerDeliveryText($agentId) : 'تنظیمات نحوه ارسال نماینده',
+        function_exists('v2raystore_getAgentServerDeliveryKeys') ? v2raystore_getAgentServerDeliveryKeys($agentId, $offset) : getAgentDiscounts($agentId),
+        'HTML'
+    );
+    exit();
+}
+if(preg_match('/^toggleAgentServerDelivery_(\\d+)_(\\d+)_(\\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $offset = intval($match[3]);
+    $next = function_exists('v2raystore_toggleAgentServerDeliveryMode') ? v2raystore_toggleAgentServerDeliveryMode($agentId, $serverId) : false;
+    if($next === false){
+        alert('تغییر نحوه ارسال انجام نشد.', true);
+        exit();
+    }
+    editText(
+        $message_id,
+        function_exists('v2raystore_getAgentServerDeliveryText') ? v2raystore_getAgentServerDeliveryText($agentId) : 'تنظیمات نحوه ارسال نماینده',
+        function_exists('v2raystore_getAgentServerDeliveryKeys') ? v2raystore_getAgentServerDeliveryKeys($agentId, $offset) : getAgentDiscounts($agentId),
+        'HTML'
+    );
+    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next, 'پیش‌فرض سرور ⚙️') : $next;
+    alert('نحوه ارسال این سرور برای نماینده: ' . $label);
+    exit();
+}
 if(preg_match('/^toggleAgentBuying_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $agentId = intval($match[1]);
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
@@ -3008,7 +3048,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         else{
             $token = RandomString(30);
             $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
-            $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+            $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
             $vray_link = json_encode($vraylink);
         }
         $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
@@ -3016,13 +3056,13 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
             $acc_text = "
     
-        🔮 $remark \n " . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"<code>$link</code>":"");
+        🔮 $remark \n " . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"<code>$link</code>":"");
             if($subLink != "") $acc_text .= 
             " \n🌐 subscription : <code>$subLink</code>";
         
@@ -3446,7 +3486,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $vray_link = json_encode($response->vray_links);
         }else{
             $token = RandomString(30);
-            $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+            $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
     
             $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
             $vray_link = json_encode($vraylink);
@@ -3456,7 +3496,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -3467,7 +3507,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 
 if($subLink != "") $acc_text .= "
@@ -6053,7 +6093,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     }
     else{
         $token = RandomString(30);
-        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
     
         $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link = json_encode($vraylink);
@@ -6066,7 +6106,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -6076,7 +6116,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($subLink != "") $acc_text .= "
 
@@ -6486,7 +6526,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     }
     else{
         $token = RandomString(30);
-        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
     
         $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link= json_encode($vraylink);
@@ -6499,7 +6539,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     $__v2raystoreServerType = isset($serverType) ? $serverType : '';
     $__v2raystoreRemark = isset($remark) ? $remark : '';
     $__v2raystoreLoopLinks = $vraylink;
-    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
         $__v2raystoreLoopLinks = [];
     }
 
@@ -6510,7 +6550,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$vray_link</code>":"");
 if($subLink != "") $acc_text .= "
 
@@ -6845,7 +6885,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 $token = RandomString(30);
                 $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
                 $vray_link= json_encode($vraylink);
-                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
             }
 
             $__v2raystoreTargetUid = isset($uid) ? $uid : (isset($from_id) ? $from_id : 0);
@@ -6853,7 +6893,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -6863,7 +6903,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز⁮⁮ ⁮⁮
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($subLink != "") $acc_text .= "
 
@@ -7395,7 +7435,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
             }
             else{
                 $token = RandomString(30);
-                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+                $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
         
                 $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $fid) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
                 $vray_link = json_encode($vraylink);
@@ -7405,7 +7445,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -7415,7 +7455,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
 if($subLink != "") $acc_text .= "
 
@@ -8968,7 +9008,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $vray_link = json_encode($response->vray_links);
     }else{
         $token = RandomString(30);
-        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
+        $subLink = (function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['subLinkState'] ?? 'off') == 'on')) ? v2raystore_makeCustomerSubLink($server_id, $token, $uniqid, $inbound_id, $remark) : "";
         $vraylink = (function_exists('v2raystore_buildPlanInboundConnectionLinks') ? v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain, $id) : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain));
         $vray_link = json_encode($vraylink);
     }
@@ -8985,7 +9025,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 ℹ️ این اکانت تست است و {$volume} گیگ حجم دارد." : '';
         $__v2raystoreLoopLinks = $vraylink;
         $__v2raystoreTestSendOk = false;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, $__v2raystoreTestHeading, $__v2raystoreTestExtra, (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, $__v2raystoreTestHeading, $__v2raystoreTestExtra, (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreTestSendOk = true;
             $__v2raystoreLoopLinks = [];
         }
@@ -8996,7 +9036,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 🔋 حجم اکانت تست: $volume گیگ
 ⏰ مدت اعتبار تست: $days روز
 ℹ️ این اکانت تست است و $volume گیگ حجم دارد.
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
         }else{
             $acc_text = "
@@ -9005,7 +9045,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز
-" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
+" . ((function_exists('v2raystore_runtimeWantsConfig') ? v2raystore_runtimeWantsConfig((isset($uid)?$uid:(isset($from_id)?$from_id:0)), (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : (($botState['configLinkState'] ?? 'on') != 'off')) && $serverType != "marzban"?"
 💝 config : <code>$link</code>":"");
         }
 if($subLink != "") $acc_text .= "
@@ -9669,7 +9709,7 @@ if(preg_match('/sConfigUpdate(\d+)/', $data,$match)){
     $__v2raystoreServerType = isset($serverType) ? $serverType : '';
     $__v2raystoreRemark = isset($remark) ? $remark : '';
     $__v2raystoreLoopLinks = $vraylink;
-    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null)) : null))){
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
         $__v2raystoreLoopLinks = [];
     }
     foreach($__v2raystoreLoopLinks as $vray_link){
@@ -13512,6 +13552,24 @@ if(preg_match('/^toggleServerUserSales(\d+)_(\d+)$/',$data,$match) && ($from_id 
     alert('وضعیت فروش این سرور برای کاربران بروزرسانی شد.');
     exit();
 }
+if(preg_match('/^toggleServerDeliveryMode(\d+)_(\d+)$/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    if(intval($from_id) !== intval($admin) && empty($permissions['servers'])){
+        alert('برای تغییر تنظیمات سرور دسترسی ندارید.', true);
+        exit();
+    }
+    $serverId = intval($match[1]);
+    $offset = intval($match[2]);
+    $next = function_exists('v2raystore_toggleServerDeliveryMode') ? v2raystore_toggleServerDeliveryMode($serverId) : false;
+    if($next === false){
+        alert('تغییر نحوه ارسال انجام نشد.', true);
+        exit();
+    }
+    $keys = getServerConfigKeys($serverId, $offset);
+    editText($message_id, '☑️ مدیریت سرور ها:', $keys);
+    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next) : $next;
+    alert('نحوه ارسال این سرور: ' . $label);
+    exit();
+}
 if(preg_match('/^showServerSettings(\d+)_(\d+)/',$data,$match) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $keys = getServerConfigKeys($match[1], $match[2]);
     editText($message_id,"☑️ مدیریت سرور ها: $cname",$keys);
@@ -15759,19 +15817,33 @@ function farid_registerManualConfigForUser($targetUserId, $input){
         $stmt->close();
     }
 
+    $linkOptions = function_exists('v2raystore_getRuntimeDeliveryLinkOptions')
+        ? v2raystore_getRuntimeDeliveryLinkOptions($targetUserId, null, null, null, $serverId)
+        : ['config'=>(($botState['configLinkState'] ?? '') != 'off'), 'sub'=>(($botState['subLinkState'] ?? 'off') == 'on')];
+    if(function_exists('v2raystore_normalizeDeliveryLinkOptions')) $linkOptions = v2raystore_normalizeDeliveryLinkOptions($linkOptions);
+
     $subLink = '';
-    if(($botState['subLinkState'] ?? 'off') == 'on'){
+    if(!empty($linkOptions['sub'])){
         $subLink = v2raystore_makeCustomerSubLink($serverId, $token, $uuid, $inboundId, $remark);
     }
 
-    if(($botState['configLinkState'] ?? '') != 'off' && count($links) > 1){
+    if(!empty($linkOptions['config']) && count($links) > 1){
         $msg = v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink, '✅ کانفیگ به حساب شما اضافه شد');
     }else{
         $safeLinks = array_map(function($l){ return htmlspecialchars($l, ENT_QUOTES, 'UTF-8'); }, $links);
-        $msg = "✅ کانفیگ به حساب شما اضافه شد.\n\n" .
-               "🔮 نام سرویس: <b>" . htmlspecialchars($remark, ENT_QUOTES, 'UTF-8') . "</b>\n" .
-               ((($botState['configLinkState'] ?? '') != 'off') ? ("\n💝 config:\n<code>" . implode("</code>\n<code>", $safeLinks) . "</code>\n") : "") .
-               ($subLink !== '' ? "\n🌐 subscription:\n<code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>" : "");
+        $msg = "✅ کانفیگ به حساب شما اضافه شد.
+
+" .
+               "🔮 نام سرویس: <b>" . htmlspecialchars($remark, ENT_QUOTES, 'UTF-8') . "</b>
+" .
+               ((!empty($linkOptions['config'])) ? ("
+💝 config:
+<code>" . implode("</code>
+<code>", $safeLinks) . "</code>
+") : "") .
+               ($subLink !== '' ? "
+🌐 subscription:
+<code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>" : "");
     }
     if($msg !== '') sendMessage($msg, null, 'HTML', $targetUserId);
 

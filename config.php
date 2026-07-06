@@ -640,6 +640,240 @@ function v2raystore_ensureServerSalesAccessSchema(){
 }
 v2raystore_ensureServerSalesAccessSchema();
 
+
+function v2raystore_ensureServerDeliveryModeSchema(){
+    global $connection;
+    if(!isset($connection) || !$connection) return;
+    $exists = @($connection->query("SHOW COLUMNS FROM `server_info` LIKE 'delivery_mode'"));
+    if($exists && $exists->num_rows == 0){
+        @($connection->query("ALTER TABLE `server_info` ADD `delivery_mode` varchar(20) NOT NULL DEFAULT 'default' AFTER `sale_closed`"));
+    }
+    if(function_exists('v2raystore_markSchemaPatchDone')) v2raystore_markSchemaPatchDone('SERVER_DELIVERY_MODE_V1');
+}
+v2raystore_ensureServerDeliveryModeSchema();
+
+function v2raystore_deliveryModeNormalize($mode){
+    if(is_bool($mode)) return $mode ? 'both' : 'default';
+    $mode = strtolower(trim((string)$mode));
+    $map = [
+        'default'=>'default', 'global'=>'default', 'inherit'=>'default', ''=>'default',
+        'both'=>'both', 'all'=>'both', 'config_sub'=>'both', 'link_sub'=>'both', 'link+sub'=>'both', 'sub_config'=>'both',
+        'config'=>'config', 'link'=>'config', 'links'=>'config', 'normal'=>'config', 'direct'=>'config',
+        'sub'=>'sub', 'subscription'=>'sub', 'subscribe'=>'sub', 'sub_link'=>'sub'
+    ];
+    return $map[$mode] ?? 'default';
+}
+
+function v2raystore_deliveryModeNext($mode){
+    $mode = v2raystore_deliveryModeNormalize($mode);
+    if($mode === 'default') return 'both';
+    if($mode === 'both') return 'config';
+    if($mode === 'config') return 'sub';
+    return 'default';
+}
+
+function v2raystore_deliveryModeLabel($mode, $defaultLabel = 'پیش‌فرض عمومی ⚙️'){
+    $mode = v2raystore_deliveryModeNormalize($mode);
+    if($mode === 'both') return 'ساب + لینک ✅';
+    if($mode === 'config') return 'فقط لینک 🔗';
+    if($mode === 'sub') return 'فقط ساب 🌐';
+    return $defaultLabel;
+}
+
+function v2raystore_deliveryModeToOptions($mode, $fallbackOptions = null){
+    $mode = v2raystore_deliveryModeNormalize($mode);
+    $fallback = v2raystore_normalizeDeliveryLinkOptions(is_array($fallbackOptions) ? $fallbackOptions : null);
+    if($mode === 'both') return ['config'=>true, 'sub'=>true];
+    if($mode === 'config') return ['config'=>true, 'sub'=>false];
+    if($mode === 'sub') return ['config'=>false, 'sub'=>true];
+    return $fallback;
+}
+
+function v2raystore_getServerDeliveryMode($serverId){
+    global $connection;
+    $serverId = intval($serverId);
+    if($serverId <= 0 || !isset($connection) || !$connection) return 'default';
+    static $cache = [];
+    if(array_key_exists($serverId, $cache)) return $cache[$serverId];
+    $stmt = @$connection->prepare("SELECT COALESCE(`delivery_mode`, 'default') AS `delivery_mode` FROM `server_info` WHERE `id`=? LIMIT 1");
+    if(!$stmt){ $cache[$serverId] = 'default'; return 'default'; }
+    $stmt->bind_param('i', $serverId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $cache[$serverId] = v2raystore_deliveryModeNormalize($row['delivery_mode'] ?? 'default');
+}
+
+function v2raystore_setServerDeliveryMode($serverId, $mode){
+    global $connection;
+    $serverId = intval($serverId);
+    $mode = v2raystore_deliveryModeNormalize($mode);
+    if($serverId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("UPDATE `server_info` SET `delivery_mode`=? WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $mode, $serverId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_toggleServerDeliveryMode($serverId){
+    $current = v2raystore_getServerDeliveryMode($serverId);
+    $next = v2raystore_deliveryModeNext($current);
+    return v2raystore_setServerDeliveryMode($serverId, $next) ? $next : false;
+}
+
+function v2raystore_agentServerDeliveryModesNormalize($raw){
+    if(!is_array($raw)) $raw = [];
+    $out = [];
+    foreach($raw as $serverId=>$mode){
+        $serverId = (string)intval($serverId);
+        if($serverId === '0') continue;
+        $mode = v2raystore_deliveryModeNormalize($mode);
+        if($mode !== 'default') $out[$serverId] = $mode;
+    }
+    return $out;
+}
+
+function v2raystore_agentServerDeliveryMode($agentUserOrId, $serverId){
+    $serverId = intval($serverId);
+    if($serverId <= 0) return 'default';
+    $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
+    if(!v2raystore_isAgentUser($agent)) return 'default';
+    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
+    $serverLinks = v2raystore_agentServerDeliveryModesNormalize($discounts['server_links'] ?? []);
+    return $serverLinks[(string)$serverId] ?? 'default';
+}
+
+function v2raystore_setAgentServerDeliveryMode($agentId, $serverId, $mode){
+    global $connection;
+    $agentId = intval($agentId);
+    $serverId = intval($serverId);
+    $mode = v2raystore_deliveryModeNormalize($mode);
+    if($agentId <= 0 || $serverId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("SELECT `discount_percent` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return false;
+    $discounts = v2raystore_agentPricingDecode($row['discount_percent'] ?? null);
+    $serverLinks = v2raystore_agentServerDeliveryModesNormalize($discounts['server_links'] ?? []);
+    if($mode === 'default') unset($serverLinks[(string)$serverId]);
+    else $serverLinks[(string)$serverId] = $mode;
+    $discounts['server_links'] = $serverLinks;
+    $encoded = json_encode($discounts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = @$connection->prepare("UPDATE `users` SET `discount_percent`=? WHERE `userid`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $encoded, $agentId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_toggleAgentServerDeliveryMode($agentId, $serverId){
+    $current = v2raystore_agentServerDeliveryMode($agentId, $serverId);
+    $next = v2raystore_deliveryModeNext($current);
+    return v2raystore_setAgentServerDeliveryMode($agentId, $serverId, $next) ? $next : false;
+}
+
+function v2raystore_extractRuntimeServerId($payInfo = null, $order = null, $explicitServerId = 0){
+    global $connection;
+    $explicitServerId = intval($explicitServerId);
+    if($explicitServerId > 0) return $explicitServerId;
+    if(is_array($order)){
+        foreach(['server_id','serverId','server'] as $k){
+            if(isset($order[$k]) && intval($order[$k]) > 0) return intval($order[$k]);
+        }
+    }
+    if(is_array($payInfo)){
+        foreach(['server_id','serverId','server'] as $k){
+            if(isset($payInfo[$k]) && intval($payInfo[$k]) > 0) return intval($payInfo[$k]);
+        }
+        $type = strtoupper(trim((string)($payInfo['type'] ?? '')));
+        $planId = intval($payInfo['plan_id'] ?? 0);
+        if($planId > 0 && isset($connection) && $connection){
+            if(in_array($type, ['RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_TIME','INCREASE_VOLUME'], true)){
+                $stmt = @$connection->prepare("SELECT `server_id` FROM `orders_list` WHERE `id`=? LIMIT 1");
+                if($stmt){
+                    $stmt->bind_param('i', $planId);
+                    $stmt->execute();
+                    $row = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    if($row && intval($row['server_id'] ?? 0) > 0) return intval($row['server_id']);
+                }
+            }
+            $stmt = @$connection->prepare("SELECT `server_id` FROM `server_plans` WHERE `id`=? LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('i', $planId);
+                $stmt->execute();
+                $row = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                if($row && intval($row['server_id'] ?? 0) > 0) return intval($row['server_id']);
+            }
+        }
+    }
+    return 0;
+}
+
+function v2raystore_getServerDeliveryOptions($serverId, $fallbackOptions = null){
+    $fallback = v2raystore_normalizeDeliveryLinkOptions(is_array($fallbackOptions) ? $fallbackOptions : null);
+    $serverId = intval($serverId);
+    if($serverId <= 0) return $fallback;
+    return v2raystore_deliveryModeToOptions(v2raystore_getServerDeliveryMode($serverId), $fallback);
+}
+
+function v2raystore_getAgentServerDeliveryText($agentId){
+    global $connection;
+    $agentId = intval($agentId);
+    $agent = v2raystore_getUserRowById($agentId);
+    $name = is_array($agent) ? trim((string)($agent['name'] ?? '')) : '';
+    if($name === '') $name = (string)$agentId;
+    return "🔗 <b>نحوه ارسال لینک برای نماینده</b>\n\n" .
+           "نماینده: <b>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</b>\n" .
+           "برای هر سرور می‌توانی جدا تنظیم کنی که کانفیگ با لینک عادی، لینک ساب یا هر دو ارسال شود.\n" .
+           "حالت پیش‌فرض یعنی تنظیم خود سرور/تنظیم عمومی ربات اعمال می‌شود.";
+}
+
+function v2raystore_getAgentServerDeliveryKeys($agentId, $offset = 0){
+    global $connection, $buttonValues;
+    $agentId = intval($agentId);
+    $offset = max(0, intval($offset));
+    $limit = 12;
+    $keys = [];
+    $stmt = @$connection->prepare("SELECT `id`, `title`, `flag`, COALESCE(`delivery_mode`, 'default') AS `delivery_mode` FROM `server_info` WHERE `active`=1 ORDER BY `id` DESC LIMIT ? OFFSET ?");
+    if($stmt){
+        $stmt->bind_param('ii', $limit, $offset);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while($srv = $res->fetch_assoc()){
+            $sid = intval($srv['id'] ?? 0);
+            $title = trim(((string)($srv['flag'] ?? '')) . ' ' . ((string)($srv['title'] ?? '')));
+            if($title === '') $title = 'سرور ' . $sid;
+            if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 28) $title = mb_substr($title, 0, 25, 'UTF-8') . '...';
+            elseif(strlen($title) > 28) $title = substr($title, 0, 25) . '...';
+            $agentMode = v2raystore_agentServerDeliveryMode($agentId, $sid);
+            $serverMode = v2raystore_deliveryModeNormalize($srv['delivery_mode'] ?? 'default');
+            $defaultLabel = 'پیش‌فرض سرور: ' . v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️');
+            $label = v2raystore_deliveryModeLabel($agentMode, $defaultLabel);
+            $keys[] = [
+                ['text'=>$label, 'callback_data'=>'toggleAgentServerDelivery_' . $agentId . '_' . $sid . '_' . $offset],
+                ['text'=>$title, 'callback_data'=>'v2raystore']
+            ];
+        }
+        $count = $res ? $res->num_rows : 0;
+        $stmt->close();
+        $pager = [];
+        if($offset > 0) $pager[] = ['text'=>'« صفحه قبلی', 'callback_data'=>'agentServerDelivery_' . $agentId . '_' . max(0, $offset - $limit)];
+        if(isset($count) && $count >= $limit) $pager[] = ['text'=>'صفحه بعدی »', 'callback_data'=>'agentServerDelivery_' . $agentId . '_' . ($offset + $limit)];
+        if($pager) $keys[] = $pager;
+    }
+    if(!$keys) $keys[] = [['text'=>'سروری پیدا نشد', 'callback_data'=>'v2raystore']];
+    $keys[] = [['text'=>$buttonValues['back_button'] ?? 'بازگشت', 'callback_data'=>'agentPercentDetails' . $agentId]];
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
 function v2raystore_isServerSaleClosed($serverId){
     global $connection;
     $serverId = intval($serverId);
@@ -2610,6 +2844,7 @@ function v2raystore_agentPricingDecode($raw){
     if(!isset($data['plans']) || !is_array($data['plans'])) $data['plans'] = [];
     if(!isset($data['servers']) || !is_array($data['servers'])) $data['servers'] = [];
     if(!isset($data['links']) || !is_array($data['links'])) $data['links'] = [];
+    if(!isset($data['server_links']) || !is_array($data['server_links'])) $data['server_links'] = [];
 
     $normalizeLinkState = function($value){
         if(is_bool($value)) return $value ? 'on' : 'off';
@@ -2624,6 +2859,14 @@ function v2raystore_agentPricingDecode($raw){
         'config' => $normalizeLinkState($data['links']['config'] ?? 'default'),
         'sub' => $normalizeLinkState($data['links']['sub'] ?? 'default'),
     ];
+    $normalizedServerLinks = [];
+    foreach(($data['server_links'] ?? []) as $serverId=>$mode){
+        $serverId = (string)intval($serverId);
+        if($serverId === '0') continue;
+        $mode = function_exists('v2raystore_deliveryModeNormalize') ? v2raystore_deliveryModeNormalize($mode) : strtolower(trim((string)$mode));
+        if($mode !== 'default' && in_array($mode, ['both','config','sub'], true)) $normalizedServerLinks[$serverId] = $mode;
+    }
+    $data['server_links'] = $normalizedServerLinks;
     if(!isset($data['limits']) || !is_array($data['limits'])) $data['limits'] = [];
     $buyState = strtolower(trim((string)($data['limits']['buying'] ?? 'on')));
     $data['limits']['buying'] = in_array($buyState, ['off','disable','disabled','0','false'], true) ? 'off' : 'on';
@@ -2966,45 +3209,57 @@ function v2raystore_normalizeDeliveryLinkOptions($options = null){
     return ['config'=>$config, 'sub'=>$sub];
 }
 
-function v2raystore_getAgentDeliveryLinkOptions($agentUserOrId = null, $agentBought = false){
-    global $botState;
+function v2raystore_getAgentDeliveryLinkOptions($agentUserOrId = null, $agentBought = false, $serverId = 0){
     $global = v2raystore_normalizeDeliveryLinkOptions(null);
+    $serverId = intval($serverId);
+    $base = function_exists('v2raystore_getServerDeliveryOptions') ? v2raystore_getServerDeliveryOptions($serverId, $global) : $global;
 
     // تنظیم لینک نماینده باید بر اساس خود کاربر نماینده اعمال شود، نه فقط فلگ agent_bought.
-    // بعضی سفارش‌های قدیمی یا خریدهای تکی نماینده‌ها agent_bought=0 دارند؛ قبلاً در این حالت
-    // تنظیم «لینک ساب روشن» نادیده گرفته می‌شد و در جستجو/نمایش کانفیگ لینک ساب نمی‌آمد.
+    // اول تنظیم عمومی/سرور اعمال می‌شود، بعد تنظیم عمومی نماینده و در آخر تنظیم اختصاصی نماینده برای همان سرور.
     $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
-    if(!v2raystore_isAgentUser($agent)) return $global;
+    if(!v2raystore_isAgentUser($agent)) return $base;
 
     $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
     $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
-    $config = ($links['config'] === 'default') ? $global['config'] : ($links['config'] === 'on');
-    $sub = ($links['sub'] === 'default') ? $global['sub'] : ($links['sub'] === 'on');
-    if(!$config && !$sub) $config = true;
-    return ['config'=>$config, 'sub'=>$sub];
+    $config = ($links['config'] === 'default') ? $base['config'] : ($links['config'] === 'on');
+    $sub = ($links['sub'] === 'default') ? $base['sub'] : ($links['sub'] === 'on');
+    $resolved = ['config'=>$config, 'sub'=>$sub];
+
+    if($serverId > 0){
+        $serverLinks = function_exists('v2raystore_agentServerDeliveryModesNormalize') ? v2raystore_agentServerDeliveryModesNormalize($discounts['server_links'] ?? []) : [];
+        $agentServerMode = $serverLinks[(string)$serverId] ?? 'default';
+        if(function_exists('v2raystore_deliveryModeToOptions')){
+            $resolved = v2raystore_deliveryModeToOptions($agentServerMode, $resolved);
+        }
+    }
+
+    if(!$resolved['config'] && !$resolved['sub']) $resolved['config'] = true;
+    return $resolved;
 }
 
 function v2raystore_getAgentDeliveryLinkOptionsForOrder($order){
     if(!is_array($order)) return v2raystore_normalizeDeliveryLinkOptions(null);
-    return v2raystore_getAgentDeliveryLinkOptions(intval($order['userid'] ?? 0), !empty($order['agent_bought']));
+    $serverId = intval($order['server_id'] ?? 0);
+    return v2raystore_getAgentDeliveryLinkOptions(intval($order['userid'] ?? 0), !empty($order['agent_bought']), $serverId);
 }
 
-function v2raystore_getRuntimeDeliveryLinkOptions($uid = 0, $agentBought = null, $payInfo = null, $order = null){
+function v2raystore_getRuntimeDeliveryLinkOptions($uid = 0, $agentBought = null, $payInfo = null, $order = null, $serverId = 0){
+    $serverId = function_exists('v2raystore_extractRuntimeServerId') ? v2raystore_extractRuntimeServerId($payInfo, $order, $serverId) : intval($serverId);
     if(is_array($order)) return v2raystore_getAgentDeliveryLinkOptionsForOrder($order);
     if($agentBought === null){
         $agentBought = false;
         if(is_array($payInfo) && !empty($payInfo['agent_bought'])) $agentBought = true;
     }
-    return v2raystore_getAgentDeliveryLinkOptions(intval($uid), !empty($agentBought));
+    return v2raystore_getAgentDeliveryLinkOptions(intval($uid), !empty($agentBought), $serverId);
 }
 
-function v2raystore_runtimeWantsSub($uid = 0, $agentBought = null, $payInfo = null, $order = null){
-    $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order);
+function v2raystore_runtimeWantsSub($uid = 0, $agentBought = null, $payInfo = null, $order = null, $serverId = 0){
+    $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order, $serverId);
     return !empty($opts['sub']);
 }
 
-function v2raystore_runtimeWantsConfig($uid = 0, $agentBought = null, $payInfo = null, $order = null){
-    $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order);
+function v2raystore_runtimeWantsConfig($uid = 0, $agentBought = null, $payInfo = null, $order = null, $serverId = 0){
+    $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order, $serverId);
     return !empty($opts['config']);
 }
 
@@ -7629,7 +7884,7 @@ function v2raystore_extractSubIdFromResponseValue($value){
 
 function v2raystore_subLinkFromResponseForMessage($server_id, $response, $userId = 0, $agentBought = null, $payInfo = null, $uuid = '', $inbound_id = 0, $remark = ''){
     global $botState;
-    $want = function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub($userId, $agentBought, $payInfo) : (($botState['subLinkState'] ?? 'off') == 'on');
+    $want = function_exists('v2raystore_runtimeWantsSub') ? v2raystore_runtimeWantsSub($userId, $agentBought, $payInfo, null, $server_id) : (($botState['subLinkState'] ?? 'off') == 'on');
     if(!$want) return '';
     $server_id = intval($server_id);
     if($server_id <= 0 || !$response) return '';
@@ -8863,6 +9118,9 @@ function getAgentDiscounts($agentId){
         ['text'=>'لینک عادی: ' . v2raystore_agentLinkStateLabel($links['config']), 'callback_data'=>'toggleAgentLink_config_' . $agentId],
         ['text'=>'لینک ساب: ' . v2raystore_agentLinkStateLabel($links['sub']), 'callback_data'=>'toggleAgentLink_sub_' . $agentId]
     ];
+    $keys[] = [
+        ['text'=>'🔗 نحوه ارسال هر سرور', 'callback_data'=>'agentServerDelivery_' . $agentId . '_0']
+    ];
     $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
     $keys[] = [
         ['text'=>'خرید نماینده: ' . ($limits['buying'] === 'on' ? 'فعال ✅' : 'بسته 🚫'), 'callback_data'=>'toggleAgentBuying_' . $agentId]
@@ -8978,6 +9236,8 @@ function getServerConfigKeys($serverId,$offset = 0){
     $ucount = $cty['ucount'];
     $saleClosed = intval($cty['sale_closed'] ?? 0) === 1;
     $serverSaleState = $saleClosed ? 'بسته برای کاربران 🚫' : 'باز برای کاربران ✅';
+    $deliveryMode = function_exists('v2raystore_deliveryModeNormalize') ? v2raystore_deliveryModeNormalize($cty['delivery_mode'] ?? 'default') : 'default';
+    $deliveryLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($deliveryMode) : $deliveryMode;
     $stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id`=?");
     $stmt->bind_param("i", $id);
     $stmt->execute();
@@ -9044,6 +9304,10 @@ function getServerConfigKeys($serverId,$offset = 0){
         [
             ['text'=>$serverSaleState,'callback_data'=>"toggleServerUserSales{$id}_{$offset}"],
             ['text'=>"🛒 فروش سرور",'callback_data'=>"v2raystore"]
+            ],
+        [
+            ['text'=>$deliveryLabel,'callback_data'=>"toggleServerDeliveryMode{$id}_{$offset}"],
+            ['text'=>"🔗 نحوه ارسال",'callback_data'=>"v2raystore"]
             ]
             ],
             ($serverConfig['type'] != "marzban"?[
@@ -18920,7 +19184,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     $expire_microdate = floor(microtime(true) * 1000) + (864000 * $days * 100);
     $expire_date = $now + (86400 * $days);
     $agentBought = intval($payInfo['agent_bought'] ?? 0);
-    $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptions') ? v2raystore_getAgentDeliveryLinkOptions($uid, $agentBought) : v2raystore_normalizeDeliveryLinkOptions(null);
+    $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptions') ? v2raystore_getAgentDeliveryLinkOptions($uid, $agentBought, $server_id) : v2raystore_normalizeDeliveryLinkOptions(null);
     $deliveryFailed = false;
     $deliveryFailedRemarks = [];
 
