@@ -55,6 +55,49 @@ if(isset($data) && (in_array($data, ['v2raystore', 'noop'], true) || preg_match(
 // پنل «ارسال و دسترسی هر سرور» نماینده مثل بقیه منوهای ساده،
 // در بخش مدیریت نماینده هندل می‌شود. کدهای زودهنگام قبلی حذف شدند تا دکمه فقط رنگ عوض نکند.
 
+
+// منوی جدید و ساده تنظیم نحوه ارسال هر سرور برای نماینده.
+// این بخش مستقل از هندلر قدیمی نوشته شده تا دکمه بدون گیر کردن یا تداخل باز شود.
+if(preg_match('/^agSendMode(\d+)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $agentId = intval($match[1]);
+    $offset = max(0, intval($match[2]));
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt){ alert('خطا در خواندن نماینده.', true); exit(); }
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $exists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$exists){ alert('نماینده پیدا نشد.', true); exit(); }
+    $txt = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیم ارسال سرورها';
+    $keys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $res = editText($message_id, $txt, $keys, 'HTML');
+    if(!is_object($res) || empty($res->ok)){
+        sendMessage($txt, $keys, 'HTML');
+    }
+    exit();
+}
+
+if(preg_match('/^agSendSet(\d+)_(\d+)_(default|both|config|sub)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $mode = $match[3];
+    $offset = max(0, intval($match[4]));
+    $ok = function_exists('v2raystore_setAgentServerDeliveryMode') ? v2raystore_setAgentServerDeliveryMode($agentId, $serverId, $mode) : false;
+    if(!$ok){
+        alert('ذخیره تنظیم ارسال انجام نشد.', true);
+        exit();
+    }
+    $txt = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیم ارسال سرورها';
+    $keys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $res = editText($message_id, $txt, $keys, 'HTML');
+    if(!is_object($res) || empty($res->ok)){
+        sendMessage($txt, $keys, 'HTML');
+    }
+    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($mode, 'پیش‌فرض سرور ⚙️') : $mode;
+    alert('نحوه ارسال ذخیره شد: ' . $label);
+    exit();
+}
+
 if(preg_match('/^appTutorial_(v2rayng|v2rayn|streisand)$/', $data ?? '', $match)){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
         alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
@@ -2038,8 +2081,8 @@ if(preg_match('/^(?:agentServerDelivery|agSrvPanel)_(\d+)_(\d+)$/', $data ?? '',
         alert('نماینده پیدا نشد.', true);
         exit();
     }
-    $panelText = function_exists('v2raystore_getAgentServerDeliveryText') ? v2raystore_getAgentServerDeliveryText($agentId) : 'تنظیمات نحوه ارسال نماینده';
-    $panelKeys = function_exists('v2raystore_getAgentServerDeliveryKeys') ? v2raystore_getAgentServerDeliveryKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $panelText = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیمات نحوه ارسال نماینده';
+    $panelKeys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
     $editRes = editText($message_id, $panelText, $panelKeys, 'HTML');
     if(!is_object($editRes) || empty($editRes->ok)){
         sendMessage($panelText, $panelKeys, 'HTML');
@@ -2055,8 +2098,8 @@ if(preg_match('/^toggleAgentServerDelivery_(\\d+)_(\\d+)_(\\d+)$/', $data ?? '',
         alert('تغییر نحوه ارسال انجام نشد.', true);
         exit();
     }
-    $panelText = function_exists('v2raystore_getAgentServerDeliveryText') ? v2raystore_getAgentServerDeliveryText($agentId) : 'تنظیمات نحوه ارسال نماینده';
-    $panelKeys = function_exists('v2raystore_getAgentServerDeliveryKeys') ? v2raystore_getAgentServerDeliveryKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $panelText = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیمات نحوه ارسال نماینده';
+    $panelKeys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
     $editRes = editText($message_id, $panelText, $panelKeys, 'HTML');
     if(!is_object($editRes) || empty($editRes->ok)){
         sendMessage($panelText, $panelKeys, 'HTML');
@@ -2083,8 +2126,8 @@ if(preg_match('/^toggleAgentServerSaleDelivery_(\d+)_(\d+)_(\d+)$/', $data ?? ''
         alert('تغییر دسترسی فروش انجام نشد.', true);
         exit();
     }
-    $panelText = function_exists('v2raystore_getAgentServerDeliveryText') ? v2raystore_getAgentServerDeliveryText($agentId) : 'تنظیمات نحوه ارسال نماینده';
-    $panelKeys = function_exists('v2raystore_getAgentServerDeliveryKeys') ? v2raystore_getAgentServerDeliveryKeys($agentId, $offset) : getAgentDiscounts($agentId);
+    $panelText = function_exists('v2raystore_getAgentDeliveryMenuText') ? v2raystore_getAgentDeliveryMenuText($agentId) : 'تنظیمات نحوه ارسال نماینده';
+    $panelKeys = function_exists('v2raystore_getAgentDeliveryMenuKeys') ? v2raystore_getAgentDeliveryMenuKeys($agentId, $offset) : getAgentDiscounts($agentId);
     $editRes = editText($message_id, $panelText, $panelKeys, 'HTML');
     if(!is_object($editRes) || empty($editRes->ok)){
         sendMessage($panelText, $panelKeys, 'HTML');

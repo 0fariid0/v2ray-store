@@ -890,6 +890,110 @@ function v2raystore_getAgentServerDeliveryKeys($agentId, $offset = 0){
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 
+
+if(!function_exists('v2raystore_agentDeliveryServerStatusColumn')){
+    function v2raystore_agentDeliveryServerStatusColumn(){
+        global $connection;
+        static $col = null;
+        if($col !== null) return $col;
+        $col = '';
+        if(!isset($connection) || !$connection) return $col;
+        $state = @($connection->query("SHOW COLUMNS FROM `server_info` LIKE 'state'"));
+        if($state && $state->num_rows > 0){ $col = 'state'; return $col; }
+        $active = @($connection->query("SHOW COLUMNS FROM `server_info` LIKE 'active'"));
+        if($active && $active->num_rows > 0){ $col = 'active'; return $col; }
+        return $col;
+    }
+}
+
+if(!function_exists('v2raystore_agentDeliveryServerRows')){
+    function v2raystore_agentDeliveryServerRows($limit = 6, $offset = 0){
+        global $connection;
+        $limit = max(1, min(10, intval($limit)));
+        $offset = max(0, intval($offset));
+        if(!isset($connection) || !$connection) return [];
+        $where = '';
+        $statusCol = v2raystore_agentDeliveryServerStatusColumn();
+        if($statusCol !== '') $where = "WHERE `{$statusCol}` = 1";
+        $sql = "SELECT `id`, `title`, `flag` FROM `server_info` {$where} ORDER BY `id` DESC LIMIT " . ($limit + 1) . " OFFSET " . $offset;
+        $res = @($connection->query($sql));
+        if(!$res && $where !== ''){
+            $sql = "SELECT `id`, `title`, `flag` FROM `server_info` ORDER BY `id` DESC LIMIT " . ($limit + 1) . " OFFSET " . $offset;
+            $res = @($connection->query($sql));
+        }
+        $rows = [];
+        if($res){
+            while($row = $res->fetch_assoc()) $rows[] = $row;
+        }
+        return $rows;
+    }
+}
+
+if(!function_exists('v2raystore_getAgentDeliveryMenuText')){
+    function v2raystore_getAgentDeliveryMenuText($agentId){
+        $agentId = intval($agentId);
+        $agent = function_exists('v2raystore_getUserRowById') ? v2raystore_getUserRowById($agentId) : null;
+        $name = is_array($agent) ? trim((string)($agent['name'] ?? '')) : '';
+        if($name === '') $name = (string)$agentId;
+        $name = htmlspecialchars($name, ENT_QUOTES, 'UTF-8');
+        return "🚚 <b>تنظیم ارسال سرورها برای نماینده</b>\n\n" .
+               "نماینده: <b>{$name}</b>\n\n" .
+               "برای هر سرور جدا انتخاب کن کانفیگ با چه حالتی برای مشتری‌های این نماینده ارسال شود:\n" .
+               "• ساب + لینک\n" .
+               "• فقط لینک\n" .
+               "• فقط ساب\n" .
+               "• پیش‌فرض سرور";
+    }
+}
+
+if(!function_exists('v2raystore_getAgentDeliveryMenuKeys')){
+    function v2raystore_getAgentDeliveryMenuKeys($agentId, $offset = 0){
+        global $buttonValues;
+        $agentId = intval($agentId);
+        $offset = max(0, intval($offset));
+        $limit = 5;
+        $rows = v2raystore_agentDeliveryServerRows($limit, $offset);
+        $hasNext = count($rows) > $limit;
+        if($hasNext) $rows = array_slice($rows, 0, $limit);
+        $keys = [];
+        foreach($rows as $srv){
+            $sid = intval($srv['id'] ?? 0);
+            if($sid <= 0) continue;
+            $title = trim(((string)($srv['flag'] ?? '')) . ' ' . ((string)($srv['title'] ?? '')));
+            if($title === '') $title = 'سرور ' . $sid;
+            if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 36) $title = mb_substr($title, 0, 33, 'UTF-8') . '...';
+            elseif(strlen($title) > 36) $title = substr($title, 0, 33) . '...';
+
+            $agentMode = function_exists('v2raystore_agentServerDeliveryMode') ? v2raystore_agentServerDeliveryMode($agentId, $sid) : 'default';
+            $serverMode = function_exists('v2raystore_getServerDeliveryMode') ? v2raystore_getServerDeliveryMode($sid) : 'default';
+            $serverLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️') : $serverMode;
+            $currentLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($agentMode, 'پیش‌فرض سرور: ' . $serverLabel) : $agentMode;
+
+            $p = function($mode) use ($agentMode){ return ($agentMode === $mode ? '✅ ' : ''); };
+            $keys[] = [['text'=>'🖥 ' . $title, 'callback_data'=>'noop']];
+            $keys[] = [['text'=>'وضعیت فعلی: ' . $currentLabel, 'callback_data'=>'noop']];
+            $keys[] = [
+                ['text'=>$p('both') . 'ساب + لینک', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_both_' . $offset],
+                ['text'=>$p('config') . 'فقط لینک', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_config_' . $offset]
+            ];
+            $keys[] = [
+                ['text'=>$p('sub') . 'فقط ساب', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_sub_' . $offset],
+                ['text'=>$p('default') . 'پیش‌فرض سرور', 'callback_data'=>'agSendSet' . $agentId . '_' . $sid . '_default_' . $offset]
+            ];
+        }
+        if(!$keys){
+            $keys[] = [['text'=>'سروری برای تنظیم پیدا نشد', 'callback_data'=>'noop']];
+        }
+        $pager = [];
+        if($offset > 0) $pager[] = ['text'=>'« قبلی', 'callback_data'=>'agSendMode' . $agentId . '_' . max(0, $offset - $limit)];
+        if($hasNext) $pager[] = ['text'=>'بعدی »', 'callback_data'=>'agSendMode' . $agentId . '_' . ($offset + $limit)];
+        if($pager) $keys[] = $pager;
+        $back = $buttonValues['back_button'] ?? 'بازگشت';
+        $keys[] = [['text'=>$back, 'callback_data'=>'agentPercentDetails' . $agentId]];
+        return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    }
+}
+
 function v2raystore_isServerSaleClosed($serverId){
     global $connection;
     $serverId = intval($serverId);
@@ -9126,7 +9230,7 @@ function getAgentDiscounts($agentId){
     ['text'=>v2raystore_agentPricingLabel($normal),'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
     ['text'=>"عمومی",'callback_data'=>"v2raystore"]];
     $keys[] = [
-        ['text'=>'🔗 ارسال و دسترسی هر سرور', 'callback_data'=>'agentServerDelivery_' . $agentId . '_0']
+        ['text'=>'🚚 تنظیم ارسال سرورها', 'callback_data'=>'agSendMode' . $agentId . '_0']
     ];
     $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
     $keys[] = [
