@@ -52,31 +52,52 @@ if(isset($data) && (in_array($data, ['v2raystore', 'noop'], true) || preg_match(
     exit();
 }
 
+if(!function_exists('v2raystore_bot_canManageAgentDeliveryPanel')){
+    function v2raystore_bot_canManageAgentDeliveryPanel(){
+        global $from_id, $admin, $userInfo;
+        return (intval($from_id ?? 0) === intval($admin ?? 0)) || (!empty($userInfo) && !empty($userInfo['isAdmin']));
+    }
+}
+
 if(!function_exists('v2raystore_bot_showAgentServerDeliveryPanel')){
-    function v2raystore_bot_showAgentServerDeliveryPanel($messageId, $agentId, $offset = 0){
-        global $buttonValues;
+    function v2raystore_bot_showAgentServerDeliveryPanel($messageId, $agentId, $offset = 0, $chatId = null){
+        global $buttonValues, $from_id;
         $agentId = intval($agentId);
         $offset = max(0, intval($offset));
+        $chatId = $chatId ?: $from_id;
         if(!function_exists('v2raystore_getAgentServerDeliveryText') || !function_exists('v2raystore_getAgentServerDeliveryKeys')){
             alert('فایل config.php جدید جایگزین نشده است.', true);
-            return;
+            return false;
         }
         $txt = v2raystore_getAgentServerDeliveryText($agentId);
         $keys = v2raystore_getAgentServerDeliveryKeys($agentId, $offset);
-        $res = editText($messageId, $txt, $keys, 'HTML');
-        // بعضی وقت‌ها تلگرام اجازه ویرایش پیام قدیمی را نمی‌دهد؛ در آن حالت پنل را به صورت پیام جدید باز می‌کنیم
-        // تا دکمه اصلی بی‌اثر به نظر نرسد.
+        $res = editText($messageId, $txt, $keys, 'HTML', $chatId);
+        // اگر ویرایش پیام به هر دلیل انجام نشود، پنل را به صورت پیام جدید می‌فرستیم تا دکمه بی‌اثر نماند.
         if(!is_object($res) || empty($res->ok)){
-            sendMessage($txt, $keys, 'HTML');
+            $sendRes = sendMessage($txt, $keys, 'HTML', $chatId);
+            if(!is_object($sendRes) || empty($sendRes->ok)){
+                $desc = '';
+                if(is_object($res) && !empty($res->description)) $desc = (string)$res->description;
+                elseif(is_object($sendRes) && !empty($sendRes->description)) $desc = (string)$sendRes->description;
+                alert('باز کردن پنل انجام نشد' . ($desc !== '' ? ': ' . $desc : ''), true);
+                return false;
+            }
         }
+        return true;
     }
 }
 
 // پنل «ارسال و دسترسی هر سرور» نماینده باید قبل از هندلرهای عمومی/مرحله‌ای گرفته شود
 // تا با هیچ استپ قبلی قاطی نشود و دکمه داخل مدیریت نماینده همیشه باز شود.
-if(isset($data) && preg_match('/^(?:agentServerDelivery|agentServerSendAccess)_(\d+)_(\d+)$/', (string)$data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+// چند نام callback پشتیبانی می‌شود تا اگر روی سرور پیام/فایل قدیمی باقی مانده بود، باز هم دکمه کار کند.
+if(isset($data) && preg_match('/^(?:agentServerDelivery|agentServerSendAccess|openAgentServerPanel|agSrvPanel)_?(\d+)_(\d+)$/', (string)$data, $match)){
+    if(!v2raystore_bot_canManageAgentDeliveryPanel()){
+        alert('دسترسی ندارید.', true);
+        exit();
+    }
     $agentId = intval($match[1]);
     $offset = intval($match[2]);
+    alert('در حال باز کردن پنل...');
     $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
     $stmt->bind_param('i', $agentId);
     $stmt->execute();
@@ -86,11 +107,11 @@ if(isset($data) && preg_match('/^(?:agentServerDelivery|agentServerSendAccess)_(
         alert('نماینده پیدا نشد.', true);
         exit();
     }
-    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset);
+    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset, $chat_id ?? null);
     exit();
 }
 
-if(isset($data) && preg_match('/^toggleAgentServerDelivery_(\d+)_(\d+)_(\d+)$/', (string)$data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+if(isset($data) && preg_match('/^toggleAgentServerDelivery_(\d+)_(\d+)_(\d+)$/', (string)$data, $match) && v2raystore_bot_canManageAgentDeliveryPanel()){
     $agentId = intval($match[1]);
     $serverId = intval($match[2]);
     $offset = intval($match[3]);
@@ -99,13 +120,13 @@ if(isset($data) && preg_match('/^toggleAgentServerDelivery_(\d+)_(\d+)_(\d+)$/',
         alert('تغییر نحوه ارسال انجام نشد.', true);
         exit();
     }
-    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset);
+    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset, $chat_id ?? null);
     $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next, 'پیش‌فرض سرور ⚙️') : $next;
     alert('نحوه ارسال این سرور برای نماینده: ' . $label);
     exit();
 }
 
-if(isset($data) && preg_match('/^toggleAgentServerSaleDelivery_(\d+)_(\d+)_(\d+)$/', (string)$data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+if(isset($data) && preg_match('/^toggleAgentServerSaleDelivery_(\d+)_(\d+)_(\d+)$/', (string)$data, $match) && v2raystore_bot_canManageAgentDeliveryPanel()){
     $agentId = intval($match[1]);
     $serverId = intval($match[2]);
     $offset = intval($match[3]);
@@ -123,7 +144,7 @@ if(isset($data) && preg_match('/^toggleAgentServerSaleDelivery_(\d+)_(\d+)_(\d+)
         alert('تغییر دسترسی فروش انجام نشد.', true);
         exit();
     }
-    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset);
+    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset, $chat_id ?? null);
     $allowed = function_exists('v2raystore_adminHasClosedServerSaleAccess') ? v2raystore_adminHasClosedServerSaleAccess($agentId, $serverId) : false;
     alert($allowed ? 'دسترسی فروش این سرور برای نماینده فعال شد.' : 'دسترسی فروش این سرور برای نماینده غیرفعال شد.');
     exit();
