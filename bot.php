@@ -4051,7 +4051,7 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
     $modeTitle = "—";
     if($mode == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
     elseif($mode == "user")   $modeTitle = "کانفیگ‌های کاربر: " . intval($job['userid'] ?? 0);
-    elseif($mode == "ids")    $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
+    elseif($mode == "ids" || $mode == "sub_ids")    $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
     else $modeTitle = "—";
 
     $total = 0;
@@ -4069,6 +4069,7 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
         [['text'=>"📦 عملیات گروهی", 'callback_data'=>"noop_update_group", 'style'=>'primary']],
         [['text'=>"✅ همه کانفیگ‌های فعال",'callback_data'=>"updateConfigsAllActive", 'style'=>'success'], ['text'=>"👤 فقط یک کاربر",'callback_data'=>"updateConfigsUser", 'style'=>'primary']],
         [['text'=>"🧩 یک کانفیگ",'callback_data'=>"updateConfigsOne", 'style'=>'primary'], ['text'=>"🌐 بر اساس دامنه/ساب",'callback_data'=>"updateConfigsByDomain", 'style'=>'primary']],
+        [['text'=>"🌐 آپدیت کانفیگ‌های ساب",'callback_data'=>"updateSubConfigsBySub", 'style'=>'primary']],
 
         [['text'=>"✉️ پیام پس از آپدیت",'callback_data'=>"updateConfigsAfterMessage", 'style'=>'primary']],
 
@@ -4320,6 +4321,76 @@ if($userInfo['step'] == "updateConfigsByDomain" && ($from_id == $admin || $userI
         [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
         [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
     ]], JSON_UNESCAPED_UNICODE));
+    setUser();
+    exit();
+}
+
+
+// شروع صف: آپدیت و ارسال فقط لینک‌های ساب بر اساس دامنه یا آدرس کامل ساب
+if($data == "updateSubConfigsBySub" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $job = farid_getUpdateConfigsJob();
+    if(intval($job['state'] ?? 0) == 1){
+        alert("⛔️ یک عملیات فعال در حال اجراست. ابتدا «توقف عملیات» را انتخاب کنید.");
+        exit();
+    }
+    sendMessage("🌐 دامنه ساب یا آدرس کامل لینک ساب را ارسال کنید.\n\nنمونه دامنه: <code>sub.example.com</code>\nنمونه لینک کامل: <code>https://sub.example.com/sub/xxxx</code>\n\nدر این حالت فقط لینک ساب برای کاربران ارسال می‌شود و لینک کانفیگ عادی ارسال نمی‌شود.", $cancelKey, 'HTML');
+    setUser("updateSubConfigsBySub");
+    exit();
+}
+if($userInfo['step'] == "updateSubConfigsBySub" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $subRaw = trim((string)$text);
+    if(strlen($subRaw) < 3){
+        sendMessage("⛔️ مقدار واردشده معتبر نیست. دامنه ساب یا آدرس کامل ساب را ارسال کنید.", $cancelKey, 'HTML');
+        exit();
+    }
+
+    $job = farid_getUpdateConfigsJob();
+    if(intval($job['state'] ?? 0) == 1){
+        sendMessage("⛔️ در حال حاضر یک عملیات فعال در حال اجراست. ابتدا آن را متوقف کنید.", $removeKeyboard);
+        setUser();
+        exit();
+    }
+
+    $found = function_exists('farid_findSubOrderIdsByInput') ? farid_findSubOrderIdsByInput($subRaw) : ['ids'=>[], 'orders_count'=>0];
+    $ids = $found['ids'] ?? [];
+    $ordersCount = intval($found['orders_count'] ?? count($ids));
+    if(empty($ids)){
+        sendMessage("⛔️ هیچ کانفیگ فعالی با این دامنه/لینک ساب پیدا نشد.", json_encode(['inline_keyboard'=>[
+            [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+        ]], JSON_UNESCAPED_UNICODE));
+        setUser();
+        exit();
+    }
+
+    $filterTitle = function_exists('farid_normalizeSubLookupTitle') ? farid_normalizeSubLookupTitle($subRaw) : $subRaw;
+    $job = [
+        'state' => 1,
+        'mode'  => 'sub_ids',
+        'userid'=> 0,
+        'ids'   => array_values(array_unique(array_map('intval', $ids))),
+        'offset'=> 0,
+        'batch' => 10,
+        'created_at' => time(),
+        'requested_by' => $from_id,
+        'filter_title' => "آپدیت ساب: " . $filterTitle,
+        'stats' => ['processed'=>0,'updated'=>0,'failed'=>0,'sent'=>0],
+        'links_count' => $ordersCount,
+        'status_chat_id' => 0,
+        'status_message_id' => 0,
+        'auto_running' => 0,
+        'auto_last_ts' => 0,
+        'stopped_at' => 0,
+        'stopped_by' => 0,
+        'report_sent' => 0
+    ];
+    farid_setUpdateConfigsJob($job);
+
+    sendMessage("✅ فهرست آپدیت ساب ساخته شد.\n🎯 فیلتر: " . htmlspecialchars($filterTitle, ENT_QUOTES, 'UTF-8') . "\n📌 تعداد کانفیگ‌های ساب: $ordersCount\n\nبرای آغاز عملیات، روی «🚀 شروع اجرای خودکار» کلیک کنید.", json_encode(['inline_keyboard'=>[
+        [['text'=>"🚀 شروع اجرای خودکار",'callback_data'=>"updateConfigsRun"]],
+        [['text'=>"📊 مشاهده وضعیت",'callback_data'=>"updateConfigsStatus"]],
+        [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop"]],
+        [['text'=>"⬅️ بازگشت",'callback_data'=>"updateConfigsMenu"]],
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
     setUser();
     exit();
 }
@@ -4803,7 +4874,7 @@ if($data == "updateConfigsStatus" && ($from_id == $admin || $userInfo['isAdmin']
     $modeTitle = "نامشخص";
     if(($job['mode']??'') == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
     elseif(($job['mode']??'') == "user") $modeTitle = "کانفیگ‌های کاربر: " . ($job['userid']??'-');
-    elseif(($job['mode']??'') == "ids" || ($job['mode']??'') == "links") $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
+    elseif(in_array(($job['mode']??''), ["ids","links","sub_ids"], true)) $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
 
     $stats = $job['stats'] ?? [];
     $updated = intval($stats['updated'] ?? 0);
@@ -11142,7 +11213,7 @@ if(preg_match('/^diagnoseConfig(\d+)$/', $data, $match)){
         ]], JSON_UNESCAPED_UNICODE), 'HTML');
         exit();
     }else{
-        if($domainChanged){
+        if($domainChanged && !(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order))){
             $keys[] = [['text'=>'🔄 بروزرسانی کانفیگ', 'callback_data'=>'updateConfigConnectionLink' . $oid]];
         }
         if($expire <= time() || (is_array($summary) && isset($summary['remaining_gb']) && $summary['remaining_gb'] !== null && floatval($summary['remaining_gb']) <= 0)){
@@ -11457,6 +11528,11 @@ if(preg_match('/updateConfigConnectionLink(\d+)/', $data,$match)){
         exit();
     }
 
+    if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+        alert("ℹ️ این سرویس با لینک ساب ارسال می‌شود؛ بروزرسانی لینک عادی برای آن غیرفعال است. ساب را داخل برنامه Update کنید.", true);
+        exit();
+    }
+
     $remark = $order['remark'] ?? "-";
 
     // ساخت لینک‌های جدید
@@ -11532,6 +11608,9 @@ if(preg_match('/^updateAllMyConfigs_(\d+)/', $data, $match)){
 
     while($order = $res->fetch_assoc()){
         $processed++;
+        if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+            continue;
+        }
         $links = farid_generateUpdatedVrayLinks($order);
         if($links == null){
             $failed++;
@@ -11630,6 +11709,9 @@ if(preg_match('/^updateAllUserConfigs(\d+)_(\d+)/', $data, $match) && ($from_id 
 
     while($order = $res->fetch_assoc()){
         $processed++;
+        if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+            continue;
+        }
         $links = farid_generateUpdatedVrayLinks($order);
         if($links == null){
             $failed++;
@@ -15397,6 +15479,7 @@ function farid_attachUpdateConfigButton($keyboardJson, $orderId){
     if(!is_array($data) || !isset($data['inline_keyboard'])) return $keyboardJson;
 
     $orderId = intval($orderId);
+    if(function_exists('farid_orderIdIsSubOnly') && farid_orderIdIsSubOnly($orderId)) return $keyboardJson;
     $cb = "updateConfigConnectionLink" . $orderId;
 
     foreach($data['inline_keyboard'] as $row){
@@ -16295,6 +16378,114 @@ function farid_findLinkItemsByDomain($domainRaw){
 }
 
 
+
+function farid_orderIsSubOnly($order){
+    return function_exists('v2raystore_isSubOnlyOrder') && v2raystore_isSubOnlyOrder($order);
+}
+
+function farid_orderIdIsSubOnly($orderId){
+    global $connection;
+    $orderId = intval($orderId);
+    if($orderId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param("i", $orderId);
+    $stmt->execute();
+    $order = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $order ? farid_orderIsSubOnly($order) : false;
+}
+
+function farid_normalizeSubLookupTitle($input){
+    $input = trim((string)$input);
+    if($input === '') return '';
+    $plain = strip_tags(html_entity_decode($input, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    $plain = preg_replace('/\s+/u', '', $plain);
+    return htmlspecialchars($plain, ENT_QUOTES, 'UTF-8');
+}
+
+function farid_subLookupParts($input){
+    $raw = trim((string)$input);
+    $raw = strip_tags(html_entity_decode($raw, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    $raw = trim($raw, " \t\n\r\0\x0B`'\"");
+    $rawNoSlash = rtrim($raw, '/');
+    $isUrl = (bool)preg_match('#^https?://#i', $raw);
+    $host = '';
+    $path = '';
+    if($isUrl){
+        $u = @parse_url($raw);
+        if(is_array($u)){
+            $host = strtolower((string)($u['host'] ?? ''));
+            $path = (string)($u['path'] ?? '');
+        }
+    }else{
+        $host = function_exists('farid_normalizeDomainInput') ? farid_normalizeDomainInput($raw) : strtolower(preg_replace('/\/.*$/', '', $raw));
+    }
+    return ['raw'=>$raw, 'raw_noslash'=>$rawNoSlash, 'is_url'=>$isUrl, 'host'=>$host, 'path'=>$path];
+}
+
+function farid_subLinkMatchesInput($subLink, $input){
+    $subLink = trim((string)$subLink);
+    if($subLink === '') return false;
+    $needle = farid_subLookupParts($input);
+    $hay = farid_subLookupParts($subLink);
+    if($needle['is_url']){
+        if(rtrim($subLink, '/') === $needle['raw_noslash']) return true;
+        // اگر لینک کامل فرستاد ولی فقط path یا query فرق جزئی داشت، حداقل host و توکن /sub/ یا /json/ را بررسی کن.
+        $nToken = '';
+        $hToken = '';
+        if(preg_match('#/(sub|json)/([^/?#\s]+)#i', $needle['raw'], $m)) $nToken = (string)$m[2];
+        if(preg_match('#/(sub|json)/([^/?#\s]+)#i', $subLink, $m)) $hToken = (string)$m[2];
+        return $needle['host'] !== '' && $hay['host'] !== '' && $needle['host'] === $hay['host'] && $nToken !== '' && $nToken === $hToken;
+    }
+    if($needle['host'] === '' || $hay['host'] === '') return false;
+    if($needle['host'] === $hay['host']) return true;
+    return (strlen($hay['host']) > strlen($needle['host']) && substr($hay['host'], -strlen($needle['host'])-1) === '.' . $needle['host']);
+}
+
+function farid_findSubOrderIdsByInput($input){
+    global $connection;
+    if(!isset($connection) || !$connection) return ['ids'=>[], 'orders_count'=>0];
+    $ids = [];
+    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `status`=1 ORDER BY `id` ASC");
+    if(!$stmt) return ['ids'=>[], 'orders_count'=>0];
+    $stmt->execute();
+    $res = $stmt->get_result();
+    $stmt->close();
+    while($order = $res->fetch_assoc()){
+        $subLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($order) : '';
+        if($subLink !== '' && farid_subLinkMatchesInput($subLink, $input)){
+            $ids[] = intval($order['id']);
+        }
+    }
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    return ['ids'=>$ids, 'orders_count'=>count($ids)];
+}
+
+function farid_buildUpdatedSubMessage($remark, $subLink, $title = '✅ لینک ساب سرویس شما بروزرسانی شد'){
+    $safeRemark = htmlspecialchars((string)$remark, ENT_QUOTES, 'UTF-8');
+    $safeSub = htmlspecialchars((string)$subLink, ENT_QUOTES, 'UTF-8');
+    $safeTitle = htmlspecialchars((string)$title, ENT_QUOTES, 'UTF-8');
+    $msg = $safeTitle . "\n";
+    if($safeRemark !== '') $msg .= "🔮 نام سرویس: <b>{$safeRemark}</b>\n";
+    $msg .= "\n🌐 subscription : <code>{$safeSub}</code>";
+    if(function_exists('v2raystore_subConfigUsageGuide')) $msg .= v2raystore_subConfigUsageGuide();
+    return $msg;
+}
+
+function farid_sendUpdatedSubToUser($userId, $remark, $subLink, $afterMessage = null, $title = null){
+    $userId = intval($userId);
+    $subLink = trim((string)$subLink);
+    if($userId <= 0 || $subLink === '') return false;
+    $text = farid_buildUpdatedSubMessage($remark, $subLink, $title ?: '✅ لینک ساب سرویس شما بروزرسانی شد');
+    $res = sendMessage($text, null, 'HTML', $userId);
+    $ok = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+    $msg = $afterMessage;
+    if($msg === null && function_exists('farid_getUpdateAfterMessage')) $msg = farid_getUpdateAfterMessage();
+    if(strlen(trim(strval($msg))) > 0) sendMessage($msg, null, 'HTML', $userId);
+    return $ok;
+}
+
 function farid_getUpdateConfigsJob(){
     $defaults = [
         'state' => 0,
@@ -16443,7 +16634,7 @@ function farid_updateConfigsModeTitle($job){
     $mode = $job['mode'] ?? '';
     if($mode == "all_active") return "همه کانفیگ‌های فعال";
     if($mode == "user") return "کاربر: " . intval($job['userid'] ?? 0);
-    if($mode == "ids") return strval($job['filter_title'] ?? "فیلتر سفارشی");
+    if($mode == "ids" || $mode == "sub_ids") return strval($job['filter_title'] ?? "فیلتر سفارشی");
     if($mode == "links") return strval($job['filter_title'] ?? "فیلتر سفارشی");
     return "—";
 }
@@ -16581,7 +16772,7 @@ function farid_getUpdateConfigsTotal($job){
     }
 
     // ✅ حالت: به‌روزرسانی بر اساس «لیست آی‌دی سفارش‌ها»
-    if($mode == "ids"){
+    if($mode == "ids" || $mode == "sub_ids"){
         $ids = $job['ids'] ?? [];
         if(!is_array($ids)) $ids = [];
         return count($ids);
@@ -16622,7 +16813,7 @@ function farid_sendUpdateConfigsFinalReportIfNeeded($job){
     $modeTitle = "نامشخص";
     if(($job['mode'] ?? '') == "all_active") $modeTitle = "همه کانفیگ‌های فعال";
     elseif(($job['mode'] ?? '') == "user") $modeTitle = "کانفیگ‌های کاربر: " . intval($job['userid'] ?? 0);
-    elseif(($job['mode'] ?? '') == "ids" || ($job['mode'] ?? '') == "links") $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
+    elseif(in_array(($job['mode'] ?? ''), ["ids","links","sub_ids"], true)) $modeTitle = ($job['filter_title'] ?? "فیلتر سفارشی");
 
     $stats = $job['stats'] ?? [];
     $processed = intval($stats['processed'] ?? $offset);
@@ -16730,6 +16921,9 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
                 $stats['failed']++;
                 continue;
             }
+            if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+                continue;
+            }
 
             // تولید لینک‌های جدید + آپدیت دیتابیس (یک بار در هر سفارش داخل Batch)
             if(!array_key_exists($oid, $linksCache)){
@@ -16771,6 +16965,41 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
         $job['sent_order_ids'] = array_values(array_unique(array_map('intval', $sentOrderIds)));
     }
 
+    // ✅ حالت: آپدیت ساب‌ها با لیست آی‌دی‌ها؛ فقط لینک ساب ارسال می‌شود، لینک کانفیگ عادی ارسال نمی‌شود.
+    elseif($mode == "sub_ids"){
+        $ids = $job['ids'] ?? [];
+        if(!is_array($ids)) $ids = [];
+        $slice = array_slice($ids, $offset, $batch);
+
+        foreach($slice as $oid){
+            $oid = intval($oid);
+            $processedNow++;
+            $stats['processed']++;
+            if($oid <= 0){ $stats['failed']++; continue; }
+
+            $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? AND `status` = 1 LIMIT 1");
+            $stmt->bind_param("i", $oid);
+            $stmt->execute();
+            $order = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if(!$order){ $stats['failed']++; continue; }
+
+            $subLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($order) : '';
+            if(trim((string)$subLink) === ''){ $stats['failed']++; continue; }
+
+            $toUser = intval($order['userid'] ?? 0);
+            if($toUser > 0){
+                $remark = $order['remark'] ?? '-';
+                if(function_exists('farid_sendUpdatedSubToUser')) farid_sendUpdatedSubToUser($toUser, $remark, $subLink, '');
+                else sendMessage("✅ لینک ساب سرویس شما بروزرسانی شد\n\n🌐 subscription : <code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>", null, 'HTML', $toUser);
+                $stats['sent']++;
+            }
+            $stats['updated']++;
+        }
+
+        $job['offset'] = $offset + $processedNow;
+    }
+
     // ✅ حالت: فیلتر شده با لیست آی‌دی‌ها (سفارش‌ها)
     elseif($mode == "ids"){
         $ids = $job['ids'] ?? [];
@@ -16800,6 +17029,9 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
                 continue;
             }
 
+            if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+                continue;
+            }
             $links = farid_generateUpdatedVrayLinks($order);
             if($links == null){
                 $stats['failed']++;
@@ -16843,6 +17075,9 @@ function farid_runUpdateConfigsBatch($job, $batch = 5){
             $processedNow++;
             $stats['processed']++;
 
+            if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)){
+                continue;
+            }
             $links = farid_generateUpdatedVrayLinks($order);
             if($links == null){
                 $stats['failed']++;
@@ -16901,6 +17136,7 @@ function farid_updateAndSendOneOrder($oid, $requestedBy = 0){
     $stmt->close();
 
     if(!$order) return false;
+    if(function_exists('farid_orderIsSubOnly') && farid_orderIsSubOnly($order)) return false;
 
     $links = farid_generateUpdatedVrayLinks($order);
     if($links == null) return false;

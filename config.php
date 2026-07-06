@@ -189,6 +189,18 @@ function v2raystore_safeConfigNoteText($note){
     return $note;
 }
 
+
+if(!function_exists('v2raystore_subConfigUsageGuide')){
+function v2raystore_subConfigUsageGuide(){
+    return "\n\n📚 <b>آموزش استفاده از لینک ساب</b>\n" .
+           "1) لینک ساب را کامل کپی کنید.\n" .
+           "2) داخل برنامه، بخش Subscription / اشتراک را باز کنید و لینک را اضافه کنید.\n" .
+           "3) بعد از اضافه کردن، حتماً گزینه Update subscription / بروزرسانی ساب را بزنید تا کانفیگ‌ها داخل برنامه نمایش داده شوند.\n" .
+           "4) هر وقت اتصال مشکل داشت، قبل از پیام به پشتیبانی یک بار همان ساب را داخل برنامه بروزرسانی کنید.\n" .
+           "5) اگر با V2rayN ویندوز استفاده می‌کنید، یک بار از داخل خود برنامه Check Update را هم بزنید و Core را بروزرسانی کنید.";
+}
+}
+
 function v2raystore_buildConfigDetailsMessage($state, $remark, $configLinks = '', $subLink = '', $configNote = ''){
     $msg = "وضعیت کانفیگ: " . $state . "
 
@@ -215,6 +227,7 @@ function v2raystore_buildConfigDetailsMessage($state, $remark, $configLinks = ''
         $msg .= "
 لینک سابسکریپشن: " . $subLink . "
 ";
+        if(function_exists('v2raystore_subConfigUsageGuide')) $msg .= v2raystore_subConfigUsageGuide();
     }
 
     $msg .= "⁮⁮ ⁮⁮ ⁮⁮ ⁮⁮
@@ -1060,11 +1073,14 @@ if(!function_exists('v2raystore_getAgentDeliveryMenuKeys')){
             $serverLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️') : $serverMode;
             $currentLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($agentMode, 'پیش‌فرض سرور: ' . $serverLabel) : $agentMode;
 
-            $keys[] = [['text'=>'🖥 ' . $title, 'callback_data'=>'noop']];
             $keys[] = [
-                ['text'=>'🛒 ' . $saleLabel, 'callback_data'=>'agSendSale' . $agentId . '_' . $sid . '_' . $offset],
-                ['text'=>'🔗 ارسال: ' . $currentLabel, 'callback_data'=>'agSendToggle' . $agentId . '_' . $sid . '_' . $offset]
+                ['text'=>'🖥 ' . $title, 'callback_data'=>'noop'],
+                ['text'=>'🛒 ' . $saleLabel, 'callback_data'=>'agSendSale' . $agentId . '_' . $sid . '_' . $offset]
             ];
+            $keys[] = [[
+                'text'=>'🔗 ارسال: ' . $currentLabel,
+                'callback_data'=>'agSendToggle' . $agentId . '_' . $sid . '_' . $offset
+            ]];
         }
         if(!$keys){
             $keys[] = [['text'=>'سروری برای تنظیم پیدا نشد', 'callback_data'=>'noop']];
@@ -3482,6 +3498,24 @@ function v2raystore_runtimeWantsSub($uid = 0, $agentBought = null, $payInfo = nu
 function v2raystore_runtimeWantsConfig($uid = 0, $agentBought = null, $payInfo = null, $order = null, $serverId = 0){
     $opts = v2raystore_getRuntimeDeliveryLinkOptions($uid, $agentBought, $payInfo, $order, $serverId);
     return !empty($opts['config']);
+}
+
+function v2raystore_isSubOnlyOrder($order){
+    if(!is_array($order)) return false;
+    $opts = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null);
+    return !empty($opts['sub']) && empty($opts['config']);
+}
+
+function v2raystore_orderCurrentSubLink($order){
+    if(!is_array($order) || !function_exists('v2raystore_makeCustomerSubLink')) return '';
+    return v2raystore_makeCustomerSubLink(
+        intval($order['server_id'] ?? 0),
+        (string)($order['token'] ?? ''),
+        (string)($order['uuid'] ?? ''),
+        intval($order['inbound_id'] ?? 0),
+        (string)($order['remark'] ?? ''),
+        'sub'
+    );
 }
 
 function v2raystore_getAgentPricingRule($user = null, $planId = 0, $serverId = 0){
@@ -10338,6 +10372,7 @@ function v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink = ''
     $subLink = trim((string)$subLink);
     if($subLink !== ''){
         $msg .= "\n\n🌐 لینک اشتراک:\n<code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>";
+        if(function_exists('v2raystore_subConfigUsageGuide')) $msg .= v2raystore_subConfigUsageGuide();
     }
     return $msg;
 }
@@ -10365,6 +10400,7 @@ function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subL
         $extraLines = trim((string)$extraLines);
         if($extraLines !== '') $msg .= $extraLines . "\n";
         $msg .= "\n🌐 subscription : <code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>";
+        if(function_exists('v2raystore_subConfigUsageGuide')) $msg .= v2raystore_subConfigUsageGuide();
     }else{
         if(count($links) <= 1) return false;
         $msg = v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink, $heading, $extraLines);
@@ -10596,6 +10632,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
             if($count >= $offset + $limit) break;
         }
         $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null);
+        $isSubOnlyOrder = !empty($linkOptions['sub']) && empty($linkOptions['config']);
         if($linkOptions['config']){
             $configLinks = v2raystore_formatConfigLinksBlock($pagedLinks);
         }
@@ -10931,6 +10968,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
             if($count >= $offset + $limit) break;
         }
         $linkOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order) : v2raystore_normalizeDeliveryLinkOptions(null);
+        $isSubOnlyOrder = !empty($linkOptions['sub']) && empty($linkOptions['config']);
         if($linkOptions['config']){
             $configLinks = v2raystore_formatConfigLinksBlock($pagedLinks);
         }
@@ -11117,9 +11155,10 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
             $keyboard[] = $extrakey;
             
              
-            if($botState['renewConfigLinkState'] == "on" && $botState['updateConfigLinkState'] == "on") $keyboard[] = [['text'=>$buttonValues['renew_connection_link'],'callback_data'=>'changAccountConnectionLink' . $id],['text'=>$buttonValues['update_config_connection'],'callback_data'=>'updateConfigConnectionLink' . $id]];
-            elseif($botState['renewConfigLinkState'] == "on") $keyboard[] = [['text'=>$buttonValues['renew_connection_link'],'callback_data'=>'changAccountConnectionLink' . $id]];
-            elseif($botState['updateConfigLinkState'] == "on") $keyboard[] = [['text'=>$buttonValues['update_config_connection'],'callback_data'=>'updateConfigConnectionLink' . $id]];
+            $renewUpdateRow = [];
+            if($botState['renewConfigLinkState'] == "on") $renewUpdateRow[] = ['text'=>$buttonValues['renew_connection_link'],'callback_data'=>'changAccountConnectionLink' . $id];
+            if(!$isSubOnlyOrder && $botState['updateConfigLinkState'] == "on") $renewUpdateRow[] = ['text'=>$buttonValues['update_config_connection'],'callback_data'=>'updateConfigConnectionLink' . $id];
+            if(count($renewUpdateRow) > 0) $keyboard[] = $renewUpdateRow;
             
             $temp = [];
             if($botState['qrConfigState'] == "on") $temp[] = ['text'=>$buttonValues['qr_config'],'callback_data'=>"showQrConfig" . $id];
@@ -18661,9 +18700,12 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز";
-        if($subLink != '') $acc_text .= "
+        if($subLink != ''){
+            $acc_text .= "
 
 🌐 subscription : <code>$subLink</code>";
+            if(function_exists('v2raystore_subConfigUsageGuide')) $acc_text .= v2raystore_subConfigUsageGuide();
+        }
         $res = sendMessage($acc_text, $keyboard, 'HTML', $uid);
         return function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
     }
@@ -18678,7 +18720,10 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
         if(trim($link) === '') continue;
         $acc_text = "😍 سفارش جدید شما\n📡 پروتکل: $protocol\n🔮 نام سرویس: $remark\n🔋حجم سرویس: $volume گیگ\n⏰ مدت سرویس: $days روز\n" .
             (($linkOptions['config'] ?? true) && $serverType != 'marzban' ? "\n💝 config : <code>$link</code>" : '');
-        if(($linkOptions['sub'] ?? false) && $subLink != '') $acc_text .= "\n\n🌐 subscription : <code>$subLink</code>";
+        if(($linkOptions['sub'] ?? false) && $subLink != ''){
+            $acc_text .= "\n\n🌐 subscription : <code>$subLink</code>";
+            if(function_exists('v2raystore_subConfigUsageGuide')) $acc_text .= v2raystore_subConfigUsageGuide();
+        }
 
         $sendOk = false;
         if(class_exists('QRcode')){
