@@ -830,19 +830,28 @@ function v2raystore_getAgentServerDeliveryText($agentId){
     $agent = v2raystore_getUserRowById($agentId);
     $name = is_array($agent) ? trim((string)($agent['name'] ?? '')) : '';
     if($name === '') $name = (string)$agentId;
-    return "🔗 <b>نحوه ارسال لینک برای نماینده</b>\n\n" .
-           "نماینده: <b>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</b>\n" .
-           "برای هر سرور می‌توانی جدا تنظیم کنی که کانفیگ با لینک عادی، لینک ساب یا هر دو ارسال شود.\n" .
-           "حالت پیش‌فرض یعنی تنظیم خود سرور/تنظیم عمومی ربات اعمال می‌شود.";
+    return "🔗 <b>تنظیم ارسال و دسترسی فروش هر سرور</b>
+
+" .
+           "نماینده: <b>" . htmlspecialchars($name, ENT_QUOTES, 'UTF-8') . "</b>
+" .
+           "برای هر سرور از همین صفحه دو چیز را جدا تنظیم کن:
+" .
+           "1) نماینده مجاز به فروش سرورهای بسته باشد یا نه.
+" .
+           "2) کانفیگ با لینک عادی، لینک ساب یا هر دو ارسال شود.
+
+" .
+           "حالت پیش‌فرض یعنی تنظیم خود سرور اعمال می‌شود.";
 }
 
 function v2raystore_getAgentServerDeliveryKeys($agentId, $offset = 0){
     global $connection, $buttonValues;
     $agentId = intval($agentId);
     $offset = max(0, intval($offset));
-    $limit = 12;
+    $limit = 8;
     $keys = [];
-    $stmt = @$connection->prepare("SELECT `id`, `title`, `flag`, COALESCE(`delivery_mode`, 'default') AS `delivery_mode` FROM `server_info` WHERE `active`=1 ORDER BY `id` DESC LIMIT ? OFFSET ?");
+    $stmt = @$connection->prepare("SELECT `id`, `title`, `flag`, COALESCE(`delivery_mode`, 'default') AS `delivery_mode`, COALESCE(`sale_closed`,0) AS `sale_closed` FROM `server_info` WHERE `active`=1 ORDER BY `id` DESC LIMIT ? OFFSET ?");
     if($stmt){
         $stmt->bind_param('ii', $limit, $offset);
         $stmt->execute();
@@ -851,15 +860,22 @@ function v2raystore_getAgentServerDeliveryKeys($agentId, $offset = 0){
             $sid = intval($srv['id'] ?? 0);
             $title = trim(((string)($srv['flag'] ?? '')) . ' ' . ((string)($srv['title'] ?? '')));
             if($title === '') $title = 'سرور ' . $sid;
-            if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 28) $title = mb_substr($title, 0, 25, 'UTF-8') . '...';
-            elseif(strlen($title) > 28) $title = substr($title, 0, 25) . '...';
+            if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 34) $title = mb_substr($title, 0, 31, 'UTF-8') . '...';
+            elseif(strlen($title) > 34) $title = substr($title, 0, 31) . '...';
+
+            $closed = intval($srv['sale_closed'] ?? 0) === 1;
+            $access = function_exists('v2raystore_adminHasClosedServerSaleAccess') ? v2raystore_adminHasClosedServerSaleAccess($agentId, $sid) : false;
+            $saleLabel = ($access ? '✅ مجاز فروش' : '❌ بدون دسترسی') . ($closed ? ' | بسته' : ' | باز');
+
             $agentMode = v2raystore_agentServerDeliveryMode($agentId, $sid);
             $serverMode = v2raystore_deliveryModeNormalize($srv['delivery_mode'] ?? 'default');
-            $defaultLabel = 'پیش‌فرض سرور: ' . v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️');
-            $label = v2raystore_deliveryModeLabel($agentMode, $defaultLabel);
+            $defaultLabel = 'پیش‌فرض: ' . v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️');
+            $deliveryLabel = v2raystore_deliveryModeLabel($agentMode, $defaultLabel);
+
+            $keys[] = [['text'=>'🖥 ' . $title, 'callback_data'=>'v2raystore']];
             $keys[] = [
-                ['text'=>$label, 'callback_data'=>'toggleAgentServerDelivery_' . $agentId . '_' . $sid . '_' . $offset],
-                ['text'=>$title, 'callback_data'=>'v2raystore']
+                ['text'=>'🛒 ' . $saleLabel, 'callback_data'=>'toggleAgentServerSaleDelivery_' . $agentId . '_' . $sid . '_' . $offset],
+                ['text'=>'🔗 ' . $deliveryLabel, 'callback_data'=>'toggleAgentServerDelivery_' . $agentId . '_' . $sid . '_' . $offset]
             ];
         }
         $count = $res ? $res->num_rows : 0;
@@ -3214,18 +3230,14 @@ function v2raystore_getAgentDeliveryLinkOptions($agentUserOrId = null, $agentBou
     $serverId = intval($serverId);
     $base = function_exists('v2raystore_getServerDeliveryOptions') ? v2raystore_getServerDeliveryOptions($serverId, $global) : $global;
 
-    // تنظیم لینک نماینده باید بر اساس خود کاربر نماینده اعمال شود، نه فقط فلگ agent_bought.
-    // اول تنظیم عمومی/سرور اعمال می‌شود، بعد تنظیم عمومی نماینده و در آخر تنظیم اختصاصی نماینده برای همان سرور.
+    // از این نسخه به بعد تنظیم لینک نماینده فقط از بخش «نحوه ارسال هر سرور» انجام می‌شود.
+    // تنظیم قدیمی لینک عادی/لینک ساب نماینده دیگر روی ارسال اثر نمی‌گذارد تا گزینه مخفی باعث قطع لینک نشود.
     $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
     if(!v2raystore_isAgentUser($agent)) return $base;
 
-    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
-    $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
-    $config = ($links['config'] === 'default') ? $base['config'] : ($links['config'] === 'on');
-    $sub = ($links['sub'] === 'default') ? $base['sub'] : ($links['sub'] === 'on');
-    $resolved = ['config'=>$config, 'sub'=>$sub];
-
+    $resolved = $base;
     if($serverId > 0){
+        $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
         $serverLinks = function_exists('v2raystore_agentServerDeliveryModesNormalize') ? v2raystore_agentServerDeliveryModesNormalize($discounts['server_links'] ?? []) : [];
         $agentServerMode = $serverLinks[(string)$serverId] ?? 'default';
         if(function_exists('v2raystore_deliveryModeToOptions')){
@@ -9110,16 +9122,11 @@ function getAgentDiscounts($agentId){
     $discounts = v2raystore_agentPricingDecode($agentInfo['discount_percent'] ?? null);
 
     $normal = $discounts['normal'] ?? 0;
-    $links = v2raystore_agentLinkSettingsNormalize($discounts['links'] ?? []);
     $keys[] = [['text'=>" ",'callback_data'=>"v2raystore"],
     ['text'=>v2raystore_agentPricingLabel($normal),'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
     ['text'=>"عمومی",'callback_data'=>"v2raystore"]];
     $keys[] = [
-        ['text'=>'لینک عادی: ' . v2raystore_agentLinkStateLabel($links['config']), 'callback_data'=>'toggleAgentLink_config_' . $agentId],
-        ['text'=>'لینک ساب: ' . v2raystore_agentLinkStateLabel($links['sub']), 'callback_data'=>'toggleAgentLink_sub_' . $agentId]
-    ];
-    $keys[] = [
-        ['text'=>'🔗 نحوه ارسال هر سرور', 'callback_data'=>'agentServerDelivery_' . $agentId . '_0']
+        ['text'=>'🔗 ارسال و دسترسی هر سرور', 'callback_data'=>'agentServerDelivery_' . $agentId . '_0']
     ];
     $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
     $keys[] = [
@@ -9128,9 +9135,6 @@ function getAgentDiscounts($agentId){
     $keys[] = [
         ['text'=>'سقف روزانه: ' . ($limits['daily_cap'] > 0 ? $limits['daily_cap'] : 'نامحدود'), 'callback_data'=>'editAgentDailyCap_' . $agentId],
         ['text'=>'سقف اعتبار: ' . ($limits['credit_cap'] > 0 ? number_format($limits['credit_cap']) : 'نامحدود'), 'callback_data'=>'editAgentCreditCap_' . $agentId]
-    ];
-    $keys[] = [
-        ['text'=>'🛒 دسترسی فروش سرورهای بسته', 'callback_data'=>'agentServerSalesAccess' . $agentId]
     ];
     $keys[] = [
         ['text'=>'📊 گزارش فروش و سود', 'callback_data'=>'agentProReport_' . $agentId],

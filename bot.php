@@ -2062,6 +2062,34 @@ if(preg_match('/^toggleAgentServerDelivery_(\\d+)_(\\d+)_(\\d+)$/', $data ?? '',
     alert('نحوه ارسال این سرور برای نماینده: ' . $label);
     exit();
 }
+if(preg_match('/^toggleAgentServerSaleDelivery_(\d+)_(\d+)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $offset = intval($match[3]);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agentExists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$agentExists){
+        alert('نماینده پیدا نشد.', true);
+        exit();
+    }
+    $ok = function_exists('v2raystore_toggleAdminServerSaleAccess') ? v2raystore_toggleAdminServerSaleAccess($agentId, $serverId) : false;
+    if(!$ok){
+        alert('تغییر دسترسی فروش انجام نشد.', true);
+        exit();
+    }
+    editText(
+        $message_id,
+        function_exists('v2raystore_getAgentServerDeliveryText') ? v2raystore_getAgentServerDeliveryText($agentId) : 'تنظیمات نحوه ارسال نماینده',
+        function_exists('v2raystore_getAgentServerDeliveryKeys') ? v2raystore_getAgentServerDeliveryKeys($agentId, $offset) : getAgentDiscounts($agentId),
+        'HTML'
+    );
+    $allowed = function_exists('v2raystore_adminHasClosedServerSaleAccess') ? v2raystore_adminHasClosedServerSaleAccess($agentId, $serverId) : false;
+    alert($allowed ? 'دسترسی فروش این سرور برای نماینده فعال شد.' : 'دسترسی فروش این سرور برای نماینده غیرفعال شد.');
+    exit();
+}
 if(preg_match('/^toggleAgentBuying_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $agentId = intval($match[1]);
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
