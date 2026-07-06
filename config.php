@@ -881,8 +881,8 @@ function v2raystore_getAgentServerDeliveryKeys($agentId, $offset = 0){
         $count = $res ? $res->num_rows : 0;
         $stmt->close();
         $pager = [];
-        if($offset > 0) $pager[] = ['text'=>'« صفحه قبلی', 'callback_data'=>'agentServerDelivery_' . $agentId . '_' . max(0, $offset - $limit)];
-        if(isset($count) && $count >= $limit) $pager[] = ['text'=>'صفحه بعدی »', 'callback_data'=>'agentServerDelivery_' . $agentId . '_' . ($offset + $limit)];
+        if($offset > 0) $pager[] = ['text'=>'« صفحه قبلی', 'callback_data'=>'agentServerSendAccess_' . $agentId . '_' . max(0, $offset - $limit)];
+        if(isset($count) && $count >= $limit) $pager[] = ['text'=>'صفحه بعدی »', 'callback_data'=>'agentServerSendAccess_' . $agentId . '_' . ($offset + $limit)];
         if($pager) $keys[] = $pager;
     }
     if(!$keys) $keys[] = [['text'=>'سروری پیدا نشد', 'callback_data'=>'v2raystore']];
@@ -9126,7 +9126,7 @@ function getAgentDiscounts($agentId){
     ['text'=>v2raystore_agentPricingLabel($normal),'callback_data'=>"editAgentDiscountNormal" . $agentId . "_0"],
     ['text'=>"عمومی",'callback_data'=>"v2raystore"]];
     $keys[] = [
-        ['text'=>'🔗 ارسال و دسترسی هر سرور', 'callback_data'=>'agentServerDelivery_' . $agentId . '_0']
+        ['text'=>'🔗 ارسال و دسترسی هر سرور', 'callback_data'=>'agentServerSendAccess_' . $agentId . '_0']
     ];
     $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
     $keys[] = [

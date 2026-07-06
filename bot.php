@@ -52,6 +52,83 @@ if(isset($data) && (in_array($data, ['v2raystore', 'noop'], true) || preg_match(
     exit();
 }
 
+if(!function_exists('v2raystore_bot_showAgentServerDeliveryPanel')){
+    function v2raystore_bot_showAgentServerDeliveryPanel($messageId, $agentId, $offset = 0){
+        global $buttonValues;
+        $agentId = intval($agentId);
+        $offset = max(0, intval($offset));
+        if(!function_exists('v2raystore_getAgentServerDeliveryText') || !function_exists('v2raystore_getAgentServerDeliveryKeys')){
+            alert('فایل config.php جدید جایگزین نشده است.', true);
+            return;
+        }
+        $txt = v2raystore_getAgentServerDeliveryText($agentId);
+        $keys = v2raystore_getAgentServerDeliveryKeys($agentId, $offset);
+        $res = editText($messageId, $txt, $keys, 'HTML');
+        // بعضی وقت‌ها تلگرام اجازه ویرایش پیام قدیمی را نمی‌دهد؛ در آن حالت پنل را به صورت پیام جدید باز می‌کنیم
+        // تا دکمه اصلی بی‌اثر به نظر نرسد.
+        if(!is_object($res) || empty($res->ok)){
+            sendMessage($txt, $keys, 'HTML');
+        }
+    }
+}
+
+// پنل «ارسال و دسترسی هر سرور» نماینده باید قبل از هندلرهای عمومی/مرحله‌ای گرفته شود
+// تا با هیچ استپ قبلی قاطی نشود و دکمه داخل مدیریت نماینده همیشه باز شود.
+if(isset($data) && preg_match('/^(?:agentServerDelivery|agentServerSendAccess)_(\d+)_(\d+)$/', (string)$data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+    $agentId = intval($match[1]);
+    $offset = intval($match[2]);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agentExists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$agentExists){
+        alert('نماینده پیدا نشد.', true);
+        exit();
+    }
+    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset);
+    exit();
+}
+
+if(isset($data) && preg_match('/^toggleAgentServerDelivery_(\d+)_(\d+)_(\d+)$/', (string)$data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $offset = intval($match[3]);
+    $next = function_exists('v2raystore_toggleAgentServerDeliveryMode') ? v2raystore_toggleAgentServerDeliveryMode($agentId, $serverId) : false;
+    if($next === false){
+        alert('تغییر نحوه ارسال انجام نشد.', true);
+        exit();
+    }
+    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset);
+    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next, 'پیش‌فرض سرور ⚙️') : $next;
+    alert('نحوه ارسال این سرور برای نماینده: ' . $label);
+    exit();
+}
+
+if(isset($data) && preg_match('/^toggleAgentServerSaleDelivery_(\d+)_(\d+)_(\d+)$/', (string)$data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+    $agentId = intval($match[1]);
+    $serverId = intval($match[2]);
+    $offset = intval($match[3]);
+    $stmt = $connection->prepare("SELECT `userid` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $agentExists = $stmt->get_result()->num_rows > 0;
+    $stmt->close();
+    if(!$agentExists){
+        alert('نماینده پیدا نشد.', true);
+        exit();
+    }
+    $ok = function_exists('v2raystore_toggleAdminServerSaleAccess') ? v2raystore_toggleAdminServerSaleAccess($agentId, $serverId) : false;
+    if(!$ok){
+        alert('تغییر دسترسی فروش انجام نشد.', true);
+        exit();
+    }
+    v2raystore_bot_showAgentServerDeliveryPanel($message_id, $agentId, $offset);
+    $allowed = function_exists('v2raystore_adminHasClosedServerSaleAccess') ? v2raystore_adminHasClosedServerSaleAccess($agentId, $serverId) : false;
+    alert($allowed ? 'دسترسی فروش این سرور برای نماینده فعال شد.' : 'دسترسی فروش این سرور برای نماینده غیرفعال شد.');
+    exit();
+}
+
 if(preg_match('/^appTutorial_(v2rayng|v2rayn|streisand)$/', $data ?? '', $match)){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
         alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
