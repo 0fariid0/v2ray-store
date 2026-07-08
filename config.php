@@ -1032,6 +1032,34 @@ if(!function_exists('v2raystore_agentDeliveryServerRows')){
     }
 }
 
+
+if(!function_exists('v2raystore_getUserRowByIdFresh')){
+    function v2raystore_getUserRowByIdFresh($userId){
+        global $connection;
+        $userId = intval($userId);
+        if($userId <= 0 || !isset($connection) || !$connection) return null;
+        $stmt = @$connection->prepare("SELECT * FROM `users` WHERE `userid` = ? LIMIT 1");
+        if(!$stmt) return null;
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return $row ?: null;
+    }
+}
+
+if(!function_exists('v2raystore_agentServerDeliveryDisplayLabel')){
+    function v2raystore_agentServerDeliveryDisplayLabel($agentUserOrId, $serverId, $serverRow = null){
+        $serverId = intval($serverId);
+        $agent = is_array($agentUserOrId) ? $agentUserOrId : (function_exists('v2raystore_getUserRowByIdFresh') ? v2raystore_getUserRowByIdFresh($agentUserOrId) : v2raystore_getUserRowById($agentUserOrId));
+        $agentMode = function_exists('v2raystore_agentServerDeliveryMode') ? v2raystore_agentServerDeliveryMode($agent ?: $agentUserOrId, $serverId) : 'default';
+        if(is_array($serverRow) && array_key_exists('delivery_mode', $serverRow)) $serverMode = $serverRow['delivery_mode'];
+        else $serverMode = function_exists('v2raystore_getServerDeliveryMode') ? v2raystore_getServerDeliveryMode($serverId) : 'default';
+        $serverLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️') : (string)$serverMode;
+        return function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($agentMode, 'پیش‌فرض سرور: ' . $serverLabel) : (string)$agentMode;
+    }
+}
+
 if(!function_exists('v2raystore_getAgentDeliveryMenuText')){
     function v2raystore_getAgentDeliveryMenuText($agentId){
         $agentId = intval($agentId);
@@ -1057,6 +1085,7 @@ if(!function_exists('v2raystore_getAgentDeliveryMenuKeys')){
         $hasNext = count($rows) > $limit;
         if($hasNext) $rows = array_slice($rows, 0, $limit);
         $keys = [];
+        $agentRowFresh = function_exists('v2raystore_getUserRowByIdFresh') ? v2raystore_getUserRowByIdFresh($agentId) : null;
         foreach($rows as $srv){
             $sid = intval($srv['id'] ?? 0);
             if($sid <= 0) continue;
@@ -1065,13 +1094,12 @@ if(!function_exists('v2raystore_getAgentDeliveryMenuKeys')){
             if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 36) $title = mb_substr($title, 0, 33, 'UTF-8') . '...';
             elseif(strlen($title) > 36) $title = substr($title, 0, 33) . '...';
 
-            $saleAllowed = function_exists('v2raystore_agentServerSaleAllowed') ? v2raystore_agentServerSaleAllowed($agentId, $sid) : true;
-            $saleLabel = $saleAllowed ? 'فروش نماینده: باز ✅' : 'فروش نماینده: بسته 🚫';
+            $saleAllowed = function_exists('v2raystore_agentServerSaleAllowed') ? v2raystore_agentServerSaleAllowed($agentRowFresh ?: $agentId, $sid) : true;
+            $saleLabel = $saleAllowed ? 'فروش: باز ✅' : 'فروش: بسته 🚫';
 
-            $agentMode = function_exists('v2raystore_agentServerDeliveryMode') ? v2raystore_agentServerDeliveryMode($agentId, $sid) : 'default';
-            $serverMode = function_exists('v2raystore_getServerDeliveryMode') ? v2raystore_getServerDeliveryMode($sid) : (($srv['delivery_mode'] ?? 'default'));
-            $serverLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($serverMode, 'عمومی ⚙️') : $serverMode;
-            $currentLabel = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($agentMode, 'پیش‌فرض سرور: ' . $serverLabel) : $agentMode;
+            $currentLabel = function_exists('v2raystore_agentServerDeliveryDisplayLabel')
+                ? v2raystore_agentServerDeliveryDisplayLabel($agentRowFresh ?: $agentId, $sid, $srv)
+                : (function_exists('v2raystore_agentServerDeliveryMode') ? v2raystore_agentServerDeliveryMode($agentRowFresh ?: $agentId, $sid) : 'default');
 
             $keys[] = [
                 ['text'=>'🖥 ' . $title, 'callback_data'=>'noop'],
@@ -3590,10 +3618,17 @@ function v2raystore_getAgentPricingRule($user = null, $planId = 0, $serverId = 0
     $discounts = v2raystore_agentPricingDecode($user['discount_percent'] ?? null);
     $planId = (string)intval($planId);
     $serverId = (string)intval($serverId);
-    if(($botState['agencyPlanDiscount'] ?? 'on') === 'on'){
-        if($planId !== '0' && array_key_exists($planId, $discounts['plans'])) return v2raystore_agentPricingRule($discounts['plans'][$planId]);
+
+    // برای نماینده، هم خرید و هم تمدید باید دقیقاً از همان قانون تخفیف استفاده کنند.
+    // اگر حالت تخفیف روی پلن باشد، اول تخفیف پلن بررسی می‌شود و اگر برای آن پلن چیزی نبود،
+    // تخفیف سرور همان پلن اعمال می‌شود. در حالت تخفیف سرور هم برعکس عمل می‌کند.
+    $preferPlan = (($botState['agencyPlanDiscount'] ?? 'on') === 'on');
+    if($preferPlan){
+        if($planId !== '0' && array_key_exists($planId, $discounts['plans'] ?? [])) return v2raystore_agentPricingRule($discounts['plans'][$planId]);
+        if($serverId !== '0' && array_key_exists($serverId, $discounts['servers'] ?? [])) return v2raystore_agentPricingRule($discounts['servers'][$serverId]);
     }else{
-        if($serverId !== '0' && array_key_exists($serverId, $discounts['servers'])) return v2raystore_agentPricingRule($discounts['servers'][$serverId]);
+        if($serverId !== '0' && array_key_exists($serverId, $discounts['servers'] ?? [])) return v2raystore_agentPricingRule($discounts['servers'][$serverId]);
+        if($planId !== '0' && array_key_exists($planId, $discounts['plans'] ?? [])) return v2raystore_agentPricingRule($discounts['plans'][$planId]);
     }
     return v2raystore_agentPricingRule($discounts['normal'] ?? 0);
 }
@@ -10475,6 +10510,9 @@ function v2raystore_sendMultiDomainConfigMessage($chatId, $remark, $links, $subL
 
     if($keyboard === null){
         $keyboard = function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>($buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی'),'callback_data'=>'mainMenu']]]], JSON_UNESCAPED_UNICODE);
+    }
+    if(!$linkOptions['config'] && trim((string)$subLink) !== '' && function_exists('v2raystore_sendQrLinkMessage')){
+        if(v2raystore_sendQrLinkMessage($chatId, $subLink, $msg, $keyboard, 'HTML')) return true;
     }
     $sendRes = sendMessage($msg, $keyboard, 'HTML', $chatId);
     if(function_exists('v2raystore_telegramResponseOk') && v2raystore_telegramResponseOk($sendRes)) return true;
@@ -18745,6 +18783,46 @@ function v2raystore_plainTextFromHtml($text){
     return html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 }
 
+
+if(!function_exists('v2raystore_sendQrLinkMessage')){
+    function v2raystore_sendQrLinkMessage($chatId, $qrLink, $caption, $keyboard = null, $parse = 'HTML'){
+        global $botUrl;
+        $qrLink = trim((string)$qrLink);
+        if($qrLink === '') return false;
+        if(!class_exists('QRcode') && file_exists('phpqrcode/qrlib.php')) @include_once 'phpqrcode/qrlib.php';
+        if(!class_exists('QRcode')) return false;
+        if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH', 540);
+        if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT', 540);
+        $base = function_exists('RandomString') ? RandomString(18) : ('qr_' . uniqid('', true));
+        $file = $base . '.png';
+        $ok = false;
+        try{
+            QRcode::png($qrLink, $file, 'L', 11, 0);
+            if(function_exists('addBorderImage')) @addBorderImage($file);
+            if(file_exists('settings/QRCode.jpg')){
+                $backgroundImage = @imagecreatefromjpeg('settings/QRCode.jpg');
+                $qrImage = @imagecreatefrompng($file);
+                if($backgroundImage && $qrImage){
+                    $qrSize = ['width' => imagesx($qrImage), 'height' => imagesy($qrImage)];
+                    imagecopy($backgroundImage, $qrImage, 300, 300, 0, 0, $qrSize['width'], $qrSize['height']);
+                    imagepng($backgroundImage, $file);
+                    imagedestroy($backgroundImage);
+                    imagedestroy($qrImage);
+                }else{
+                    if($backgroundImage) imagedestroy($backgroundImage);
+                    if($qrImage) imagedestroy($qrImage);
+                }
+            }
+            $res = sendPhoto($botUrl . $file, $caption, $keyboard, $parse, $chatId);
+            $ok = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : (is_object($res) ? !empty($res->ok) : true);
+        }catch(Throwable $e){
+            $ok = false;
+        }
+        if(file_exists($file)) @unlink($file);
+        return $ok;
+    }
+}
+
 function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType, $linkOptions = null){
     global $botUrl, $buttonValues, $botState, $agentBought, $payInfo;
     if($linkOptions === null && function_exists('v2raystore_getRuntimeDeliveryLinkOptions')){
@@ -18772,8 +18850,15 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
 🌐 subscription : <code>$subLink</code>";
             if(function_exists('v2raystore_subConfigUsageGuide')) $acc_text .= v2raystore_subConfigUsageGuide();
         }
-        $res = sendMessage($acc_text, $keyboard, 'HTML', $uid);
-        return function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+        $sendOk = false;
+        if($subLink != '' && function_exists('v2raystore_sendQrLinkMessage')){
+            $sendOk = v2raystore_sendQrLinkMessage($uid, $subLink, $acc_text, $keyboard, 'HTML');
+        }
+        if(!$sendOk){
+            $res = sendMessage($acc_text, $keyboard, 'HTML', $uid);
+            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+        }
+        return $sendOk;
     }
 
     if(!class_exists('QRcode') && file_exists('phpqrcode/qrlib.php')) @include_once 'phpqrcode/qrlib.php';

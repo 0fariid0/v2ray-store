@@ -101,7 +101,7 @@ if(preg_match('/^agSendToggle(\d+)_(\d+)_(\d+)$/', $data ?? '', $match) && ($fro
     if(!is_object($res) || empty($res->ok)){
         sendMessage($txt, $keys, 'HTML');
     }
-    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next, 'پیش‌فرض سرور ⚙️') : $next;
+    $label = function_exists('v2raystore_agentServerDeliveryDisplayLabel') ? v2raystore_agentServerDeliveryDisplayLabel($agentId, $serverId) : (function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($next, 'پیش‌فرض سرور ⚙️') : $next);
     alert('نحوه ارسال تغییر کرد: ' . $label);
     exit();
 }
@@ -149,7 +149,7 @@ if(preg_match('/^agSendSet(\d+)_(\d+)_(default|both|config|sub)_(\d+)$/', $data 
     if(!is_object($res) || empty($res->ok)){
         sendMessage($txt, $keys, 'HTML');
     }
-    $label = function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($mode, 'پیش‌فرض سرور ⚙️') : $mode;
+    $label = function_exists('v2raystore_agentServerDeliveryDisplayLabel') ? v2raystore_agentServerDeliveryDisplayLabel($agentId, $serverId) : (function_exists('v2raystore_deliveryModeLabel') ? v2raystore_deliveryModeLabel($mode, 'پیش‌فرض سرور ⚙️') : $mode);
     alert('نحوه ارسال ذخیره شد: ' . $label);
     exit();
 }
@@ -5541,7 +5541,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
             $id = $file['id'];
             $name = $file['title'];
             $price = $file['price'];
-            if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much")){
+            if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much" || preg_match('/^renew\d+$/', $match['buyType']))){
                 $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $sid, $file['volume'] ?? 0, 1) : $price;
             }
             $price = ($price == 0) ? 'رایگان' : number_format($price).' تومان ';
@@ -5583,7 +5583,7 @@ if(preg_match('/selectCustomPlan(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\
 if(preg_match('/selectCustomePlan(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\w+)/',$data, $match) && ($botState['sellState']=="on" ||$from_id == $admin)){
 	delMessage();
 	$price = $botState['gbPrice'];
-	if($match['buyType'] == "one" && $userInfo['is_agent'] == true){ 
+	if(($match['buyType'] == "one" || preg_match('/^renew\d+$/', $match['buyType'])) && $userInfo['is_agent'] == true){ 
         $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ?");
         $stmt->bind_param("i", $match[1]);
         $stmt->execute();
@@ -5619,7 +5619,7 @@ if(preg_match('/selectCustomPlanGB(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\
     
     $id = $match['planId'];
     $price = $botState['dayPrice'];
-	if($match['buyType'] == "one" && $userInfo['is_agent'] == true){
+	if(($match['buyType'] == "one" || preg_match('/^renew\d+$/', $match['buyType'])) && $userInfo['is_agent'] == true){
         $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ?");
         $stmt->bind_param("i", $id);
         $stmt->execute();
@@ -5769,7 +5769,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         $gbPrice = $botState['gbPrice'];
         $dayPrice = $botState['dayPrice'];
         
-        if($userInfo['is_agent'] == true && $match['buyType'] == "one") {
+        if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || preg_match('/^renew\d+$/', $match['buyType']))) {
             $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id` = ?");
             $stmt->bind_param("i", $match[1]);
             $stmt->execute();
@@ -5786,7 +5786,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         }
         
         $agentBought = false;
-        if($userInfo['is_agent'] == 1 && ($match['buyType'] == "one" || $match['buyType'] == "much")) {
+        if($userInfo['is_agent'] == 1 && ($match['buyType'] == "one" || $match['buyType'] == "much" || preg_match('/^renew\d+$/', $match['buyType']))) {
             $agentBought = true;
         }
         
@@ -5990,7 +5990,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
     if(isset($accountCount)) $price *= $accountCount;
     
     $agentBought = false;
-    if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much")){
+    if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much" || preg_match('/^renew\d+$/', $match['buyType']))){
         $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $sid, $respd['volume'] ?? 0, $accountCount ?? 1) : $price;
 
         $agentBought = true;
@@ -6399,65 +6399,57 @@ if(preg_match('/^showQr(Sub|Config)(\d+)/',$data,$match)){
     $stmt->execute();
     $order = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$order){
+        alert('سرویس پیدا نشد.', true);
+        exit;
+    }
 
-    include_once 'phpqrcode/qrlib.php';
-    if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
-    if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
-    if($match[1] == "Sub"){
-        $subLink = v2raystore_makeCustomerSubLink($order['server_id'], $order['token'], $order['uuid'] ?? "", $order['inbound_id'] ?? 0, $order['remark'] ?? "");
-        if($subLink == ""){
-            alert("لینک ساب پنل برای این سرویس پیدا نشد.");
+    $qrType = $match[1];
+    if($qrType == 'Config' && function_exists('v2raystore_isSubOnlyOrder') && v2raystore_isSubOnlyOrder($order)){
+        // وقتی سرویس فقط با لینک ساب ارسال می‌شود، QR دکمه کانفیگ هم باید روی آدرس ساب ساخته شود.
+        $qrType = 'Sub';
+    }
+
+    $remarkSafe = htmlspecialchars((string)($order['remark'] ?? ''), ENT_QUOTES, 'UTF-8');
+    $keyboard = function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]], JSON_UNESCAPED_UNICODE);
+
+    if($qrType == "Sub"){
+        $subLink = function_exists('v2raystore_orderCurrentSubLink')
+            ? v2raystore_orderCurrentSubLink($order)
+            : v2raystore_makeCustomerSubLink($order['server_id'], $order['token'], $order['uuid'] ?? "", $order['inbound_id'] ?? 0, $order['remark'] ?? "");
+        if(trim((string)$subLink) == ""){
+            alert("لینک ساب پنل برای این سرویس پیدا نشد.", true);
             exit;
         }
-        $file = RandomString() .".png";
-        $ecc = 'L';
-        $pixel_Size = 11;
-        $frame_Size = 0;
-        
-        QRcode::png($subLink, $file, $ecc, $pixel_Size, $frame_Size);
-    	addBorderImage($file);
-    	
-    	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-        $qrImage = imagecreatefrompng($file);
-        
-        $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-        imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-        imagepng($backgroundImage, $file);
-        imagedestroy($backgroundImage);
-        imagedestroy($qrImage);
-
-    	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
-        unlink($file);
-    }
-    elseif($match[1] == "Config"){
-
-        
-        
-        $vraylink = json_decode($order['link'],true);
-        if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
-        if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
-        foreach($vraylink as $vray_link){
-            $file = RandomString() .".png";
-            $ecc = 'L';
-            $pixel_Size = 11;
-            $frame_Size = 0;
-            
-            QRcode::png($vray_link, $file, $ecc, $pixel_Size, $frame_Size);
-        	addBorderImage($file);
-            	
-        	$backgroundImage = imagecreatefromjpeg("settings/QRCode.jpg");
-            $qrImage = imagecreatefrompng($file);
-            
-            $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
-            imagecopy($backgroundImage, $qrImage, 300, 300 , 0, 0, $qrSize['width'], $qrSize['height']);
-            imagepng($backgroundImage, $file);
-            imagedestroy($backgroundImage);
-            imagedestroy($qrImage);
-            
-        	sendPhoto($botUrl . $file, $acc_text,(function_exists('v2raystore_configSentKeyboard') ? v2raystore_configSentKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]]]])),"HTML", $uid);
-            unlink($file);
+        $acc_text = "🌐 <b>QR لینک ساب</b>\n";
+        if($remarkSafe !== '') $acc_text .= "🔮 سرویس: <b>{$remarkSafe}</b>\n";
+        $acc_text .= "\n<code>" . htmlspecialchars($subLink, ENT_QUOTES, 'UTF-8') . "</code>";
+        if(function_exists('v2raystore_subConfigUsageGuide')) $acc_text .= v2raystore_subConfigUsageGuide();
+        if(function_exists('v2raystore_sendQrLinkMessage') && v2raystore_sendQrLinkMessage($from_id, $subLink, $acc_text, $keyboard, 'HTML')){
+            exit;
         }
+        sendMessage($acc_text, $keyboard, 'HTML', $from_id);
+        exit;
     }
+
+    $vraylink = json_decode((string)($order['link'] ?? ''), true);
+    if(!is_array($vraylink)) $vraylink = [];
+    $sentAny = false;
+    foreach($vraylink as $vray_link){
+        $vray_link = trim((string)$vray_link);
+        if($vray_link === '') continue;
+        $acc_text = "💝 <b>QR کانفیگ</b>\n";
+        if($remarkSafe !== '') $acc_text .= "🔮 سرویس: <b>{$remarkSafe}</b>\n";
+        $acc_text .= "\n<code>" . htmlspecialchars($vray_link, ENT_QUOTES, 'UTF-8') . "</code>";
+        if(function_exists('v2raystore_sendQrLinkMessage') && v2raystore_sendQrLinkMessage($from_id, $vray_link, $acc_text, $keyboard, 'HTML')){
+            $sentAny = true;
+            continue;
+        }
+        sendMessage($acc_text, $keyboard, 'HTML', $from_id);
+        $sentAny = true;
+    }
+    if(!$sentAny) alert('لینک کانفیگ برای ساخت QR پیدا نشد.', true);
+    exit;
 }
 if(preg_match('/payCustomWithCartToCart(.*)/',$data, $match)) {
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
