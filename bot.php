@@ -17552,6 +17552,54 @@ function farid_switchIsMarzbanType($type){
     return trim((string)$type) === 'marzban';
 }
 
+
+function farid_switchExtractSubIdFast($value){
+    $value = trim((string)$value);
+    if($value === '') return '';
+    if(function_exists('v2raystore_extractSubIdFromResponseValue')){
+        $sid = v2raystore_extractSubIdFromResponseValue($value);
+        if($sid !== '' && !preg_match('/^[A-Za-z0-9]{30}$/', $sid)) return $sid;
+    }
+    if(preg_match('#/(?:sub|json)/([^/?#\s]+)#i', $value, $m)){
+        $sid = trim((string)$m[1]);
+        return ($sid !== '' && preg_match('/^[A-Za-z0-9_-]{6,80}$/', $sid) && !preg_match('/^[A-Za-z0-9]{30}$/', $sid)) ? $sid : '';
+    }
+    if(preg_match('/^[A-Za-z0-9_-]{6,80}$/', $value) && !preg_match('/^[A-Za-z0-9]{30}$/', $value)) return $value;
+    return '';
+}
+
+function farid_switchBuildSubLinkNoPanel($order, $serverConfig = null){
+    global $botUrl;
+    if(!is_array($order)) return ['link'=>'', 'sub_id'=>'', 'token'=>''];
+    $serverConfig = is_array($serverConfig) ? $serverConfig : farid_switchGetServerConfig(intval($order['server_id'] ?? 0));
+    $token = trim((string)($order['token'] ?? ''));
+    if($token === '') return ['link'=>'', 'sub_id'=>'', 'token'=>''];
+
+    if(preg_match('#^https?://#i', $token)){
+        return ['link'=>$token, 'sub_id'=>farid_switchExtractSubIdFast($token), 'token'=>$token];
+    }
+
+    $type = trim((string)($serverConfig['type'] ?? ''));
+    $subId = farid_switchExtractSubIdFast($token);
+    $link = '';
+
+    if($type === 'marzban'){
+        $panel = rtrim((string)($serverConfig['panel_url'] ?? ''), '/');
+        if($panel !== '') $link = $panel . '/sub/' . rawurlencode($token);
+    }elseif(function_exists('v2raystore_isPanelSubscriptionServer') && v2raystore_isPanelSubscriptionServer($type)){
+        // این بخش عمداً به پنل درخواست نمی‌زند تا ربات موقع تغییر لوکیشن هنگ نکند.
+        // فقط اگر دامنه/بیس ساب دستی برای سرور ثبت شده باشد، لینک سریع ساخته می‌شود.
+        if($subId !== '' && function_exists('v2raystore_serverManualSubBase')){
+            $base = v2raystore_serverManualSubBase($serverConfig, 'sub');
+            if($base !== '') $link = rtrim($base, '/') . '/' . rawurlencode($subId);
+        }
+    }else{
+        $link = rtrim((string)$botUrl, '/') . '/settings/subLink.php?token=' . urlencode($token);
+    }
+
+    return ['link'=>$link, 'sub_id'=>$subId, 'token'=>$token];
+}
+
 function farid_switchGetServerConfig($serverId){
     global $connection;
     $serverId = intval($serverId);
@@ -17911,11 +17959,10 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     if(!$oldConfig || !$targetConfig) return ['ok'=>false, 'message'=>'تنظیمات سرور مبدا یا مقصد پیدا نشد.'];
     $oldType = (string)($oldConfig['type'] ?? '');
     $targetType = (string)($targetConfig['type'] ?? '');
-    $oldSubLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($order) : '';
-    // برای جلوگیری از هنگ/تاخیر موقع تغییر لوکیشن، اینجا دیگر از پنل برای پیدا کردن subId درخواست اضافه نمی‌زنیم.
-    // همان token ذخیره‌شده در سفارش قبلی نگه داشته می‌شود تا آدرس ساب کاربر بعد از انتقال تغییر نکند.
-    $oldSubId = trim((string)($order['token'] ?? ''));
-    if($oldSubId !== '' && !preg_match('/^[A-Za-z0-9_-]{6,80}$/', $oldSubId)) $oldSubId = '';
+    // لینک/توکن ساب قبلی را بدون درخواست اضافه به پنل نگه می‌داریم تا تغییر لوکیشن هنگ نکند.
+    $oldSubSnapshot = function_exists('farid_switchBuildSubLinkNoPanel') ? farid_switchBuildSubLinkNoPanel($order, $oldConfig) : ['link'=>'', 'sub_id'=>'', 'token'=>trim((string)($order['token'] ?? ''))];
+    $oldSubLink = trim((string)($oldSubSnapshot['link'] ?? ''));
+    $oldSubId = trim((string)($oldSubSnapshot['sub_id'] ?? ''));
 
     // برای جلوگیری از باگ، جابه‌جایی بین مرزبان و X-UI را انجام نمی‌دهیم.
     if(farid_switchIsMarzbanType($oldType) xor farid_switchIsMarzbanType($targetType)){
@@ -17960,8 +18007,13 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $targetInboundId = !empty($targetInboundIds) ? intval($targetInboundIds[0]) : intval($targetPlan['inbound_id'] ?? 0);
     $links = [];
     $deleteOldAction = null;
-    $newToken = (string)($order['token'] ?? '');
-    if($oldSubId !== '') $newToken = $oldSubId;
+    $newToken = trim((string)($order['token'] ?? ''));
+    if($newToken === '' && $oldSubId !== '') $newToken = $oldSubId;
+    // اگر لینک کامل ساب قبلی را می‌توانیم سریع بسازیم، همان را در سفارش نگه می‌داریم
+    // تا بعد از تغییر لوکیشن هم آدرس ساب در جزئیات سرویس عوض نشود.
+    if($oldSubLink !== '' && $oldSubId !== '' && preg_match('#^https?://#i', $oldSubLink) && !farid_switchIsMarzbanType($oldType)){
+        $newToken = $oldSubLink;
+    }
     $newUuid = $uuid;
     $newProtocol = (string)($order['protocol'] ?? ($live['protocol'] ?? ''));
 
@@ -17981,8 +18033,8 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
         }
         $links = is_array($response->vray_links ?? null) ? $response->vray_links : [];
         $panelToken = str_replace('/sub/', '', (string)($response->sub_link ?? ''));
-        $newToken = ($oldSubId !== '') ? $oldSubId : $panelToken;
-        $newUuid = $panelToken !== '' ? $panelToken : $newToken;
+        if($newToken === '') $newToken = ($oldSubId !== '' ? $oldSubId : $panelToken);
+        $newUuid = $panelToken !== '' ? $panelToken : ($oldSubId !== '' ? $oldSubId : $newToken);
         $deleteOldAction = ['type'=>'marzban'];
     }else{
         if($targetInboundId > 0){
@@ -18115,9 +18167,13 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $deliveryOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($newOrderForDelivery) : ['config'=>true, 'sub'=>false];
     $subLink = '';
     if(!empty($deliveryOptions['sub'])){
-        $freshSubLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($newOrderForDelivery) : '';
-        // در تغییر لوکیشن لینک ساب کاربر نباید عوض شود؛ اگر قبلاً لینک ساب داشته، همان لینک ارسال می‌شود.
-        $subLink = trim((string)$oldSubLink) !== '' ? trim((string)$oldSubLink) : $freshSubLink;
+        // برای جلوگیری از هنگ، اینجا هم سراغ پنل نمی‌رویم. اگر لینک قبلی موجود باشد همان ارسال می‌شود؛
+        // در غیر این صورت لینک جدید فقط از تنظیمات محلی/دامنه ساب ساخته می‌شود.
+        $subLink = trim((string)$oldSubLink);
+        if($subLink === '' && function_exists('farid_switchBuildSubLinkNoPanel')){
+            $newSubSnapshot = farid_switchBuildSubLinkNoPanel($newOrderForDelivery, $targetConfig);
+            $subLink = trim((string)($newSubSnapshot['link'] ?? ''));
+        }
     }
 
     return [

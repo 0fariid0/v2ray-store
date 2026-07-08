@@ -8276,6 +8276,11 @@ function v2raystore_panelSubLinkBySubId($server_id, $subId, $format = 'sub', $fa
 function v2raystore_makeCustomerSubLink($server_id, $token = '', $uuid = '', $inbound_id = 0, $remark = '', $format = 'sub'){
     global $connection, $botUrl;
 
+    $token = trim((string)$token);
+    // اگر توکن به صورت لینک کامل ذخیره شده باشد، همان لینک را برگردان؛
+    // این کار جلوی تغییر ناخواسته لینک ساب بعد از تغییر لوکیشن را می‌گیرد.
+    if($token !== '' && preg_match('#^https?://#i', $token)) return $token;
+
     $stmt = $connection->prepare("SELECT `type`, `panel_url`, `sub_domain` FROM `server_config` WHERE `id`=? LIMIT 1");
     $stmt->bind_param('i', $server_id);
     $stmt->execute();
