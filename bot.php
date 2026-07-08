@@ -2213,6 +2213,21 @@ if(preg_match('/^toggleAgentBuying_(\d+)$/', $data, $match) && ($from_id == $adm
     editText($message_id, str_replace('AGENT-NAME', $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId));
     exit();
 }
+if(preg_match('/^toggleAgentSwitchLocation_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $agentId = intval($match[1]);
+    $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $info = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$info){ alert('نماینده پیدا نشد'); exit(); }
+    $next = function_exists('v2raystore_toggleAgentSwitchLocationState') ? v2raystore_toggleAgentSwitchLocationState($agentId) : false;
+    if($next === false){ alert('ذخیره تنظیمات تغییر لوکیشن انجام نشد.', true); exit(); }
+    $label = function_exists('v2raystore_agentSwitchLocationLabel') ? v2raystore_agentSwitchLocationLabel($next) : $next;
+    alert('تغییر لوکیشن نماینده: ' . $label);
+    editText($message_id, str_replace('AGENT-NAME', $info['name'] ?? $agentId, $mainValues['agent_discount_settings']), getAgentDiscounts($agentId));
+    exit();
+}
 if(preg_match('/^editAgent(DailyCap|CreditCap)_(\d+)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $agentId = intval($match[2]);
     delMessage();
@@ -12348,7 +12363,11 @@ if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
         alert('⛔️ شما به این کانفیگ دسترسی ندارید', true);
         exit();
     }
-    if(!$isAdminSwitch && (($botState['switchLocationState'] ?? 'off') != 'on')){
+    if(!$isAdminSwitch && function_exists('v2raystore_canUseSwitchLocation') && !v2raystore_canUseSwitchLocation($order, $from_id, false)){
+        alert('⛔️ تغییر سرور برای این سرویس در حال حاضر غیرفعال است.', true);
+        exit();
+    }
+    if(!$isAdminSwitch && !function_exists('v2raystore_canUseSwitchLocation') && (($botState['switchLocationState'] ?? 'off') != 'on')){
         alert('⛔️ تغییر سرور در حال حاضر غیرفعال است.', true);
         exit();
     }
@@ -12419,6 +12438,7 @@ if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
     $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
     $ownerId = intval($order['userid'] ?? 0);
     if(!$isAdminSwitch && $ownerId != $from_id){ alert('⛔️ شما به این کانفیگ دسترسی ندارید', true); exit(); }
+    if(!$isAdminSwitch && function_exists('v2raystore_canUseSwitchLocation') && !v2raystore_canUseSwitchLocation($order, $from_id, false)){ alert('⛔️ تغییر سرور برای این سرویس در حال حاضر غیرفعال است.', true); exit(); }
     $live = farid_switchGetOrderLiveState($order);
     if(empty($live['ok'])){ alert('⛔️ ' . ($live['message'] ?? 'امکان بررسی حجم سرویس وجود ندارد.'), true); exit(); }
     $remainingGb = floatval($live['remaining_gb'] ?? 0);
@@ -17867,7 +17887,8 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     if(!$order) return ['ok'=>false, 'message'=>'کانفیگ پیدا نشد.'];
     $ownerId = intval($order['userid'] ?? 0);
     if(!$isAdminSwitch && $ownerId !== $actorId) return ['ok'=>false, 'message'=>'شما به این کانفیگ دسترسی ندارید.'];
-    if(!$isAdminSwitch && (($botState['switchLocationState'] ?? 'off') != 'on')) return ['ok'=>false, 'message'=>'تغییر سرور در حال حاضر غیرفعال است.'];
+    if(!$isAdminSwitch && function_exists('v2raystore_canUseSwitchLocation') && !v2raystore_canUseSwitchLocation($order, $actorId, false)) return ['ok'=>false, 'message'=>'تغییر سرور برای این سرویس در حال حاضر غیرفعال است.'];
+    if(!$isAdminSwitch && !function_exists('v2raystore_canUseSwitchLocation') && (($botState['switchLocationState'] ?? 'off') != 'on')) return ['ok'=>false, 'message'=>'تغییر سرور در حال حاضر غیرفعال است.'];
     if(intval($order['amount'] ?? 0) <= 0 && intval($order['agent_bought'] ?? 0) == 0) return ['ok'=>false, 'message'=>'اکانت تست یا سرویس رایگان قابل تغییر سرور نیست.'];
     if(intval($order['server_id'] ?? 0) === $targetServerId) return ['ok'=>false, 'message'=>'سرور مقصد با سرور فعلی یکی است.'];
     if(intval($order['expire_date'] ?? 0) > 0 && intval($order['expire_date']) < time()) return ['ok'=>false, 'message'=>'سرویس غیرفعال است؛ ابتدا باید تمدید شود.'];
@@ -17887,6 +17908,20 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     if(!$oldConfig || !$targetConfig) return ['ok'=>false, 'message'=>'تنظیمات سرور مبدا یا مقصد پیدا نشد.'];
     $oldType = (string)($oldConfig['type'] ?? '');
     $targetType = (string)($targetConfig['type'] ?? '');
+    $oldSubLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($order) : '';
+    $oldSubId = '';
+    if(function_exists('v2raystore_getPanelClientSubData')){
+        $oldSubData = v2raystore_getPanelClientSubData(
+            $oldServerId,
+            (string)($order['token'] ?? ''),
+            (string)($order['uuid'] ?? ''),
+            intval($order['inbound_id'] ?? 0),
+            (string)($order['remark'] ?? '')
+        );
+        if(is_array($oldSubData) && !empty($oldSubData['subId'])) $oldSubId = trim((string)$oldSubData['subId']);
+    }
+    if($oldSubId === '') $oldSubId = trim((string)($order['token'] ?? ''));
+    if($oldSubId !== '' && !preg_match('/^[A-Za-z0-9_-]{6,80}$/', $oldSubId)) $oldSubId = '';
 
     // برای جلوگیری از باگ، جابه‌جایی بین مرزبان و X-UI را انجام نمی‌دهیم.
     if(farid_switchIsMarzbanType($oldType) xor farid_switchIsMarzbanType($targetType)){
@@ -17932,6 +17967,7 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $links = [];
     $deleteOldAction = null;
     $newToken = (string)($order['token'] ?? '');
+    if($oldSubId !== '') $newToken = $oldSubId;
     $newUuid = $uuid;
     $newProtocol = (string)($order['protocol'] ?? ($live['protocol'] ?? ''));
 
@@ -17950,8 +17986,9 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
             return ['ok'=>false, 'message'=>'ساخت کانفیگ در سرور مقصد انجام نشد: ' . $msg];
         }
         $links = is_array($response->vray_links ?? null) ? $response->vray_links : [];
-        $newToken = str_replace('/sub/', '', (string)($response->sub_link ?? ''));
-        $newUuid = $newToken;
+        $panelToken = str_replace('/sub/', '', (string)($response->sub_link ?? ''));
+        $newToken = ($oldSubId !== '') ? $oldSubId : $panelToken;
+        $newUuid = $panelToken !== '' ? $panelToken : $newToken;
         $deleteOldAction = ['type'=>'marzban'];
     }else{
         if($targetInboundId > 0){
@@ -17967,7 +18004,7 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
                 'limitIp' => intval($live['limitIp'] ?? 0),
                 'totalGB' => $newBytes,
                 'expiryTime' => intval($live['expire_millis'] ?? 0),
-                'subId' => RandomString(16),
+                'subId' => ($oldSubId !== '' ? $oldSubId : RandomString(16)),
             ];
             if($flow !== '') $newArr['flow'] = $flow;
             $response = addInboundAccount($targetServerId, '', $targetInboundId, 1, $newRemark, 0, intval($live['limitIp'] ?? 0), $newArr, $targetPlanId);
@@ -18082,7 +18119,12 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $newOrderForDelivery['link'] = $linkJson;
     $newOrderForDelivery['remark'] = $newRemark;
     $deliveryOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($newOrderForDelivery) : ['config'=>true, 'sub'=>false];
-    $subLink = (!empty($deliveryOptions['sub']) && function_exists('v2raystore_orderCurrentSubLink')) ? v2raystore_orderCurrentSubLink($newOrderForDelivery) : '';
+    $subLink = '';
+    if(!empty($deliveryOptions['sub'])){
+        $freshSubLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($newOrderForDelivery) : '';
+        // در تغییر لوکیشن لینک ساب کاربر نباید عوض شود؛ اگر قبلاً لینک ساب داشته، همان لینک ارسال می‌شود.
+        $subLink = trim((string)$oldSubLink) !== '' ? trim((string)$oldSubLink) : $freshSubLink;
+    }
 
     return [
         'ok' => true,

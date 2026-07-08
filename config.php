@@ -3201,6 +3201,12 @@ function v2raystore_agentPricingDecode($raw){
     $data['limits']['buying'] = in_array($buyState, ['off','disable','disabled','0','false'], true) ? 'off' : 'on';
     $data['limits']['daily_cap'] = max(0, intval($data['limits']['daily_cap'] ?? 0));
     $data['limits']['credit_cap'] = max(0, intval($data['limits']['credit_cap'] ?? 0));
+
+    $switchLocation = strtolower(trim((string)($data['switch_location'] ?? 'default')));
+    if(in_array($switchLocation, ['on','enable','enabled','true','yes','1'], true)) $switchLocation = 'on';
+    elseif(in_array($switchLocation, ['off','disable','disabled','false','no','0'], true)) $switchLocation = 'off';
+    else $switchLocation = 'default';
+    $data['switch_location'] = $switchLocation;
     return $data;
 }
 
@@ -3285,6 +3291,77 @@ function v2raystore_agentLimitsLabel($raw){
     $daily = $l['daily_cap'] > 0 ? ($l['daily_cap'] . ' خرید/روز') : 'نامحدود';
     $credit = $l['credit_cap'] > 0 ? (number_format($l['credit_cap']) . ' تومان') : 'نامحدود';
     return "خرید: {$buying} | سقف روزانه: {$daily} | سقف اعتبار/بدهی: {$credit}";
+}
+
+
+function v2raystore_agentSwitchLocationStateNormalize($state){
+    if(is_bool($state)) return $state ? 'on' : 'off';
+    if(is_int($state) || is_float($state)) return intval($state) === 1 ? 'on' : (intval($state) === 0 ? 'off' : 'default');
+    $state = strtolower(trim((string)$state));
+    if(in_array($state, ['on','enable','enabled','true','yes','1'], true)) return 'on';
+    if(in_array($state, ['off','disable','disabled','false','no','0'], true)) return 'off';
+    return 'default';
+}
+
+function v2raystore_agentSwitchLocationLabel($state){
+    $state = v2raystore_agentSwitchLocationStateNormalize($state);
+    if($state === 'on') return 'فعال اختصاصی ✅';
+    if($state === 'off') return 'خاموش اختصاصی 🚫';
+    return 'پیش‌فرض عمومی ⚙️';
+}
+
+function v2raystore_getAgentSwitchLocationState($agentUserOrId){
+    $agent = is_array($agentUserOrId) ? $agentUserOrId : v2raystore_getUserRowById($agentUserOrId);
+    if(!v2raystore_isAgentUser($agent)) return 'default';
+    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
+    return v2raystore_agentSwitchLocationStateNormalize($discounts['switch_location'] ?? 'default');
+}
+
+function v2raystore_setAgentSwitchLocationState($agentId, $state){
+    global $connection;
+    $agentId = intval($agentId);
+    $state = v2raystore_agentSwitchLocationStateNormalize($state);
+    if($agentId <= 0 || !isset($connection) || !$connection) return false;
+    $stmt = @$connection->prepare("SELECT `discount_percent` FROM `users` WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('i', $agentId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return false;
+    $discounts = v2raystore_agentPricingDecode($row['discount_percent'] ?? null);
+    $discounts['switch_location'] = $state;
+    $encoded = json_encode($discounts, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = @$connection->prepare("UPDATE `users` SET `discount_percent`=? WHERE `userid`=? AND `is_agent`=1 LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('si', $encoded, $agentId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+
+function v2raystore_toggleAgentSwitchLocationState($agentId){
+    $current = v2raystore_getAgentSwitchLocationState($agentId);
+    if($current === 'default') $next = 'on';
+    elseif($current === 'on') $next = 'off';
+    else $next = 'default';
+    return v2raystore_setAgentSwitchLocationState($agentId, $next) ? $next : false;
+}
+
+function v2raystore_agentCanSwitchLocation($agentUserOrId){
+    global $botState;
+    $state = v2raystore_getAgentSwitchLocationState($agentUserOrId);
+    if($state === 'on') return true;
+    if($state === 'off') return false;
+    return (($botState['switchLocationState'] ?? 'off') === 'on');
+}
+
+function v2raystore_canUseSwitchLocation($order, $actorId = 0, $isAdminSwitch = false){
+    global $botState;
+    if($isAdminSwitch) return true;
+    if(!is_array($order)) return false;
+    if(!empty($order['agent_bought'])) return v2raystore_agentCanSwitchLocation(intval($order['userid'] ?? $actorId));
+    return (($botState['switchLocationState'] ?? 'off') === 'on');
 }
 
 function v2raystore_agentTodayOrdersCount($agentId){
@@ -9476,6 +9553,11 @@ function getAgentDiscounts($agentId){
     $keys[] = [
         ['text'=>'خرید نماینده: ' . ($limits['buying'] === 'on' ? 'فعال ✅' : 'بسته 🚫'), 'callback_data'=>'toggleAgentBuying_' . $agentId]
     ];
+    $switchLocationState = function_exists('v2raystore_getAgentSwitchLocationState') ? v2raystore_getAgentSwitchLocationState($agentInfo) : 'default';
+    $switchLocationLabel = function_exists('v2raystore_agentSwitchLocationLabel') ? v2raystore_agentSwitchLocationLabel($switchLocationState) : $switchLocationState;
+    $keys[] = [
+        ['text'=>'🌎 تغییر لوکیشن نماینده: ' . $switchLocationLabel, 'callback_data'=>'toggleAgentSwitchLocation_' . $agentId]
+    ];
     $keys[] = [
         ['text'=>'سقف روزانه: ' . ($limits['daily_cap'] > 0 ? $limits['daily_cap'] : 'نامحدود'), 'callback_data'=>'editAgentDailyCap_' . $agentId],
         ['text'=>'سقف اعتبار: ' . ($limits['credit_cap'] > 0 ? number_format($limits['credit_cap']) : 'نامحدود'), 'callback_data'=>'editAgentCreditCap_' . $agentId]
@@ -10665,6 +10747,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $link_status = $order['expire_date'] > time()  ? $buttonValues['active'] : $buttonValues['deactive'];
         $price = $order['amount'];
         $configNote = function_exists('v2raystore_safeConfigNoteText') ? v2raystore_safeConfigNoteText($order['config_note'] ?? '') : trim((string)($order['config_note'] ?? ''));
+        $switchLocationAllowedForOrder = true;
         
     	$stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ?");
     	$stmt->bind_param('i', $server_id);
@@ -10971,6 +11054,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         $link_status = $order['expire_date'] > time()  ? $buttonValues['active'] : $buttonValues['deactive'];
         $price = $order['amount'];
         $configNote = function_exists('v2raystore_safeConfigNoteText') ? v2raystore_safeConfigNoteText($order['config_note'] ?? '') : trim((string)($order['config_note'] ?? ''));
+        $switchLocationAllowedForOrder = function_exists('v2raystore_canUseSwitchLocation') ? v2raystore_canUseSwitchLocation($order, $from_id, false) : (($botState['switchLocationState'] ?? 'off') === 'on');
         
     	$stmt = $connection->prepare("SELECT * FROM `server_config` WHERE `id` = ?");
     	$stmt->bind_param('i', $server_id);
@@ -11138,7 +11222,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 && $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}"];
+                            if($switchLocationAllowedForOrder) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}"];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
                     }else{
@@ -11154,7 +11238,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
+                            if($switchLocationAllowedForOrder) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
                     }
@@ -11171,7 +11255,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
+                            if($switchLocationAllowedForOrder) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
                     }
@@ -11186,7 +11270,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on") $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
+                            if($switchLocationAllowedForOrder) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
     
@@ -11211,7 +11295,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                         $temp = array();
                         if($price != 0 || $agentBought == true){
                             if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                            if($botState['switchLocationState']=="on" && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
+                            if($switchLocationAllowedForOrder && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                         }
                         if(count($temp)>0) array_push($keyboard, $temp);
     
@@ -11227,7 +11311,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                 $temp = array();
                 if($price != 0 || $agentBought == true){
                     if($botState['renewAccountState']=="on") $temp[] = ['text' => $buttonValues['renew_config'], 'callback_data' => "renewAccount$id" ];
-                    if($botState['switchLocationState']=="on" && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
+                    if($switchLocationAllowedForOrder && $rahgozar != true) $temp[] = ['text' => $buttonValues['change_config_location'], 'callback_data' => "switchLocation{$id}" ];
                 }
                 if(count($temp)>0) array_push($keyboard, $temp);
     
