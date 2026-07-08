@@ -12359,7 +12359,8 @@ if(preg_match('/^switchLocation(\d+)$/', $data, $match)){
     }
     $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
     $ownerId = intval($order['userid'] ?? 0);
-    if(!$isAdminSwitch && $ownerId != $from_id){
+    $canAccessSwitchOrder = function_exists('v2raystore_canActorSwitchOrder') ? v2raystore_canActorSwitchOrder($order, $from_id, $isAdminSwitch) : ($isAdminSwitch || $ownerId == $from_id);
+    if(!$canAccessSwitchOrder){
         alert('⛔️ شما به این کانفیگ دسترسی ندارید', true);
         exit();
     }
@@ -12437,7 +12438,8 @@ if(preg_match('/^switchSrvPreview(\d+)_(\d+)$/', $data, $match)){
     if(!$order){ alert($mainValues['config_not_found'] ?? 'کانفیگ یافت نشد', true); exit(); }
     $isAdminSwitch = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
     $ownerId = intval($order['userid'] ?? 0);
-    if(!$isAdminSwitch && $ownerId != $from_id){ alert('⛔️ شما به این کانفیگ دسترسی ندارید', true); exit(); }
+    $canAccessSwitchOrder = function_exists('v2raystore_canActorSwitchOrder') ? v2raystore_canActorSwitchOrder($order, $from_id, $isAdminSwitch) : ($isAdminSwitch || $ownerId == $from_id);
+    if(!$canAccessSwitchOrder){ alert('⛔️ شما به این کانفیگ دسترسی ندارید', true); exit(); }
     if(!$isAdminSwitch && function_exists('v2raystore_canUseSwitchLocation') && !v2raystore_canUseSwitchLocation($order, $from_id, false)){ alert('⛔️ تغییر سرور برای این سرویس در حال حاضر غیرفعال است.', true); exit(); }
     $live = farid_switchGetOrderLiveState($order);
     if(empty($live['ok'])){ alert('⛔️ ' . ($live['message'] ?? 'امکان بررسی حجم سرویس وجود ندارد.'), true); exit(); }
@@ -17886,7 +17888,8 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $order = v2raystore_switchGetOrder($orderId);
     if(!$order) return ['ok'=>false, 'message'=>'کانفیگ پیدا نشد.'];
     $ownerId = intval($order['userid'] ?? 0);
-    if(!$isAdminSwitch && $ownerId !== $actorId) return ['ok'=>false, 'message'=>'شما به این کانفیگ دسترسی ندارید.'];
+    $canAccessSwitchOrder = function_exists('v2raystore_canActorSwitchOrder') ? v2raystore_canActorSwitchOrder($order, $actorId, $isAdminSwitch) : ($isAdminSwitch || $ownerId === $actorId);
+    if(!$canAccessSwitchOrder) return ['ok'=>false, 'message'=>'شما به این کانفیگ دسترسی ندارید.'];
     if(!$isAdminSwitch && function_exists('v2raystore_canUseSwitchLocation') && !v2raystore_canUseSwitchLocation($order, $actorId, false)) return ['ok'=>false, 'message'=>'تغییر سرور برای این سرویس در حال حاضر غیرفعال است.'];
     if(!$isAdminSwitch && !function_exists('v2raystore_canUseSwitchLocation') && (($botState['switchLocationState'] ?? 'off') != 'on')) return ['ok'=>false, 'message'=>'تغییر سرور در حال حاضر غیرفعال است.'];
     if(intval($order['amount'] ?? 0) <= 0 && intval($order['agent_bought'] ?? 0) == 0) return ['ok'=>false, 'message'=>'اکانت تست یا سرویس رایگان قابل تغییر سرور نیست.'];
@@ -17909,18 +17912,9 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $oldType = (string)($oldConfig['type'] ?? '');
     $targetType = (string)($targetConfig['type'] ?? '');
     $oldSubLink = function_exists('v2raystore_orderCurrentSubLink') ? v2raystore_orderCurrentSubLink($order) : '';
-    $oldSubId = '';
-    if(function_exists('v2raystore_getPanelClientSubData')){
-        $oldSubData = v2raystore_getPanelClientSubData(
-            $oldServerId,
-            (string)($order['token'] ?? ''),
-            (string)($order['uuid'] ?? ''),
-            intval($order['inbound_id'] ?? 0),
-            (string)($order['remark'] ?? '')
-        );
-        if(is_array($oldSubData) && !empty($oldSubData['subId'])) $oldSubId = trim((string)$oldSubData['subId']);
-    }
-    if($oldSubId === '') $oldSubId = trim((string)($order['token'] ?? ''));
+    // برای جلوگیری از هنگ/تاخیر موقع تغییر لوکیشن، اینجا دیگر از پنل برای پیدا کردن subId درخواست اضافه نمی‌زنیم.
+    // همان token ذخیره‌شده در سفارش قبلی نگه داشته می‌شود تا آدرس ساب کاربر بعد از انتقال تغییر نکند.
+    $oldSubId = trim((string)($order['token'] ?? ''));
     if($oldSubId !== '' && !preg_match('/^[A-Za-z0-9_-]{6,80}$/', $oldSubId)) $oldSubId = '';
 
     // برای جلوگیری از باگ، جابه‌جایی بین مرزبان و X-UI را انجام نمی‌دهیم.

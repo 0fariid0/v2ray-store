@@ -3360,8 +3360,25 @@ function v2raystore_canUseSwitchLocation($order, $actorId = 0, $isAdminSwitch = 
     global $botState;
     if($isAdminSwitch) return true;
     if(!is_array($order)) return false;
-    if(!empty($order['agent_bought'])) return v2raystore_agentCanSwitchLocation(intval($order['userid'] ?? $actorId));
+    if(!empty($order['agent_bought'])){
+        $actorId = intval($actorId);
+        $actor = $actorId > 0 ? v2raystore_getUserRowById($actorId) : null;
+        if(v2raystore_isAgentUser($actor)) return v2raystore_agentCanSwitchLocation($actor);
+        return v2raystore_agentCanSwitchLocation(intval($order['userid'] ?? $actorId));
+    }
     return (($botState['switchLocationState'] ?? 'off') === 'on');
+}
+
+function v2raystore_canActorSwitchOrder($order, $actorId = 0, $isAdminSwitch = false){
+    if($isAdminSwitch) return true;
+    if(!is_array($order)) return false;
+    $actorId = intval($actorId);
+    if($actorId > 0 && intval($order['userid'] ?? 0) === $actorId) return true;
+    if(!empty($order['agent_bought'])){
+        $actor = $actorId > 0 ? v2raystore_getUserRowById($actorId) : null;
+        if(v2raystore_isAgentUser($actor)) return v2raystore_agentCanSwitchLocation($actor);
+    }
+    return false;
 }
 
 function v2raystore_agentTodayOrdersCount($agentId){
