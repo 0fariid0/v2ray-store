@@ -18076,6 +18076,18 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $newUuid = $uuid;
     $newProtocol = (string)($order['protocol'] ?? ($live['protocol'] ?? ''));
 
+    // اگر مبدا و مقصد روی همان پنل سنایی جدید باشند، برای حفظ Subscription ID باید
+    // کلاینت قبلی قبل از ساخت کلاینت جدید حذف شود؛ وگرنه پنل به خاطر تکراری بودن subId
+    // ساخت کلاینت مقصد را رد می‌کند. اطلاعات لازم برای rollback هم نگه داشته می‌شود.
+    $oldDeletedBeforeCreate = false;
+    $rollbackOldClient = null;
+    $shouldDeleteOldBeforeCreate = false;
+    if($oldType === 'sanaei_new' && $targetType === 'sanaei_new' && $sourceInboundId > 0 && $targetInboundId > 0 && $oldSubId !== ''){
+        $oldPanelUrl = rtrim((string)($oldConfig['panel_url'] ?? ''), '/');
+        $targetPanelUrl = rtrim((string)($targetConfig['panel_url'] ?? ''), '/');
+        $shouldDeleteOldBeforeCreate = ($oldServerId === $targetServerId) || ($oldPanelUrl !== '' && $targetPanelUrl !== '' && $oldPanelUrl === $targetPanelUrl);
+    }
+
     if(farid_switchIsMarzbanType($oldType) && farid_switchIsMarzbanType($targetType)){
         $expireSeconds = intval($live['expire_seconds'] ?? 0);
         $daysLeft = $expireSeconds > 0 ? max(1, (int)ceil(($expireSeconds - time()) / 86400)) : 3650;
@@ -18112,17 +18124,42 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
                 'subId' => ($oldSubId !== '' ? $oldSubId : RandomString(16)),
             ];
             if($flow !== '') $newArr['flow'] = $flow;
+
+            if($shouldDeleteOldBeforeCreate && !$oldDeletedBeforeCreate){
+                $oldProtocolForRollback = trim((string)($live['protocol'] ?? ($order['protocol'] ?? $protocol)));
+                $oldIdLabelForRollback = ($oldProtocolForRollback === 'trojan') ? 'password' : 'id';
+                $rollbackOldClient = [
+                    $oldIdLabelForRollback => $uuid,
+                    'email' => $oldRemark,
+                    'enable' => true,
+                    'limitIp' => intval($live['limitIp'] ?? 0),
+                    'totalGB' => $remainingBytes,
+                    'expiryTime' => intval($live['expire_millis'] ?? 0),
+                    'subId' => $oldSubId,
+                ];
+                if(trim((string)($live['flow'] ?? '')) !== '') $rollbackOldClient['flow'] = trim((string)$live['flow']);
+                $deletedOld = deleteClient($oldServerId, $sourceInboundId, $uuid, 1);
+                if($deletedOld === null){
+                    return ['ok'=>false, 'message'=>'حذف موقت کلاینت قبلی برای انتقال ساب انجام نشد. تغییر لوکیشن لغو شد.'];
+                }
+                $oldDeletedBeforeCreate = true;
+                usleep(350000);
+            }
+
             $response = addInboundAccount($targetServerId, '', $targetInboundId, 1, $newRemark, 0, intval($live['limitIp'] ?? 0), $newArr, $targetPlanId);
             if(is_object($response) && empty($response->success) && strstr((string)($response->msg ?? ''), 'Duplicate email')){
                 $newRemark .= RandomString(4, 'small');
                 $newArr['email'] = $newRemark;
                 $response = addInboundAccount($targetServerId, '', $targetInboundId, 1, $newRemark, 0, intval($live['limitIp'] ?? 0), $newArr, $targetPlanId);
             }
-            if($response === null) return ['ok'=>false, 'message'=>'اتصال به سرور مقصد برقرار نشد.'];
-            if($response === 'inbound not Found') return ['ok'=>false, 'message'=>'Inbound مقصد پیدا نشد.'];
-            if(!is_object($response) || empty($response->success)){
+            if($response === null || $response === 'inbound not Found' || !is_object($response) || empty($response->success)){
+                if($oldDeletedBeforeCreate && is_array($rollbackOldClient) && $sourceInboundId > 0){
+                    @addInboundAccount($oldServerId, '', $sourceInboundId, 1, $oldRemark, 0, intval($live['limitIp'] ?? 0), $rollbackOldClient, intval($order['fileid'] ?? 0));
+                }
+                if($response === null) return ['ok'=>false, 'message'=>'اتصال به سرور مقصد برقرار نشد. اگر کلاینت قبلی موقتاً حذف شده باشد، تلاش شد برگردانده شود.'];
+                if($response === 'inbound not Found') return ['ok'=>false, 'message'=>'Inbound مقصد پیدا نشد. اگر کلاینت قبلی موقتاً حذف شده باشد، تلاش شد برگردانده شود.'];
                 $msg = is_object($response) ? ($response->msg ?? 'خطای نامشخص') : 'پاسخ نامعتبر پنل مقصد';
-                return ['ok'=>false, 'message'=>'ساخت کانفیگ در سرور مقصد انجام نشد: ' . $msg];
+                return ['ok'=>false, 'message'=>'ساخت کانفیگ در سرور مقصد انجام نشد: ' . $msg . ' | اگر کلاینت قبلی موقتاً حذف شده باشد، تلاش شد برگردانده شود.'];
             }
 
             if(($targetType ?? '') === 'sanaei_new' && !farid_switchClientExistsInInbound($targetServerId, $targetInboundId, $uuid, $newRemark)){
@@ -18152,9 +18189,11 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
             }else{
                 $links = farid_switchBuildInboundLinks($targetServerId, $uuid, $protocol, $newRemark, $targetInbound, $targetInboundId, $custom);
             }
-            $deleteOldAction = ($sourceInboundId > 0)
-                ? ['type'=>'client', 'inbound_id'=>$sourceInboundId, 'uuid'=>$uuid]
-                : ['type'=>'inbound', 'uuid'=>$uuid];
+            $deleteOldAction = $oldDeletedBeforeCreate
+                ? null
+                : (($sourceInboundId > 0)
+                    ? ['type'=>'client', 'inbound_id'=>$sourceInboundId, 'uuid'=>$uuid]
+                    : ['type'=>'inbound', 'uuid'=>$uuid]);
             $newProtocol = $protocol;
         }else{
             $uniqid = (string)($live['uniqid'] ?? $uuid);
