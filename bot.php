@@ -17572,6 +17572,16 @@ function farid_switchExtractSubIdFast($value){
     return '';
 }
 
+function farid_switchReplaceSubIdInLink($link, $subId){
+    $link = trim((string)$link);
+    $subId = trim((string)$subId);
+    if($link === '' || $subId === '') return $link;
+    if(!preg_match('#^https?://#i', $link)) return $link;
+    return preg_replace_callback('#/(sub|json)/([^/?#\s]+)#i', function($m) use ($subId){
+        return '/' . $m[1] . '/' . rawurlencode($subId);
+    }, $link, 1);
+}
+
 function farid_switchBuildSubLinkNoPanel($order, $serverConfig = null){
     global $botUrl;
     if(!is_array($order)) return ['link'=>'', 'sub_id'=>'', 'token'=>''];
@@ -17891,6 +17901,7 @@ function farid_switchGetOrderLiveState($order){
         $remaining = max(0, $total - $up - $down);
         $client = $inboundInfo['client'];
         $clientId = trim((string)($client->id ?? ($client->password ?? $uuid)));
+        $clientSubId = trim((string)($client->subId ?? ($client->sub_id ?? ($preview['subId'] ?? ($preview['sub_id'] ?? '')))));
         return [
             'ok' => true,
             'panel_type' => 'xui',
@@ -17905,6 +17916,7 @@ function farid_switchGetOrderLiveState($order){
             'limitIp' => intval($preview['limitIp'] ?? ($client->limitIp ?? 0)),
             'flow' => (string)($preview['flow'] ?? ($client->flow ?? '')),
             'uniqid' => $clientId !== '' ? $clientId : $uuid,
+            'sub_id' => $clientSubId,
         ];
     }
 
@@ -17928,6 +17940,7 @@ function farid_switchGetOrderLiveState($order){
         'limitIp' => 0,
         'flow' => '',
         'uniqid' => (string)($preview['uniqid'] ?? $uuid),
+        'sub_id' => trim((string)($preview['subId'] ?? ($preview['sub_id'] ?? ''))),
     ];
 }
 
@@ -17999,6 +18012,24 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
 
     $live = farid_switchGetOrderLiveState($order);
     if(empty($live['ok'])) return ['ok'=>false, 'message'=>$live['message'] ?? 'امکان بررسی وضعیت فعلی سرویس وجود ندارد.'];
+
+    // در سنایی جدید، شناسه اشتراک واقعی داخل خود Client است.
+    // همان را از همان درخواست وضعیت فعلی می‌خوانیم و برای مقصد نگه می‌داریم؛
+    // پس با هر تغییر لوکیشن، Subscription ID و لینک ساب کاربر عوض نمی‌شود.
+    $liveSubId = trim((string)($live['sub_id'] ?? ''));
+    if($liveSubId !== ''){
+        $oldSubId = $liveSubId;
+        if($oldSubLink !== '' && preg_match('#^https?://#i', $oldSubLink) && function_exists('farid_switchReplaceSubIdInLink')){
+            $oldSubLink = farid_switchReplaceSubIdInLink($oldSubLink, $oldSubId);
+        }elseif(function_exists('farid_switchBuildSubLinkNoPanel')){
+            $tmpOrderForSub = $order;
+            $tmpOrderForSub['token'] = $oldSubId;
+            $tmpSubSnapshot = farid_switchBuildSubLinkNoPanel($tmpOrderForSub, $oldConfig);
+            $tmpSubLink = trim((string)($tmpSubSnapshot['link'] ?? ''));
+            if($tmpSubLink !== '') $oldSubLink = $tmpSubLink;
+        }
+    }
+
     $remainingBytes = intval($live['remaining_bytes'] ?? 0);
     $remainingGb = $remainingBytes / 1073741824;
     if($remainingBytes <= 0) return ['ok'=>false, 'message'=>'حجم سرویس تمام شده است.'];
@@ -18193,6 +18224,12 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $newOrderForDelivery['link'] = $linkJson;
     $newOrderForDelivery['remark'] = $newRemark;
     $deliveryOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($newOrderForDelivery) : ['config'=>true, 'sub'=>false];
+    if(function_exists('v2raystore_getServerDeliveryMode') && function_exists('v2raystore_deliveryModeNormalize') && function_exists('v2raystore_deliveryModeToOptions')){
+        $targetServerDeliveryMode = v2raystore_deliveryModeNormalize(v2raystore_getServerDeliveryMode($targetServerId));
+        if($targetServerDeliveryMode === 'sub' && (empty($deliveryOptions['sub']) || !empty($deliveryOptions['config']))){
+            $deliveryOptions = ['config'=>false, 'sub'=>true];
+        }
+    }
     $subLink = '';
     if(!empty($deliveryOptions['sub'])){
         // برای جلوگیری از هنگ، اینجا هم سراغ پنل نمی‌رویم.
