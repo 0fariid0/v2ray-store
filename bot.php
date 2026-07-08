@@ -16527,8 +16527,12 @@ function farid_sendUpdatedSubToUser($userId, $remark, $subLink, $afterMessage = 
     $subLink = trim((string)$subLink);
     if($userId <= 0 || $subLink === '') return false;
     $text = farid_buildUpdatedSubMessage($remark, $subLink, $title ?: '✅ لینک ساب سرویس شما بروزرسانی شد');
-    $res = sendMessage($text, null, 'HTML', $userId);
-    $ok = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+    if(function_exists('v2raystore_sendQrLinkMessage')){
+        $ok = v2raystore_sendQrLinkMessage($userId, $subLink, $text, null, 'HTML');
+    }else{
+        $res = sendMessage($text, null, 'HTML', $userId);
+        $ok = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+    }
     $msg = $afterMessage;
     if($msg === null && function_exists('farid_getUpdateAfterMessage')) $msg = farid_getUpdateAfterMessage();
     if(strlen(trim(strval($msg))) > 0) sendMessage($msg, null, 'HTML', $userId);
@@ -17558,13 +17562,13 @@ function farid_switchExtractSubIdFast($value){
     if($value === '') return '';
     if(function_exists('v2raystore_extractSubIdFromResponseValue')){
         $sid = v2raystore_extractSubIdFromResponseValue($value);
-        if($sid !== '' && !preg_match('/^[A-Za-z0-9]{30}$/', $sid)) return $sid;
+        if($sid !== '') return $sid;
     }
     if(preg_match('#/(?:sub|json)/([^/?#\s]+)#i', $value, $m)){
         $sid = trim((string)$m[1]);
-        return ($sid !== '' && preg_match('/^[A-Za-z0-9_-]{6,80}$/', $sid) && !preg_match('/^[A-Za-z0-9]{30}$/', $sid)) ? $sid : '';
+        return ($sid !== '' && preg_match('/^[A-Za-z0-9_-]{6,80}$/', $sid)) ? $sid : '';
     }
-    if(preg_match('/^[A-Za-z0-9_-]{6,80}$/', $value) && !preg_match('/^[A-Za-z0-9]{30}$/', $value)) return $value;
+    if(preg_match('/^[A-Za-z0-9_-]{6,80}$/', $value)) return $value;
     return '';
 }
 
@@ -17588,10 +17592,34 @@ function farid_switchBuildSubLinkNoPanel($order, $serverConfig = null){
         if($panel !== '') $link = $panel . '/sub/' . rawurlencode($token);
     }elseif(function_exists('v2raystore_isPanelSubscriptionServer') && v2raystore_isPanelSubscriptionServer($type)){
         // این بخش عمداً به پنل درخواست نمی‌زند تا ربات موقع تغییر لوکیشن هنگ نکند.
-        // فقط اگر دامنه/بیس ساب دستی برای سرور ثبت شده باشد، لینک سریع ساخته می‌شود.
-        if($subId !== '' && function_exists('v2raystore_serverManualSubBase')){
-            $base = v2raystore_serverManualSubBase($serverConfig, 'sub');
-            if($base !== '') $link = rtrim($base, '/') . '/' . rawurlencode($subId);
+        // اول دامنه ساب دستی؛ اگر نبود، از هاست لینک کانفیگ قبلی برای ساخت همان ساب استفاده می‌شود.
+        if($subId !== ''){
+            if(function_exists('v2raystore_serverManualSubBase')){
+                $base = v2raystore_serverManualSubBase($serverConfig, 'sub');
+                if($base !== '') $link = rtrim($base, '/') . '/' . rawurlencode($subId);
+            }
+            if($link === ''){
+                $fallbackHost = '';
+                $rawLinks = json_decode((string)($order['link'] ?? ''), true);
+                if(!is_array($rawLinks)) $rawLinks = [];
+                foreach($rawLinks as $candidateLink){
+                    $candidateLink = trim((string)$candidateLink);
+                    if($candidateLink === '') continue;
+                    if(function_exists('v2raystore_parseHostFromConfigLink')){
+                        $fallbackHost = v2raystore_parseHostFromConfigLink($candidateLink);
+                    }
+                    if($fallbackHost === ''){
+                        $parts = @parse_url($candidateLink);
+                        if(is_array($parts) && !empty($parts['host'])) $fallbackHost = (string)$parts['host'];
+                    }
+                    if($fallbackHost !== '') break;
+                }
+                if($fallbackHost !== ''){
+                    $parts = @parse_url((string)($serverConfig['panel_url'] ?? ''));
+                    $scheme = is_array($parts) && !empty($parts['scheme']) ? (string)$parts['scheme'] : 'https';
+                    $link = $scheme . '://' . $fallbackHost . '/sub/' . rawurlencode($subId);
+                }
+            }
         }
     }else{
         $link = rtrim((string)$botUrl, '/') . '/settings/subLink.php?token=' . urlencode($token);
@@ -18167,9 +18195,12 @@ function farid_switchOrderServer($orderId, $targetServerId, $actorId, $isAdminSw
     $deliveryOptions = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder') ? v2raystore_getAgentDeliveryLinkOptionsForOrder($newOrderForDelivery) : ['config'=>true, 'sub'=>false];
     $subLink = '';
     if(!empty($deliveryOptions['sub'])){
-        // برای جلوگیری از هنگ، اینجا هم سراغ پنل نمی‌رویم. اگر لینک قبلی موجود باشد همان ارسال می‌شود؛
-        // در غیر این صورت لینک جدید فقط از تنظیمات محلی/دامنه ساب ساخته می‌شود.
+        // برای جلوگیری از هنگ، اینجا هم سراغ پنل نمی‌رویم.
+        // اولویت با لینک ساب قبلی است تا بعد از تغییر لوکیشن آدرس ساب کاربر عوض نشود.
         $subLink = trim((string)$oldSubLink);
+        if($subLink === '' && preg_match('#^https?://#i', (string)$newToken)){
+            $subLink = trim((string)$newToken);
+        }
         if($subLink === '' && function_exists('farid_switchBuildSubLinkNoPanel')){
             $newSubSnapshot = farid_switchBuildSubLinkNoPanel($newOrderForDelivery, $targetConfig);
             $subLink = trim((string)($newSubSnapshot['link'] ?? ''));
