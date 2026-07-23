@@ -532,6 +532,199 @@ function v2raystore_ensureFastSettingIndexes(){
 v2raystore_ensureFastSettingIndexes();
 v2raystore_ensureOrderNoteColumn();
 
+
+// ===========================
+// آمار حرفه‌ای و غیرکاهشی
+// منبع آمار فروش، جدول pays است تا با حذف کانفیگ/سرویس از orders_list آمار فروش کم نشود.
+// orders_list فقط برای شمارش سرویس‌های فعال فعلی استفاده می‌شود.
+// ===========================
+if(!function_exists('v2raystore_ensureProfessionalStatsSchema')){
+function v2raystore_ensureProfessionalStatsSchema(){
+    global $connection;
+    if(!isset($connection) || !($connection instanceof mysqli)) return;
+    $columns = [
+        'agent_bought' => "ALTER TABLE `pays` ADD `agent_bought` int(1) NOT NULL DEFAULT 0 AFTER `state`",
+        'agent_count' => "ALTER TABLE `pays` ADD `agent_count` int(255) NOT NULL DEFAULT 0 AFTER `agent_bought`"
+    ];
+    foreach($columns as $column => $query){
+        $exists = @($connection->query("SHOW COLUMNS FROM `pays` LIKE '$column'"));
+        if($exists && $exists->num_rows == 0){
+            @($connection->query($query));
+        }
+    }
+    $idx = @($connection->query("SHOW INDEX FROM `pays` WHERE `Key_name` = 'idx_pays_stats'"));
+    if($idx && $idx->num_rows == 0){
+        @($connection->query("ALTER TABLE `pays` ADD INDEX `idx_pays_stats` (`state`, `type`, `request_date`)"));
+    }
+    $idx = @($connection->query("SHOW INDEX FROM `pays` WHERE `Key_name` = 'idx_pays_user_stats'"));
+    if($idx && $idx->num_rows == 0){
+        @($connection->query("ALTER TABLE `pays` ADD INDEX `idx_pays_user_stats` (`user_id`, `state`, `type`, `request_date`)"));
+    }
+}
+v2raystore_ensureProfessionalStatsSchema();
+}
+
+if(!function_exists('v2raystore_statsCol')){
+function v2raystore_statsCol($column, $alias = ''){
+    $column = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$column);
+    $alias = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$alias);
+    return ($alias !== '' ? "`$alias`." : '') . "`$column`";
+}
+}
+
+if(!function_exists('v2raystore_statsPaidWhere')){
+function v2raystore_statsPaidWhere($alias = ''){
+    $state = v2raystore_statsCol('state', $alias);
+    return "($state IN ('paid','approved'))";
+}
+}
+
+if(!function_exists('v2raystore_statsBuyWhere')){
+function v2raystore_statsBuyWhere($alias = ''){
+    $type = v2raystore_statsCol('type', $alias);
+    return "(" . v2raystore_statsPaidWhere($alias) . " AND $type = 'BUY_SUB')";
+}
+}
+
+if(!function_exists('v2raystore_statsProductWhere')){
+function v2raystore_statsProductWhere($alias = ''){
+    $type = v2raystore_statsCol('type', $alias);
+    return "(" . v2raystore_statsPaidWhere($alias) . " AND ($type = 'BUY_SUB' OR $type IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR $type LIKE 'INCREASE_VOLUME_%' OR $type LIKE 'INCREASE_DAY_%'))";
+}
+}
+
+if(!function_exists('v2raystore_statsServiceUnitsExpr')){
+function v2raystore_statsServiceUnitsExpr($alias = ''){
+    $type = v2raystore_statsCol('type', $alias);
+    $agentCount = v2raystore_statsCol('agent_count', $alias);
+    return "COALESCE(SUM(CASE WHEN $type = 'BUY_SUB' THEN CASE WHEN COALESCE($agentCount,0) > 0 THEN COALESCE($agentCount,0) ELSE 1 END ELSE 0 END),0)";
+}
+}
+
+if(!function_exists('v2raystore_statsScalar')){
+function v2raystore_statsScalar($sql, $types = '', $params = [], $field = null){
+    global $connection;
+    if(!isset($connection) || !($connection instanceof mysqli)) return 0;
+    if($types !== ''){
+        $stmt = @($connection->prepare($sql));
+        if(!$stmt) return 0;
+        $bindParams = [$types];
+        foreach($params as $k => $v){ $bindParams[] = &$params[$k]; }
+        if(!call_user_func_array([$stmt, 'bind_param'], $bindParams)){
+            $stmt->close();
+            return 0;
+        }
+        if(!$stmt->execute()){
+            $stmt->close();
+            return 0;
+        }
+        $res = $stmt->get_result();
+        $row = $res ? $res->fetch_assoc() : [];
+        $stmt->close();
+    }else{
+        $res = @($connection->query($sql));
+        if(!$res) return 0;
+        $row = $res->fetch_assoc();
+    }
+    if(!$row) return 0;
+    if($field !== null) return floatval($row[$field] ?? 0);
+    foreach(['v','c','s','total','count','services','payments','active'] as $k){
+        if(array_key_exists($k, $row)) return floatval($row[$k] ?? 0);
+    }
+    $first = reset($row);
+    return floatval($first ?: 0);
+}
+}
+
+if(!function_exists('v2raystore_statsPeriodStarts')){
+function v2raystore_statsPeriodStarts(){
+    $todayStart = strtotime('today');
+    $weekStart = strtotime('-' . (date('w') + 1) . ' days');
+    $monthStart = strtotime(date('Y-m-01 00:00:00'));
+    if(function_exists('jdate') && function_exists('jalali_to_gregorian')){
+        $persian = explode('-', jdate('Y-n-1', time()));
+        if(count($persian) >= 3){
+            $gregorian = jalali_to_gregorian(intval($persian[0]), intval($persian[1]), intval($persian[2]));
+            if(is_array($gregorian) && count($gregorian) >= 3){
+                $monthStart = strtotime($gregorian[0] . '-' . $gregorian[1] . '-' . $gregorian[2]);
+            }
+        }
+    }
+    return ['today'=>$todayStart, 'week'=>$weekStart, 'month'=>$monthStart, 'yesterday'=>strtotime('yesterday')];
+}
+}
+
+if(!function_exists('v2raystore_statsProductIncome')){
+function v2raystore_statsProductIncome($since = 0, $userId = 0, $agentOnly = false, $until = 0){
+    $where = v2raystore_statsProductWhere();
+    $types = '';
+    $params = [];
+    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
+    if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
+    return intval(v2raystore_statsScalar("SELECT COALESCE(SUM(`price`),0) AS v FROM `pays` WHERE $where", $types, $params, 'v'));
+}
+}
+
+if(!function_exists('v2raystore_statsProductPayments')){
+function v2raystore_statsProductPayments($since = 0, $userId = 0, $agentOnly = false, $until = 0){
+    $where = v2raystore_statsProductWhere();
+    $types = '';
+    $params = [];
+    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
+    if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
+    return intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `pays` WHERE $where", $types, $params, 'v'));
+}
+}
+
+if(!function_exists('v2raystore_statsSoldServices')){
+function v2raystore_statsSoldServices($since = 0, $userId = 0, $agentOnly = false, $until = 0){
+    $where = v2raystore_statsBuyWhere();
+    $types = '';
+    $params = [];
+    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
+    if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
+    $expr = v2raystore_statsServiceUnitsExpr();
+    return intval(v2raystore_statsScalar("SELECT $expr AS v FROM `pays` WHERE $where", $types, $params, 'v'));
+}
+}
+
+if(!function_exists('v2raystore_statsActiveServices')){
+function v2raystore_statsActiveServices($userId = 0, $agentOnly = false){
+    $where = "`status` = 1";
+    $types = '';
+    $params = [];
+    if($userId > 0){ $where .= " AND `userid` = ?"; $types .= 'i'; $params[] = intval($userId); }
+    if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
+    return intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `orders_list` WHERE $where", $types, $params, 'v'));
+}
+}
+
+if(!function_exists('v2raystore_statsAgentPeriod')){
+function v2raystore_statsAgentPeriod($agentId, $since = 0, $until = 0){
+    $agentId = intval($agentId);
+    return [
+        'services' => v2raystore_statsSoldServices($since, $agentId, true, $until),
+        'payments' => v2raystore_statsProductPayments($since, $agentId, true, $until),
+        'income' => v2raystore_statsProductIncome($since, $agentId, true, $until),
+    ];
+}
+}
+
+if(!function_exists('v2raystore_statsFormatMini')){
+function v2raystore_statsFormatMini($stats){
+    $services = intval($stats['services'] ?? 0);
+    $payments = intval($stats['payments'] ?? 0);
+    $income = intval($stats['income'] ?? 0);
+    return "($services سرویس / $payments تراکنش) " . number_format($income);
+}
+}
+
 function v2raystore_ensurePlanCustomDomainColumn(){
     global $connection;
     if(v2raystore_schemaPatchDone('PLAN_CUSTOM_DOMAIN_V1')) return;
@@ -3423,37 +3616,33 @@ function v2raystore_agentReportText($agentId){
     $agent = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if(!$agent) return 'نماینده پیدا نشد.';
-    $now = time();
-    $today = strtotime('today');
-    $week = $now - 7*86400;
-    $month = $now - 30*86400;
-    $q = function($since) use ($connection, $agentId){
-        $stmt = $connection->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(`amount`),0) AS s FROM `orders_list` WHERE `userid`=? AND `agent_bought`=1 AND `status`=1 AND `date`>=?");
-        if(!$stmt) return ['c'=>0,'s'=>0];
-        $stmt->bind_param('ii', $agentId, $since);
-        $stmt->execute();
-        $r = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        return ['c'=>intval($r['c'] ?? 0), 's'=>intval($r['s'] ?? 0)];
-    };
-    $allStmt = $connection->prepare("SELECT COUNT(*) AS c, COALESCE(SUM(`amount`),0) AS s FROM `orders_list` WHERE `userid`=? AND `agent_bought`=1 AND `status`=1");
-    $all = ['c'=>0,'s'=>0];
-    if($allStmt){ $allStmt->bind_param('i',$agentId); $allStmt->execute(); $rr=$allStmt->get_result()->fetch_assoc(); $allStmt->close(); $all=['c'=>intval($rr['c']??0),'s'=>intval($rr['s']??0)]; }
+
+    $periods = function_exists('v2raystore_statsPeriodStarts') ? v2raystore_statsPeriodStarts() : ['today'=>strtotime('today'), 'week'=>strtotime('-7 days'), 'month'=>strtotime('-30 days')];
+    $todayR = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($agentId, intval($periods['today'] ?? strtotime('today'))) : ['services'=>0,'payments'=>0,'income'=>0];
+    $weekR  = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($agentId, intval($periods['week'] ?? strtotime('-7 days'))) : ['services'=>0,'payments'=>0,'income'=>0];
+    $monthR = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($agentId, intval($periods['month'] ?? strtotime('-30 days'))) : ['services'=>0,'payments'=>0,'income'=>0];
+    $all    = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($agentId, 0) : ['services'=>0,'payments'=>0,'income'=>0];
+    $activeServices = function_exists('v2raystore_statsActiveServices') ? v2raystore_statsActiveServices($agentId, true) : 0;
+
     $subs = 0;
     $st = $connection->prepare("SELECT COUNT(*) AS c FROM `users` WHERE `refered_by`=?");
     if($st){ $st->bind_param('i',$agentId); $st->execute(); $subs=intval($st->get_result()->fetch_assoc()['c']??0); $st->close(); }
-    $discounts = v2raystore_agentPricingDecode($agent['discount_percent'] ?? null);
     $limits = v2raystore_agentLimitsLabel($agent['discount_percent'] ?? null);
-    $todayR = $q($today); $weekR = $q($week); $monthR = $q($month);
     $name = htmlspecialchars((string)($agent['name'] ?? $agentId), ENT_QUOTES, 'UTF-8');
+
+    $line = function($label, $r){
+        return $label . ': <code>' . intval($r['services'] ?? 0) . '</code> سرویس | <code>' . intval($r['payments'] ?? 0) . '</code> تراکنش | <code>' . number_format(intval($r['income'] ?? 0)) . '</code> تومان';
+    };
+
     return "📊 <b>گزارش نماینده</b>\n\n" .
         "👤 نماینده: <b>{$name}</b>\n" .
         "🆔 آیدی: <code>{$agentId}</code>\n" .
         "⚙️ کنترل خرید: " . htmlspecialchars($limits, ENT_QUOTES, 'UTF-8') . "\n\n" .
-        "امروز: <code>{$todayR['c']}</code> خرید | <code>" . number_format($todayR['s']) . "</code> تومان\n" .
-        "۷ روز: <code>{$weekR['c']}</code> خرید | <code>" . number_format($weekR['s']) . "</code> تومان\n" .
-        "۳۰ روز: <code>{$monthR['c']}</code> خرید | <code>" . number_format($monthR['s']) . "</code> تومان\n" .
-        "کل: <code>{$all['c']}</code> خرید | <code>" . number_format($all['s']) . "</code> تومان\n" .
+        $line('امروز', $todayR) . "\n" .
+        $line('۷ روز', $weekR) . "\n" .
+        $line('ماه جاری', $monthR) . "\n" .
+        $line('کل فروش ثبت‌شده', $all) . "\n" .
+        "🟢 سرویس فعال فعلی: <code>" . intval($activeServices) . "</code>\n" .
         "👥 زیرمجموعه‌های ثبت‌شده: <code>{$subs}</code>";
 }
 
@@ -9044,11 +9233,7 @@ function getAgentKeys(){
     global $buttonValues, $mainValues, $from_id, $userInfo, $connection;
     $agencyDate = jdate("Y-m-d H:i:s",$userInfo['agent_date']);
     $joinedDate = jdate("Y-m-d H:i:s",$userInfo['date']);
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid` = ? AND `agent_bought` = 1");
-    $stmt->bind_param("i", $from_id);
-    $stmt->execute();
-    $boughtAccounts = $stmt->get_result()->num_rows;
-    $stmt->close();
+    $boughtAccounts = function_exists('v2raystore_statsSoldServices') ? v2raystore_statsSoldServices(0, intval($from_id), true) : 0;
     
     return json_encode(['inline_keyboard'=>[
         [['text'=>$boughtAccounts,'callback_data'=>"v2raystore"],['text'=>$buttonValues['agent_bought_accounts'],'callback_data'=>"v2raystore"]],
@@ -9423,60 +9608,50 @@ function getRejectedAgentList(){
     }else return null;
 }
 function getAgentDetails($userId){
-    global $connection, $mainVAlues, $buttonValues;
-    
+    global $connection, $buttonValues;
+    $userId = intval($userId);
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ? AND `is_agent` = 1");
     $stmt->bind_param("i", $userId);
     $stmt->execute();
     $agentDetail = $stmt->get_result();
     $stmt->close();
+    if(!$agentDetail || $agentDetail->num_rows == 0) return null;
 
+    $periods = function_exists('v2raystore_statsPeriodStarts') ? v2raystore_statsPeriodStarts() : ['today'=>strtotime('today'), 'yesterday'=>strtotime('yesterday'), 'week'=>strtotime('-7 days'), 'month'=>strtotime('-30 days')];
+    $todayStart = intval($periods['today'] ?? strtotime('today'));
+    $yesterdayStart = intval($periods['yesterday'] ?? strtotime('yesterday'));
+    $weekStart = intval($periods['week'] ?? strtotime('-7 days'));
+    $monthStart = intval($periods['month'] ?? strtotime('-30 days'));
 
-    $today = strtotime("today");
-    $yesterday = strtotime("yesterday");
-    $lastWeek = strtotime("last week");
-    $lastMonth = strtotime("last month");
+    $todayIncome = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($userId, $todayStart) : ['services'=>0,'payments'=>0,'income'=>0];
+    $yesterdayIncome = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($userId, $yesterdayStart, $todayStart) : ['services'=>0,'payments'=>0,'income'=>0];
+    $lastWeekIncome = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($userId, $weekStart) : ['services'=>0,'payments'=>0,'income'=>0];
+    $lastMonthIncome = function_exists('v2raystore_statsAgentPeriod') ? v2raystore_statsAgentPeriod($userId, $monthStart) : ['services'=>0,'payments'=>0,'income'=>0];
+    $activeServices = function_exists('v2raystore_statsActiveServices') ? v2raystore_statsActiveServices($userId, true) : 0;
 
-    $stmt = $connection->prepare("SELECT COUNT(`id`) AS `count`, SUM(`amount`) AS `total` FROM `orders_list` WHERE `date` >= ? AND `agent_bought` = 1 AND `userid` = ?");
-    
-    $stmt->bind_param("ii", $today, $userId);
-    $stmt->execute();
-    $todayIncome = $stmt->get_result()->fetch_assoc();
-    
-    $stmt->bind_param("ii", $yesterday, $userId);
-    $stmt->execute();
-    $yesterdayIncome = $stmt->get_result()->fetch_assoc();
-    
-    $stmt->bind_param("ii", $lastWeek, $userId);
-    $stmt->execute();
-    $lastWeekIncome = $stmt->get_result()->fetch_assoc();
-    
-    $stmt->bind_param("ii", $lastMonth, $userId);
-    $stmt->execute();
-    $lastMonthIncome = $stmt->get_result()->fetch_assoc();
-    
-    $stmt->close();
-    
-    
     return json_encode(['inline_keyboard'=>[
         [
-            ['text'=>"(" . $todayIncome['count'] . ") " . number_format($todayIncome['total']),'callback_data'=>'v2raystore'],
-            ['text'=>"درآمد امروز",'callback_data'=>'v2raystore']
-            ],
+            ['text'=>v2raystore_statsFormatMini($todayIncome),'callback_data'=>'v2raystore'],
+            ['text'=>"فروش امروز",'callback_data'=>'v2raystore']
+        ],
         [
-            ['text'=>"(" . $yesterdayIncome['count'] . ") " . number_format($yesterdayIncome['total']),'callback_data'=>"v2raystore"],
-            ['text'=>"درآمد دیروز",'callback_data'=>"v2raystore"]
-            ],
+            ['text'=>v2raystore_statsFormatMini($yesterdayIncome),'callback_data'=>"v2raystore"],
+            ['text'=>"فروش دیروز",'callback_data'=>"v2raystore"]
+        ],
         [
-            ['text'=>"(" . $lastWeekIncome['count'] . ") " . number_format($lastWeekIncome['total']),'callback_data'=>"v2raystore"],
-            ['text'=>"درآمد یک هفته",'callback_data'=>"v2raystore"]
-            ],
+            ['text'=>v2raystore_statsFormatMini($lastWeekIncome),'callback_data'=>"v2raystore"],
+            ['text'=>"فروش هفته",'callback_data'=>"v2raystore"]
+        ],
         [
-            ['text'=>"(" . $lastMonthIncome['count'] . ") " . number_format($lastMonthIncome['total']),'callback_data'=>"v2raystore"],
-            ['text'=>"درآمد یک ماه",'callback_data'=>"v2raystore"]
-            ],
+            ['text'=>v2raystore_statsFormatMini($lastMonthIncome),'callback_data'=>"v2raystore"],
+            ['text'=>"فروش ماه",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>$activeServices,'callback_data'=>"v2raystore"],
+            ['text'=>"سرویس فعال فعلی",'callback_data'=>"v2raystore"]
+        ],
         [['text' => $buttonValues['back_button'], 'callback_data' => "agentsList"]]
-        ]]);
+    ]], JSON_UNESCAPED_UNICODE);
 }
 function checkSpam(){
     global $connection, $from_id, $userInfo, $admin;
@@ -10238,103 +10413,83 @@ function getBotSettingKeys(){
 
 }
 function getBotReportKeys(){
-    global $connection, $mainValues, $buttonValues;
-    $stmt = $connection->prepare("SELECT * FROM `users`");
-    $stmt->execute();
-    $allUsers = $stmt->get_result()->num_rows;
-    $stmt->close();
+    global $connection, $buttonValues;
 
-    $stmt = $connection->prepare("SELECT * FROM `orders_list`");
-    $stmt->execute();
-    $allOrders = $stmt->get_result()->num_rows;
-    $stmt->close();
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_config`");
-    $stmt->execute();
-    $allServers = $stmt->get_result()->num_rows;
-    $stmt->close();
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_categories`");
-    $stmt->execute();
-    $allCategories = $stmt->get_result()->num_rows;
-    $stmt->close();
-    
-    $stmt = $connection->prepare("SELECT * FROM `server_plans`");
-    $stmt->execute();
-    $allPlans = $stmt->get_result()->num_rows;
-    $stmt->close();
-    
-    $stmt = $connection->prepare("SELECT SUM(price) as total FROM `pays` WHERE `state` = 'paid' OR `state` = 'approved'");
-    $stmt->execute();
-    $totalRewards = number_format($stmt->get_result()->fetch_assoc()['total']) . " تومان";
-    $stmt->close();
-    
-    
-    $persian = explode("-",jdate("Y-n-1", time()));
-    $gregorian = jalali_to_gregorian($persian[0], $persian[1], $persian[2]);
-    $date =  $gregorian[0] . "-" . $gregorian[1] . "-" . $gregorian[2];
-    $dayTime = strtotime($date);
-    $stmt = $connection->prepare("SELECT SUM(price) as total FROM `pays` WHERE `request_date` > ? AND (`state` = 'paid' OR `state` = 'approved')");
-    $stmt->bind_param("i", $dayTime);
-    $stmt->execute();
-    $monthReward = number_format($stmt->get_result()->fetch_assoc()['total']) . " تومان";
-    $stmt->close();
-    
-    $dayTime = strtotime("-" . (date("w")+1) . " days");
-    $stmt = $connection->prepare("SELECT SUM(price) as total FROM `pays` WHERE `request_date` > ?  AND (`state` = 'paid' OR `state` = 'approved')");
-    $stmt->bind_param("i", $dayTime);
-    $stmt->execute();
-    $weekReward = number_format($stmt->get_result()->fetch_assoc()['total']) . " تومان";
-    $stmt->close();
-    
-    $dayTime = strtotime("today");
-    $stmt = $connection->prepare("SELECT SUM(price) as total FROM `pays` WHERE `request_date` > ? AND (`state` = 'paid' OR `state` = 'approved')");
-    $stmt->bind_param("i", $dayTime);
-    $stmt->execute();
-    $dayReward = number_format($stmt->get_result()->fetch_assoc()['total']) . " تومان";
-    $stmt->close();
-    
+    $periods = function_exists('v2raystore_statsPeriodStarts') ? v2raystore_statsPeriodStarts() : ['today'=>strtotime('today'), 'week'=>strtotime('-' . (date('w') + 1) . ' days'), 'month'=>strtotime(date('Y-m-01 00:00:00'))];
+
+    $allUsers = intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `users`", '', [], 'v'));
+    $activeServices = function_exists('v2raystore_statsActiveServices') ? v2raystore_statsActiveServices() : intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `orders_list` WHERE `status`=1", '', [], 'v'));
+    $soldServices = function_exists('v2raystore_statsSoldServices') ? v2raystore_statsSoldServices() : intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `pays` WHERE `state` IN ('paid','approved') AND `type`='BUY_SUB'", '', [], 'v'));
+    $salesPayments = function_exists('v2raystore_statsProductPayments') ? v2raystore_statsProductPayments() : 0;
+    $agentSoldServices = function_exists('v2raystore_statsSoldServices') ? v2raystore_statsSoldServices(0, 0, true) : 0;
+
+    $allServers = intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `server_config`", '', [], 'v'));
+    $allCategories = intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `server_categories`", '', [], 'v'));
+    $allPlans = intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `server_plans`", '', [], 'v'));
+
+    $totalRewards = number_format(function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome() : 0) . " تومان";
+    $dayReward = number_format(function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['today'] ?? strtotime('today'))) : 0) . " تومان";
+    $weekReward = number_format(function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['week'] ?? strtotime('-7 days'))) : 0) . " تومان";
+    $monthReward = number_format(function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? strtotime(date('Y-m-01 00:00:00')))) : 0) . " تومان";
+    $agentIncome = number_format(function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, true) : 0) . " تومان";
+
     return json_encode(['inline_keyboard'=>[
         [
             ['text'=>$allUsers,'callback_data'=>'v2raystore'],
             ['text'=>"تعداد کل کاربران",'callback_data'=>'v2raystore']
-            ],
+        ],
         [
-            ['text'=>$allOrders,'callback_data'=>'v2raystore'],
-            ['text'=>"کل محصولات خریداری شده",'callback_data'=>'v2raystore']
-            ],
+            ['text'=>$activeServices,'callback_data'=>'v2raystore'],
+            ['text'=>"سرویس‌های فعال فعلی",'callback_data'=>'v2raystore']
+        ],
+        [
+            ['text'=>$soldServices,'callback_data'=>'v2raystore'],
+            ['text'=>"کل سرویس‌های فروخته‌شده",'callback_data'=>'v2raystore']
+        ],
+        [
+            ['text'=>$salesPayments,'callback_data'=>'v2raystore'],
+            ['text'=>"تراکنش‌های فروش موفق",'callback_data'=>'v2raystore']
+        ],
+        [
+            ['text'=>$agentSoldServices,'callback_data'=>'v2raystore'],
+            ['text'=>"فروش ثبت‌شده نماینده‌ها",'callback_data'=>'v2raystore']
+        ],
         [
             ['text'=>$allServers,'callback_data'=>'v2raystore'],
             ['text'=>"تعداد سرورها",'callback_data'=>'v2raystore']
-            ],
+        ],
         [
             ['text'=>$allCategories,'callback_data'=>'v2raystore'],
-            ['text'=>"تعداد دسته ها",'callback_data'=>'v2raystore']
-            ],
+            ['text'=>"تعداد دسته‌ها",'callback_data'=>'v2raystore']
+        ],
         [
             ['text'=>$allPlans,'callback_data'=>'v2raystore'],
-            ['text'=>"تعداد پلن ها",'callback_data'=>'v2raystore']
-            ],
+            ['text'=>"تعداد پلن‌ها",'callback_data'=>'v2raystore']
+        ],
         [
             ['text'=>$totalRewards,'callback_data'=>'v2raystore'],
-            ['text'=>"درآمد کل",'callback_data'=>'v2raystore']
-            ],
+            ['text'=>"درآمد قطعی کل",'callback_data'=>'v2raystore']
+        ],
+        [
+            ['text'=>$agentIncome,'callback_data'=>'v2raystore'],
+            ['text'=>"درآمد فروش نماینده‌ها",'callback_data'=>'v2raystore']
+        ],
         [
             ['text'=>$dayReward,'callback_data'=>'v2raystore'],
             ['text'=>"درآمد امروز",'callback_data'=>'v2raystore']
-            ],
+        ],
         [
             ['text'=>$weekReward,'callback_data'=>'v2raystore'],
             ['text'=>"درآمد هفته",'callback_data'=>'v2raystore']
-            ],
+        ],
         [
             ['text'=>$monthReward,'callback_data'=>'v2raystore'],
             ['text'=>"درآمد ماه",'callback_data'=>'v2raystore']
-            ],
+        ],
         [
-            ['text'=>"برگشت به مدیریت",'callback_data'=>'managePanel']
-            ]
-        ]]);
+            ['text'=>$buttonValues['back_button'] ?? "برگشت به مدیریت",'callback_data'=>'managePanel']
+        ]
+    ]], JSON_UNESCAPED_UNICODE);
 }
 function getAdminsKeys(){
     global $connection, $mainValues, $buttonValues, $admin;
@@ -10373,7 +10528,8 @@ function getAdminsKeys(){
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 function getUserInfoKeys($userId){
-    global $connection, $mainValues, $buttonValues; 
+    global $connection, $buttonValues; 
+    $userId = intval($userId);
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
     $stmt->bind_param("i",$userId);
     $stmt->execute();
@@ -10381,45 +10537,49 @@ function getUserInfoKeys($userId){
     $stmt->close();
     if($userCount->num_rows > 0){
         $userInfos = $userCount->fetch_assoc();
-        $userWallet = number_format($userInfos['wallet']) . " تومان";
-        
-        $stmt = $connection->prepare("SELECT COUNT(amount) as count, SUM(amount) as total FROM `orders_list` WHERE `userid` = ?");
-        $stmt->bind_param("i", $userId);
-        $stmt->execute();
-        $info = $stmt->get_result()->fetch_assoc();
-        
-        $boughtService = $info['count'];
-        $totalBoughtPrice = number_format($info['total']) . " تومان";
+        $userWallet = number_format(intval($userInfos['wallet'] ?? 0)) . " تومان";
+        $activeService = function_exists('v2raystore_statsActiveServices') ? v2raystore_statsActiveServices($userId) : 0;
+        $boughtService = function_exists('v2raystore_statsSoldServices') ? v2raystore_statsSoldServices(0, $userId) : 0;
+        $successPayments = function_exists('v2raystore_statsProductPayments') ? v2raystore_statsProductPayments(0, $userId) : 0;
+        $totalBoughtPrice = number_format(function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, $userId) : 0) . " تومان";
         
         $userDetail = bot('getChat',['chat_id'=>$userId])->result;
-        $userUserName = $userDetail->username;
-        $fullName = $userDetail->first_name . " " . $userDetail->last_name;
+        $userUserName = $userDetail->username ?? '';
+        $fullName = trim(($userDetail->first_name ?? '') . " " . ($userDetail->last_name ?? ''));
         
         return json_encode(['inline_keyboard'=>[
             [
-                ['text'=>$userUserName??" ",'url'=>"t.me/$userUserName"],
+                ['text'=>$userUserName ?: " ",'url'=>($userUserName ? "t.me/$userUserName" : "tg://user?id=$userId")],
                 ['text'=>"یوزرنیم",'callback_data'=>"v2raystore"]
-                ],
+            ],
             [
-                ['text'=>$fullName??" ",'callback_data'=>"v2raystore"],
+                ['text'=>$fullName ?: " ",'callback_data'=>"v2raystore"],
                 ['text'=>"نام",'callback_data'=>"v2raystore"]
-                ],
+            ],
             [
-                ['text'=>$boughtService??" ",'callback_data'=>"v2raystore"],
-                ['text'=>"سرویس ها",'callback_data'=>"v2raystore"]
-                ],
+                ['text'=>$activeService,'callback_data'=>"v2raystore"],
+                ['text'=>"سرویس فعال فعلی",'callback_data'=>"v2raystore"]
+            ],
             [
-                ['text'=>$totalBoughtPrice??" ",'callback_data'=>"v2raystore"],
-                ['text'=>"مبلغ خرید",'callback_data'=>"v2raystore"]
-                ],
+                ['text'=>$boughtService,'callback_data'=>"v2raystore"],
+                ['text'=>"کل سرویس خریداری‌شده",'callback_data'=>"v2raystore"]
+            ],
             [
-                ['text'=>$userWallet??" ",'callback_data'=>"v2raystore"],
+                ['text'=>$successPayments,'callback_data'=>"v2raystore"],
+                ['text'=>"تراکنش فروش موفق",'callback_data'=>"v2raystore"]
+            ],
+            [
+                ['text'=>$totalBoughtPrice,'callback_data'=>"v2raystore"],
+                ['text'=>"مبلغ خرید قطعی",'callback_data'=>"v2raystore"]
+            ],
+            [
+                ['text'=>$userWallet,'callback_data'=>"v2raystore"],
                 ['text'=>"موجودی کیف پول",'callback_data'=>"v2raystore"]
-                ],
+            ],
             [
                 ['text'=>$buttonValues['back_button'],'callback_data'=>"mainMenu"]
-                ],
-            ]]);
+            ],
+        ]], JSON_UNESCAPED_UNICODE);
     }else return null;
 }
 function getDiscountCodeKeys(){
@@ -17024,14 +17184,19 @@ function v2raystore_reportEventItems(){
 }
 
 function v2raystore_reportStatItems(){
-    // آیتم‌های آمار کانال/گروه گزارش با آمار کلی ربات یکی شد.
+    // آمار فروش از pays خوانده می‌شود تا با حذف کانفیگ‌ها کم نشود.
+    // آمار orders_list فقط برای «سرویس فعال فعلی» استفاده می‌شود.
     return [
         'users_total' => '👥 تعداد کل کاربران',
-        'total_orders' => '📦 کل محصولات خریداری شده',
+        'active_configs' => '🟢 سرویس‌های فعال فعلی',
+        'total_orders' => '📦 کل سرویس‌های فروخته‌شده',
+        'sales_payments' => '🧾 تراکنش‌های فروش موفق',
+        'agent_sold_services' => '🤝 سرویس‌های فروخته‌شده توسط نماینده‌ها',
         'servers_total' => '🖥 تعداد سرورها',
         'categories_total' => '🗂 تعداد دسته‌ها',
         'plans_total' => '📋 تعداد پلن‌ها',
-        'total_income' => '🏦 درآمد کل',
+        'total_income' => '🏦 درآمد قطعی کل',
+        'agent_income' => '🤝 درآمد فروش نماینده‌ها',
         'today_income' => '💰 درآمد امروز',
         'week_income' => '🗓 درآمد هفته',
         'month_income' => '📆 درآمد ماه'
@@ -17126,54 +17291,32 @@ function v2raystore_reportPlanServerLinesByPlanId($planId, $volume = '', $days =
 function v2raystore_liveStatsSnapshot($forDaily = false){
     global $connection;
 
-    $q = function($sql, $types = '', $params = []) use ($connection){
-        if($types !== ''){
-            $stmt = @($connection->prepare($sql));
-            if(!$stmt) return 0;
-            $stmt->bind_param($types, ...$params);
-            $stmt->execute();
-            $res = $stmt->get_result();
-            $row = $res ? $res->fetch_assoc() : [];
-            $stmt->close();
-        }else{
-            $res = @($connection->query($sql));
-            if(!$res) return 0;
-            $row = $res->fetch_assoc();
-        }
-        return intval($row['c'] ?? $row['s'] ?? $row['total'] ?? 0);
+    $periods = function_exists('v2raystore_statsPeriodStarts') ? v2raystore_statsPeriodStarts() : ['today'=>strtotime('today'), 'week'=>strtotime('-7 days'), 'month'=>strtotime(date('Y-m-01 00:00:00'))];
+    $q = function($sql, $types = '', $params = []){
+        return intval(v2raystore_statsScalar($sql, $types, $params, 'v'));
     };
 
-    $todayStart = strtotime('today');
-    $weekStart = strtotime('-' . (date('w') + 1) . ' days');
-    $monthStart = strtotime(date('Y-m-01 00:00:00'));
-    if(function_exists('jdate') && function_exists('jalali_to_gregorian')){
-        $persian = explode('-', jdate('Y-n-1', time()));
-        if(count($persian) >= 3){
-            $gregorian = jalali_to_gregorian(intval($persian[0]), intval($persian[1]), intval($persian[2]));
-            if(is_array($gregorian) && count($gregorian) >= 3){
-                $monthStart = strtotime($gregorian[0] . '-' . $gregorian[1] . '-' . $gregorian[2]);
-            }
-        }
-    }
-
-    $paidWhere = "(`state` = 'paid' OR `state` = 'approved')";
     $values = [
-        'users_total' => ['👥 تعداد کل کاربران', $q("SELECT COUNT(*) c FROM `users`"), ''],
-        'total_orders' => ['📦 کل محصولات خریداری شده', $q("SELECT COUNT(*) c FROM `orders_list`"), ''],
-        'servers_total' => ['🖥 تعداد سرورها', $q("SELECT COUNT(*) c FROM `server_config`"), ''],
-        'categories_total' => ['🗂 تعداد دسته‌ها', $q("SELECT COUNT(*) c FROM `server_categories`"), ''],
-        'plans_total' => ['📋 تعداد پلن‌ها', $q("SELECT COUNT(*) c FROM `server_plans`"), ''],
-        'total_income' => ['🏦 درآمد کل', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE $paidWhere"), ' تومان'],
-        'today_income' => ['💰 درآمد امروز', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE `request_date` > ? AND $paidWhere", 'i', [$todayStart]), ' تومان'],
-        'week_income' => ['🗓 درآمد هفته', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE `request_date` > ? AND $paidWhere", 'i', [$weekStart]), ' تومان'],
-        'month_income' => ['📆 درآمد ماه', $q("SELECT COALESCE(SUM(`price`),0) s FROM `pays` WHERE `request_date` > ? AND $paidWhere", 'i', [$monthStart]), ' تومان'],
+        'users_total' => ['👥 تعداد کل کاربران', $q("SELECT COUNT(*) AS v FROM `users`"), ''],
+        'active_configs' => ['🟢 سرویس‌های فعال فعلی', function_exists('v2raystore_statsActiveServices') ? v2raystore_statsActiveServices() : $q("SELECT COUNT(*) AS v FROM `orders_list` WHERE `status`=1"), ''],
+        'total_orders' => ['📦 کل سرویس‌های فروخته‌شده', function_exists('v2raystore_statsSoldServices') ? v2raystore_statsSoldServices() : 0, ''],
+        'sales_payments' => ['🧾 تراکنش‌های فروش موفق', function_exists('v2raystore_statsProductPayments') ? v2raystore_statsProductPayments() : 0, ''],
+        'agent_sold_services' => ['🤝 سرویس‌های فروخته‌شده توسط نماینده‌ها', function_exists('v2raystore_statsSoldServices') ? v2raystore_statsSoldServices(0, 0, true) : 0, ''],
+        'servers_total' => ['🖥 تعداد سرورها', $q("SELECT COUNT(*) AS v FROM `server_config`"), ''],
+        'categories_total' => ['🗂 تعداد دسته‌ها', $q("SELECT COUNT(*) AS v FROM `server_categories`"), ''],
+        'plans_total' => ['📋 تعداد پلن‌ها', $q("SELECT COUNT(*) AS v FROM `server_plans`"), ''],
+        'total_income' => ['🏦 درآمد قطعی کل', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome() : 0, ' تومان'],
+        'agent_income' => ['🤝 درآمد فروش نماینده‌ها', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, true) : 0, ' تومان'],
+        'today_income' => ['💰 درآمد امروز', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['today'] ?? strtotime('today'))) : 0, ' تومان'],
+        'week_income' => ['🗓 درآمد هفته', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['week'] ?? strtotime('-7 days'))) : 0, ' تومان'],
+        'month_income' => ['📆 درآمد ماه', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? strtotime(date('Y-m-01 00:00:00')))) : 0, ' تومان'],
     ];
 
     $lines = [];
     foreach($values as $key => $item){
         if(!v2raystore_reportIsEnabled(v2raystore_reportStatKey($key), 'on')) continue;
         [$label, $value, $suffix] = $item;
-        $lines[] = $label . ': <b>' . number_format($value) . $suffix . '</b>';
+        $lines[] = $label . ': <b>' . number_format(intval($value)) . $suffix . '</b>';
     }
     if(count($lines) == 0) return '';
     $title = $forDaily ? "📊 <b>آمار روزانه ربات</b>" : "📊 <b>آمار کلی ربات</b>";
