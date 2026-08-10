@@ -752,6 +752,48 @@ if(preg_match('/^editTestPlanField\|(\d+)\|(title|volume|days|acount|limitip)$/'
     sendMessage(v2raystore_getTestPlanDetailsText($pid), v2raystore_getTestPlanDetailsKeys($pid), 'HTML');
     exit();
 }
+if(!function_exists('v2raystore_addTestPlanInboundSelectView')){
+function v2raystore_addTestPlanInboundSelectView($serverId, $selectedIds = []){
+    $serverId = intval($serverId);
+    $selectedIds = function_exists('v2raystore_decodePlanMultiInboundIds') ? v2raystore_decodePlanMultiInboundIds($selectedIds) : array_values(array_unique(array_filter(array_map('intval', (array)$selectedIds))));
+    $json = function_exists('getJson') ? getJson($serverId) : null;
+    $inbounds = ($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)) ? $json->obj : [];
+    $rows = [];
+    foreach($inbounds as $row){
+        if(!is_object($row)) continue;
+        $iid = intval($row->id ?? 0);
+        if($iid <= 0) continue;
+        $proto = trim((string)($row->protocol ?? ''));
+        $net = '';
+        $ss = json_decode($row->streamSettings ?? '');
+        if($ss && isset($ss->network)) $net = trim((string)$ss->network);
+        $remark = trim((string)($row->remark ?? ''));
+        $checked = in_array($iid, $selectedIds, true) ? '✅' : '▫️';
+        $title = $checked . ' #' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($proto !== '' ? ' | ' . $proto : '') . ($net !== '' ? '/' . $net : '');
+        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
+        $rows[] = [[ 'text'=>$title, 'callback_data'=>'toggleAddTestPlanInbound_' . $serverId . '_' . $iid ]];
+    }
+    if(empty($rows)){
+        $rows[] = [[ 'text'=>'هیچ Inbound از پنل دریافت نشد', 'callback_data'=>'addTestPlanServer' . $serverId ]];
+    }else{
+        $rows[] = [
+            ['text'=>'✅ انتخاب همه', 'callback_data'=>'addTestPlanInboundAll_' . $serverId],
+            ['text'=>'🧹 پاک کردن', 'callback_data'=>'addTestPlanInboundClear_' . $serverId]
+        ];
+        $rows[] = [[ 'text'=>'➡️ ادامه با انتخاب‌ها', 'callback_data'=>'addTestPlanInboundDone_' . $serverId, 'style'=>'success' ]];
+    }
+    $rows[] = [[ 'text'=>'کل سرور / پورت اختصاصی', 'callback_data'=>'addTestPlanInbound' . $serverId . '_0' ]];
+    $rows[] = [[ 'text'=>'⬅️ بازگشت', 'callback_data'=>'addTestPlan' ]];
+
+    $summary = empty($selectedIds) ? 'هنوز انتخاب نشده' : (count($selectedIds) . ' اینباند: ' . implode(', ', $selectedIds));
+    $text = "🚪 <b>انتخاب Inboundهای اکانت تست</b>\n\n" .
+            "می‌توانی یک یا چند Inbound را انتخاب کنی. روی گزینه‌ها بزن تا تیک بخورند و در پایان «ادامه با انتخاب‌ها» را بزن.\n\n" .
+            "انتخاب فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n\n" .
+            "این قابلیت فقط برای پنل سنایی جدید استفاده می‌شود.";
+    return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE)];
+}
+}
+
 if($data == "addTestPlan" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $res = $connection->query("SELECT `id`, `title`, `flag` FROM `server_info` WHERE `active`=1 ORDER BY `id` ASC");
     $rows = [];
@@ -767,6 +809,24 @@ if($data == "addTestPlan" && ($from_id == $admin || $userInfo['isAdmin'] == true
 }
 if(preg_match('/^addTestPlanServer(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $sid = intval($m[1]);
+    $serverType = '';
+    $stmt = @$connection->prepare("SELECT `type` FROM `server_config` WHERE `id`=? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('i', $sid);
+        $stmt->execute();
+        $serverRow = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $serverType = (string)($serverRow['type'] ?? '');
+    }
+
+    if($serverType === 'sanaei_new'){
+        $ctx = ['server_id'=>$sid, 'inbound_id'=>0, 'multi_inbound_ids'=>[], 'protocol'=>'', 'type'=>''];
+        setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+        $view = v2raystore_addTestPlanInboundSelectView($sid, []);
+        editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+        exit();
+    }
+
     $rows = [];
     $rows[] = [[ 'text'=>'کل سرور / پورت اختصاصی', 'callback_data'=>'addTestPlanInbound' . $sid . '_0' ]];
     $json = function_exists('getJson') ? getJson($sid) : null;
@@ -785,6 +845,93 @@ if(preg_match('/^addTestPlanServer(\d+)$/', $data ?? '', $m) && ($from_id == $ad
     }
     $rows[] = [[ 'text'=>'⬅️ بازگشت', 'callback_data'=>'addTestPlan' ]];
     editText($message_id, "🚪 حالا اینباند تست را انتخاب کن.\n\nاگر می‌خواهی تست برای کل سرور/پورت اختصاصی باشد، گزینه اول را بزن.", json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE), "HTML");
+    exit();
+}
+
+if(preg_match('/^toggleAddTestPlanInbound_(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($m[1]);
+    $iid = intval($m[2]);
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true);
+    if(!is_array($ctx) || intval($ctx['server_id'] ?? 0) !== $sid) $ctx = ['server_id'=>$sid, 'inbound_id'=>0, 'multi_inbound_ids'=>[], 'protocol'=>'', 'type'=>''];
+    $ids = function_exists('v2raystore_decodePlanMultiInboundIds') ? v2raystore_decodePlanMultiInboundIds($ctx['multi_inbound_ids'] ?? []) : array_values(array_unique(array_filter(array_map('intval', (array)($ctx['multi_inbound_ids'] ?? [])))));
+    if(in_array($iid, $ids, true)) $ids = array_values(array_filter($ids, function($v) use ($iid){ return intval($v) !== $iid; }));
+    else $ids[] = $iid;
+    $ctx['multi_inbound_ids'] = $ids;
+    $ctx['inbound_id'] = !empty($ids) ? intval($ids[0]) : 0;
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    $view = v2raystore_addTestPlanInboundSelectView($sid, $ids);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit();
+}
+
+if(preg_match('/^addTestPlanInboundAll_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($m[1]);
+    $ids = [];
+    $json = function_exists('getJson') ? getJson($sid) : null;
+    if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
+        foreach($json->obj as $row){
+            if(is_object($row) && intval($row->id ?? 0) > 0) $ids[] = intval($row->id);
+        }
+    }
+    $ids = array_values(array_unique($ids));
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true);
+    if(!is_array($ctx) || intval($ctx['server_id'] ?? 0) !== $sid) $ctx = ['server_id'=>$sid, 'protocol'=>'', 'type'=>''];
+    $ctx['multi_inbound_ids'] = $ids;
+    $ctx['inbound_id'] = !empty($ids) ? intval($ids[0]) : 0;
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    $view = v2raystore_addTestPlanInboundSelectView($sid, $ids);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit();
+}
+
+if(preg_match('/^addTestPlanInboundClear_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($m[1]);
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true);
+    if(!is_array($ctx) || intval($ctx['server_id'] ?? 0) !== $sid) $ctx = ['server_id'=>$sid, 'protocol'=>'', 'type'=>''];
+    $ctx['multi_inbound_ids'] = [];
+    $ctx['inbound_id'] = 0;
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    $view = v2raystore_addTestPlanInboundSelectView($sid, []);
+    editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+    exit();
+}
+
+if(preg_match('/^addTestPlanInboundDone_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sid = intval($m[1]);
+    $ctx = json_decode($userInfo['temp'] ?? '{}', true);
+    if(!is_array($ctx) || intval($ctx['server_id'] ?? 0) !== $sid){
+        alert('اطلاعات انتخاب Inbound منقضی شده؛ دوباره سرور را انتخاب کن.');
+        exit();
+    }
+    $ids = function_exists('v2raystore_decodePlanMultiInboundIds') ? v2raystore_decodePlanMultiInboundIds($ctx['multi_inbound_ids'] ?? []) : array_values(array_unique(array_filter(array_map('intval', (array)($ctx['multi_inbound_ids'] ?? [])))));
+    if(empty($ids)){
+        alert('حداقل یک Inbound را انتخاب کن.');
+        exit();
+    }
+    $json = function_exists('getJson') ? getJson($sid) : null;
+    $available = [];
+    if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
+        foreach($json->obj as $row){
+            if(is_object($row) && intval($row->id ?? 0) > 0) $available[intval($row->id)] = $row;
+        }
+    }
+    $ids = array_values(array_filter($ids, function($iid) use ($available){ return isset($available[intval($iid)]); }));
+    if(empty($ids)){
+        alert('Inboundهای انتخاب‌شده دیگر روی پنل پیدا نشدند. دوباره انتخاب کن.');
+        $view = v2raystore_addTestPlanInboundSelectView($sid, []);
+        editText($message_id, $view['text'], $view['keyboard'], 'HTML');
+        exit();
+    }
+    $first = $available[intval($ids[0])];
+    $ctx['multi_inbound_ids'] = $ids;
+    $ctx['inbound_id'] = intval($ids[0]);
+    $ctx['protocol'] = (string)($first->protocol ?? 'vless');
+    $ss = json_decode($first->streamSettings ?? '');
+    $ctx['type'] = ($ss && isset($ss->network)) ? (string)$ss->network : 'tcp';
+    setUser(json_encode($ctx, JSON_UNESCAPED_UNICODE), 'temp');
+    delMessage();
+    sendMessage("🔋 حجم اکانت تست را به گیگ بفرست.\nمثال: <code>0.1</code>", $cancelKey, "HTML");
+    setUser('addTestPlanVolume');
     exit();
 }
 if(preg_match('/^addTestPlanInbound(\d+)_(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -890,6 +1037,10 @@ if(($userInfo['step'] ?? '') == 'addTestPlanTitle' && $text != $buttonValues['ca
     $stmt->close();
     setUser('', 'temp'); setUser();
     if($ok){
+        $multiIds = function_exists('v2raystore_decodePlanMultiInboundIds') ? v2raystore_decodePlanMultiInboundIds($ctx['multi_inbound_ids'] ?? []) : [];
+        if(!empty($multiIds) && function_exists('v2raystore_savePlanMultiInboundIds')){
+            v2raystore_savePlanMultiInboundIds($newId, $multiIds);
+        }
         sendMessage("✅ اکانت تست جدید ثبت شد.", $removeKeyboard, 'HTML');
         sendMessage(v2raystore_getTestPlanDetailsText($newId), v2raystore_getTestPlanDetailsKeys($newId), 'HTML');
     }else{
@@ -10435,9 +10586,11 @@ function v2raystore_planMultiInboundManageView($planId){
     $stmt->close();
     if(!$plan) return ['text'=>'پلن پیدا نشد.', 'keyboard'=>json_encode(['inline_keyboard'=>[]])];
 
+    $isTestPlan = function_exists('v2raystore_isTestPlanRow') ? v2raystore_isTestPlanRow($plan) : (intval($plan['price'] ?? 0) === 0);
+    $backCallback = $isTestPlan ? ('testPlanDetails' . $planId) : ('planDetails' . $planId);
     $serverId = intval($plan['server_id'] ?? 0);
     $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
-    if(!$stmt) return ['text'=>'خطا در خواندن سرور.', 'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'planDetails'.$planId]]]])];
+    if(!$stmt) return ['text'=>'خطا در خواندن سرور.', 'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>$backCallback]]]])];
     $stmt->bind_param('i', $serverId);
     $stmt->execute();
     $server = $stmt->get_result()->fetch_assoc();
@@ -10446,7 +10599,7 @@ function v2raystore_planMultiInboundManageView($planId){
     if(!$server || ($server['type'] ?? '') !== 'sanaei_new'){
         return [
             'text'=>"🚪 تنظیم چند اینباند فقط برای سنایی جدید فعال است.\n\nبرای نسخه‌های قدیمی همان اینباند تکی پلن استفاده می‌شود.",
-            'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'planDetails'.$planId]]]], JSON_UNESCAPED_UNICODE)
+            'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>$backCallback]]]], JSON_UNESCAPED_UNICODE)
         ];
     }
 
@@ -10475,11 +10628,11 @@ function v2raystore_planMultiInboundManageView($planId){
             ['text'=>'🧹 پاک کردن', 'callback_data'=>'planInboundClear_'.$planId],
         ];
     }
-    $keyboard[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'planDetails'.$planId]];
+    $keyboard[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>$backCallback]];
 
     $summary = function_exists('v2raystore_planMultiInboundSummary') ? v2raystore_planMultiInboundSummary($plan) : implode(',', $selected);
-    $text = "🚪 تنظیم چند اینباند برای پلن\n\n";
-    $text .= "پلن: <b>" . htmlspecialchars((string)($plan['title'] ?? $planId), ENT_QUOTES, 'UTF-8') . "</b>\n";
+    $text = $isTestPlan ? "🚪 تنظیم چند اینباند برای اکانت تست\n\n" : "🚪 تنظیم چند اینباند برای پلن\n\n";
+    $text .= ($isTestPlan ? "اکانت تست: <b>" : "پلن: <b>") . htmlspecialchars((string)($plan['title'] ?? $planId), ENT_QUOTES, 'UTF-8') . "</b>\n";
     $text .= "وضعیت فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n\n";
     $text .= "با انتخاب چند اینباند، کاربر هنگام خرید همین پلن روی همه اینباندهای انتخابی سنایی جدید ثبت می‌شود و لینک‌های همان کلاینت برای کاربر ارسال می‌شود.\n";
     $text .= "اولین اینباند انتخاب‌شده به‌عنوان اینباند اصلی سفارش ذخیره می‌شود.";

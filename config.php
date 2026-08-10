@@ -2044,7 +2044,8 @@ function v2raystore_getTestPlanDetailsText($planId){
     if(!$plan) return 'پلن تست پیدا نشد.';
     $state = intval($plan['active'] ?? 0) === 1 ? 'فعال ✅' : 'غیرفعال ❌';
     return "🧪 <b>جزئیات پلن تست #" . intval($plan['id']) . "</b>\n\n" .
-           "🖥 سرور/اینباند: <b>" . v2raystore_h(v2raystore_testPlanDisplayTitle($plan, true)) . "</b>\n" .
+           "🖥 سرور/عنوان: <b>" . v2raystore_h(v2raystore_testPlanDisplayTitle($plan, false)) . "</b>\n" .
+           "🚪 محدوده Inbound: <b>" . v2raystore_h(v2raystore_getPlanScopeInboundText($plan)) . "</b>\n" .
            "وضعیت: <b>{$state}</b>\n" .
            "👤 استفاده‌شده: <b>" . intval(v2raystore_getTestPlanUsageStats($plan)['user_count'] ?? 0) . " کاربر</b>\n" .
            "🔋 حجم: <b>" . v2raystore_h($plan['volume'] ?? '') . " گیگ</b>\n" .
@@ -2071,6 +2072,9 @@ function v2raystore_getTestPlanDetailsKeys($planId){
         ['text'=>'🚪 ظرفیت', 'callback_data'=>'editTestPlanField' . $id . '_acount', 'style'=>'primary']
     ];
     $rows[] = [[ 'text'=>'👥 محدودیت IP', 'callback_data'=>'editTestPlanField' . $id . '_limitip', 'style'=>'primary' ]];
+    if(function_exists('v2raystore_planIsSanaeiNew') && v2raystore_planIsSanaeiNew($plan)){
+        $rows[] = [[ 'text'=>'🚪 انتخاب چند Inbound', 'callback_data'=>'v2raystoreplanmultiinbounds' . $id, 'style'=>'primary' ]];
+    }
     $rows[] = [[ 'text'=>'♻️ ریست سابقه همین تست', 'callback_data'=>'resetTestPlanUsageAsk' . $id, 'style'=>'warning' ]];
     $rows[] = [[ 'text'=>'🗑 حذف این تست', 'callback_data'=>'deleteTestPlanAsk' . $id, 'style'=>'danger' ]];
     $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'testPlansList', 'style'=>'primary' ]];
