@@ -10726,6 +10726,45 @@ function v2raystore_formatConfigLinksBlock($links, $titlePrefix = 'کانفیگ 
 }
 }
 
+if(!function_exists('v2raystore_serviceDeliveryInfoLines')){
+function v2raystore_serviceDeliveryInfoLines($volume, $days, $remaining = false){
+    $formatNumber = function($value){
+        if(!is_numeric($value)) return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+        $value = floatval($value);
+        return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.');
+    };
+    $volumeText = $formatNumber($volume);
+    $daysText = $formatNumber($days);
+    if($remaining){
+        return "🔋 حجم باقی‌مانده: <b>{$volumeText} گیگ</b>\n⏰ روز باقی‌مانده: <b>{$daysText} روز</b>";
+    }
+    return "🔋حجم سرویس: <b>{$volumeText} گیگ</b>\n⏰ مدت سرویس: <b>{$daysText} روز</b>";
+}
+}
+
+if(!function_exists('v2raystore_buildRenewedConfigUserMessage')){
+function v2raystore_buildRenewedConfigUserMessage($template, $remark, $volume, $days){
+    $template = (string)$template;
+    if(trim($template) === '') $template = '✅ سرویس REMARK با موفقیت تمدید شد.';
+    $hasVolume = strpos($template, 'VOLUME') !== false;
+    $hasDays = strpos($template, 'DAYS') !== false;
+    $message = str_replace(['REMARK','VOLUME','DAYS'], [$remark, $volume, $days], $template);
+    // مقدارهایی که به این تابع داده می‌شوند بعد از تمدید محاسبه شده‌اند؛ در متن پیش‌فرض نیز صریحاً «باقی‌مانده» نمایش داده شود.
+    $message = str_replace(
+        ['حجم سرویس:', 'حجم سرویس :', 'مدت سرویس:', 'مدت سرویس :'],
+        ['حجم باقی‌مانده:', 'حجم باقی‌مانده :', 'روز باقی‌مانده:', 'روز باقی‌مانده :'],
+        $message
+    );
+    $missing = [];
+    $volumeText = is_numeric($volume) ? rtrim(rtrim(number_format(floatval($volume), 2, '.', ''), '0'), '.') : (string)$volume;
+    $daysText = is_numeric($days) ? rtrim(rtrim(number_format(floatval($days), 2, '.', ''), '0'), '.') : (string)$days;
+    if(!$hasVolume) $missing[] = "🔋 حجم باقی‌مانده: <b>" . htmlspecialchars($volumeText, ENT_QUOTES, 'UTF-8') . " گیگ</b>";
+    if(!$hasDays) $missing[] = "⏰ روز باقی‌مانده: <b>" . htmlspecialchars($daysText, ENT_QUOTES, 'UTF-8') . " روز</b>";
+    if(!empty($missing)) $message = rtrim($message) . "\n" . implode("\n", $missing);
+    return $message;
+}
+}
+
 if(!function_exists('v2raystore_buildMultiDomainConfigMessage')){
 function v2raystore_buildMultiDomainConfigMessage($remark, $links, $subLink = '', $heading = '✅ کانفیگ‌های سرویس شما آماده شد', $extraLines = ''){
     $links = v2raystore_normalizeConfigLinksArray($links);
@@ -19087,13 +19126,14 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
     $keyboard = json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'] ?? 'بازگشت', 'callback_data'=>'mainMenu']]]], JSON_UNESCAPED_UNICODE);
 
     // دقیقاً مثل خرید عادی/کیف پول: اگر چند دامنه وجود داشته باشد همه لینک‌ها در یک پیام ارسال می‌شوند.
-    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($uid, $remark, $links, $subLink, $serverType, $keyboard, null, '', $linkOptions)){
+    $serviceExtraLines = function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز";
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($uid, $remark, $links, $subLink, $serverType, $keyboard, null, $serviceExtraLines, $linkOptions)){
         return true;
     }
 
     if(!$linkOptions['config']){
+        // در حالت فقط ساب، پروتکل نمایش داده نمی‌شود؛ فقط نام، حجم و مدت سرویس.
         $acc_text = "😍 سفارش جدید شما
-📡 پروتکل: $protocol
 🔮 نام سرویس: $remark
 🔋حجم سرویس: $volume گیگ
 ⏰ مدت سرویس: $days روز";
@@ -19684,7 +19724,10 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     // چون بعضی پنل‌ها resetTraffic را با چند ثانیه تأخیر در clientStats نشان می‌دهند.
     $finalVolumeText = $resetMode ? $volumeText : ((is_array($liveRemain) && isset($liveRemain['remaining_gb_text']) && $liveRemain['remaining_gb_text'] !== '') ? $liveRemain['remaining_gb_text'] : $volumeText);
     $finalDaysText = $resetMode ? strval(intval($days)) : ((is_array($liveRemain) && isset($liveRemain['remaining_days']) && $liveRemain['remaining_days'] !== '') ? $liveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($newExpire));
-    sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $finalVolumeText, $finalDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
+    $renewedUserMessage = function_exists('v2raystore_buildRenewedConfigUserMessage')
+        ? v2raystore_buildRenewedConfigUserMessage($mainValues['renewed_config_to_user'] ?? '✅ سرویس REMARK با موفقیت تمدید شد.', $remark, $finalVolumeText, $finalDaysText)
+        : str_replace(['REMARK','VOLUME','DAYS'], [$remark, $finalVolumeText, $finalDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.');
+    sendMessage($renewedUserMessage, null, 'HTML', $uid);
 
     $result = [
         'ok'=>true,
@@ -19806,7 +19849,10 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         $legacyLiveRemain = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($legacyOrderForLive) : null;
         $legacyVolumeText = (is_array($legacyLiveRemain) && isset($legacyLiveRemain['remaining_gb_text']) && $legacyLiveRemain['remaining_gb_text'] !== '') ? $legacyLiveRemain['remaining_gb_text'] : rtrim(rtrim(number_format(floatval($volume), 2, '.', ''), '0'), '.');
         $legacyDaysText = (is_array($legacyLiveRemain) && isset($legacyLiveRemain['remaining_days']) && $legacyLiveRemain['remaining_days'] !== '') ? $legacyLiveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($legacyExpire);
-        sendMessage(str_replace(['REMARK','VOLUME','DAYS'], [$remark, $legacyVolumeText, $legacyDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.'), null, 'HTML', $uid);
+        $legacyRenewedUserMessage = function_exists('v2raystore_buildRenewedConfigUserMessage')
+            ? v2raystore_buildRenewedConfigUserMessage($mainValues['renewed_config_to_user'] ?? '✅ سرویس REMARK با موفقیت تمدید شد.', $remark, $legacyVolumeText, $legacyDaysText)
+            : str_replace(['REMARK','VOLUME','DAYS'], [$remark, $legacyVolumeText, $legacyDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.');
+        sendMessage($legacyRenewedUserMessage, null, 'HTML', $uid);
         $result = ['ok'=>true, 'message'=>'تمدید با موفقیت انجام شد.', 'order_ids'=>[], 'user_id'=>$uid, 'price'=>$price, 'plan_id'=>$fid, 'renew_remark'=>$remark, 'remarks'=>[$remark], 'renew_days'=>$legacyDaysText, 'renew_volume'=>$legacyVolumeText, 'type'=>'RENEW_SCONFIG', 'pay_hash'=>$hashId, 'pay_state_before'=>($payInfo['state'] ?? '')];
         if(function_exists('v2raystore_notifyPaymentCompletedFullReport')) $result['report_sent'] = v2raystore_notifyPaymentCompletedFullReport($hashId, $result, $auto);
         return $result;

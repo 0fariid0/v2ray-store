@@ -3352,7 +3352,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز"), (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -3792,7 +3792,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز"), (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -6473,7 +6473,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز"), (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -6898,7 +6898,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     $__v2raystoreServerType = isset($serverType) ? $serverType : '';
     $__v2raystoreRemark = isset($remark) ? $remark : '';
     $__v2raystoreLoopLinks = $vraylink;
-    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
+    if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز"), (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
         $__v2raystoreLoopLinks = [];
     }
 
@@ -7252,7 +7252,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز"), (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -7804,7 +7804,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
         $__v2raystoreServerType = isset($serverType) ? $serverType : '';
         $__v2raystoreRemark = isset($remark) ? $remark : '';
         $__v2raystoreLoopLinks = $vraylink;
-        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, '', (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
+        if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, null, (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ\n⏰ مدت سرویس: {$days} روز"), (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
             $__v2raystoreLoopLinks = [];
         }
         foreach($__v2raystoreLoopLinks as $link){
@@ -9381,7 +9381,8 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         $__v2raystoreTestHeading = $__v2raystoreIsTestAccount ? '🧪 اکانت تست شما آماده شد' : null;
         $__v2raystoreTestExtra = $__v2raystoreIsTestAccount ? "🔋 حجم اکانت تست: <b>{$volume} گیگ</b>
 ⏰ مدت اعتبار تست: <b>{$days} روز</b>
-ℹ️ این اکانت تست است و {$volume} گیگ حجم دارد." : '';
+ℹ️ این اکانت تست است و {$volume} گیگ حجم دارد." : (function_exists('v2raystore_serviceDeliveryInfoLines') ? v2raystore_serviceDeliveryInfoLines($volume, $days, false) : "🔋حجم سرویس: {$volume} گیگ
+⏰ مدت سرویس: {$days} روز");
         $__v2raystoreLoopLinks = $vraylink;
         $__v2raystoreTestSendOk = false;
         if(function_exists('v2raystore_sendMultiDomainConfigMessage') && v2raystore_sendMultiDomainConfigMessage($__v2raystoreTargetUid, $__v2raystoreRemark, $vraylink, $__v2raystoreSubLink, $__v2raystoreServerType, null, $__v2raystoreTestHeading, $__v2raystoreTestExtra, (function_exists('v2raystore_getRuntimeDeliveryLinkOptions') ? v2raystore_getRuntimeDeliveryLinkOptions($__v2raystoreTargetUid, (isset($agentBought)?$agentBought:null), (isset($payInfo)?$payInfo:null), null, (isset($server_id)?$server_id:(isset($serverId)?$serverId:0))) : null))){
