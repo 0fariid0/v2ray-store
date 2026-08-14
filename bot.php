@@ -1989,32 +1989,34 @@ if($data=="rewardSettings" && ($from_id == $admin || $userInfo['isAdmin'] == tru
     editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
 }
-if(in_array($data, ['rewardToggleFeature','rewardTogglePurchase','rewardToggleRenew'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(in_array($data, ['rewardToggleFeature','rewardTogglePurchase','rewardToggleRenew','rewardToggleNormal'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $cfg = v2raystore_getPurchaseRewardConfig();
     if($data === 'rewardToggleFeature') $cfg['enabled'] = empty($cfg['enabled']);
     elseif($data === 'rewardTogglePurchase') $cfg['purchase_enabled'] = empty($cfg['purchase_enabled']);
     elseif($data === 'rewardToggleRenew') $cfg['renew_enabled'] = empty($cfg['renew_enabled']);
+    elseif($data === 'rewardToggleNormal') $cfg['normal_enabled'] = empty($cfg['normal_enabled']);
     v2raystore_savePurchaseRewardConfig($cfg);
     editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
 }
 if($data=="rewardSetNormal" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🎁 <b>جایزه عادی</b>\n\nحجم هدیه عادی را به گیگ وارد کنید.\nمثال: <code>3</code> یا <code>1.5</code>\n\nاگر <code>0</code> بزنید، جایزه عادی غیرفعال می‌شود و فقط در صورت برنده‌شدن جایزه ویژه حجم هدیه داده می‌شود.", $cancelKey, 'HTML');
+    sendMessage("🎁 <b>درصد جایزه عادی</b>\n\nدرصدی از حجم همان خرید یا تمدید را وارد کنید.\nمثال: <code>20</code> یعنی پلن 5 گیگ → 1 گیگ هدیه، پلن 10 گیگ → 2 گیگ هدیه و پلن 50 گیگ → 10 گیگ هدیه.\n\nروشن/خاموش کردن جایزه عادی از دکمه جداگانه داخل تنظیمات انجام می‌شود؛ با خاموش‌کردن آن، این درصد ذخیره می‌ماند.", $cancelKey, 'HTML');
     setUser('rewardSetNormalStep');
     exit();
 }
 if($userInfo['step'] == 'rewardSetNormalStep' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $value = function_exists('v2raystore_rewardNormalizeNumberInput') ? v2raystore_rewardNormalizeNumberInput($text) : str_replace(',', '.', trim((string)$text));
-    if(!is_numeric($value) || floatval($value) < 0 || floatval($value) > 100000){
-        sendMessage("⚠️ حجم را فقط به عدد و بین 0 تا 100000 گیگ وارد کنید.", $cancelKey, 'HTML');
+    if(!is_numeric($value) || floatval($value) < 0 || floatval($value) > 100){
+        sendMessage("⚠️ درصد را فقط به عدد و بین 0 تا 100 وارد کنید.", $cancelKey, 'HTML');
         exit();
     }
     $cfg = v2raystore_getPurchaseRewardConfig();
-    $cfg['normal_gb'] = round(floatval($value), 2);
+    $cfg['normal_percent'] = round(floatval($value), 2);
     v2raystore_savePurchaseRewardConfig($cfg);
     setUser();
-    sendMessage("✅ جایزه عادی روی <b>" . v2raystore_rewardFormatGb($cfg['normal_gb']) . " گیگ</b> تنظیم شد.", $removeKeyboard, 'HTML');
+    $pct = v2raystore_rewardFormatGb($cfg['normal_percent']);
+    sendMessage("✅ جایزه عادی روی <b>{$pct}% حجم همان خرید/تمدید</b> تنظیم شد.\nمثال: 5 گیگ → <b>" . v2raystore_rewardFormatGb(5 * floatval($cfg['normal_percent']) / 100) . " گیگ</b> هدیه | 10 گیگ → <b>" . v2raystore_rewardFormatGb(10 * floatval($cfg['normal_percent']) / 100) . " گیگ</b> هدیه.", $removeKeyboard, 'HTML');
     sendMessage(v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
 }

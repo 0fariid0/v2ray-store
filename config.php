@@ -3945,6 +3945,12 @@ function v2raystore_ensurePurchaseRewardSchema(){
 function v2raystore_getPurchaseRewardConfig(){
     $defaults = [
         'enabled' => false,
+        // Normal reward is calculated from the traffic of the exact purchase/renewal.
+        // Example: 20% => 5GB plan gets 1GB, 10GB gets 2GB.
+        'normal_percent' => 20,
+        // Normal reward can be disabled independently while keeping the saved percentage.
+        'normal_enabled' => true,
+        // Kept only for backward compatibility with configs saved by older builds.
         'normal_gb' => 3,
         'special_chance' => 25,
         'purchase_enabled' => true,
@@ -3957,6 +3963,8 @@ function v2raystore_getPurchaseRewardConfig(){
     $cfg['enabled'] = !empty($cfg['enabled']);
     $cfg['purchase_enabled'] = !empty($cfg['purchase_enabled']);
     $cfg['renew_enabled'] = !empty($cfg['renew_enabled']);
+    $cfg['normal_enabled'] = !empty($cfg['normal_enabled']);
+    $cfg['normal_percent'] = max(0, min(100, round(floatval($cfg['normal_percent']), 2)));
     $cfg['normal_gb'] = max(0, round(floatval($cfg['normal_gb']), 2));
     $cfg['special_chance'] = max(0, min(100, intval($cfg['special_chance'])));
     return $cfg;
@@ -3968,6 +3976,9 @@ function v2raystore_savePurchaseRewardConfig($cfg){
     $cfg = array_merge($current, $cfg);
     $clean = [
         'enabled' => !empty($cfg['enabled']),
+        'normal_enabled' => !empty($cfg['normal_enabled']),
+        'normal_percent' => max(0, min(100, round(floatval($cfg['normal_percent'] ?? 20), 2))),
+        // Preserve the old field so downgrading the bot does not destroy the previous setting.
         'normal_gb' => max(0, round(floatval($cfg['normal_gb'] ?? 0), 2)),
         'special_chance' => max(0, min(100, intval($cfg['special_chance'] ?? 0))),
         'purchase_enabled' => !empty($cfg['purchase_enabled']),
@@ -3979,6 +3990,18 @@ function v2raystore_savePurchaseRewardConfig($cfg){
 function v2raystore_rewardFormatGb($value){
     $value = max(0, floatval($value));
     return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.');
+}
+
+/**
+ * Calculate the fallback/normal gift from the traffic bought in this exact
+ * purchase or renewal. This prevents low-volume plans from receiving the same
+ * fixed gift as high-volume plans.
+ */
+function v2raystore_rewardNormalVolumeGb($qualifyingVolumeGb, $normalPercent){
+    $qualifyingVolumeGb = max(0, floatval($qualifyingVolumeGb));
+    $normalPercent = max(0, min(100, floatval($normalPercent)));
+    if($qualifyingVolumeGb <= 0 || $normalPercent <= 0) return 0.0;
+    return round($qualifyingVolumeGb * ($normalPercent / 100), 2);
 }
 
 function v2raystore_rewardNormalizeNumberInput($value){
@@ -4147,17 +4170,23 @@ function v2raystore_rewardSettingsText(){
     $state = $cfg['enabled'] ? '🟢 روشن' : '🔴 خاموش';
     $purchase = $cfg['purchase_enabled'] ? '✅ فعال' : '❌ غیرفعال';
     $renew = $cfg['renew_enabled'] ? '✅ فعال' : '❌ غیرفعال';
-    $normal = v2raystore_rewardFormatGb($cfg['normal_gb']);
+    $normalState = $cfg['normal_enabled'] ? '✅ روشن' : '❌ خاموش';
+    $normalPercent = v2raystore_rewardFormatGb($cfg['normal_percent']);
+    $normalRule = $cfg['normal_enabled']
+        ? "📌 اگر قرعه جایزه ویژه به کاربر نخورد، جایزه عادی بر اساس درصد حجم همان خرید/تمدید محاسبه می‌شود؛ اگر برنده جایزه ویژه شود، همان جایزه ویژه جایگزین جایزه عادی می‌شود.\n"
+        : "📌 جایزه عادی خاموش است؛ فقط برندگان قرعه ویژه هدیه می‌گیرند و در صورت برنده‌نشدن، حجمی اضافه نمی‌شود.\n";
     return "🎁 <b>جایزه خرید و تمدید</b>\n\n" .
         "وضعیت کلی: <b>{$state}</b>\n" .
         "🛒 جایزه خرید جدید: <b>{$purchase}</b>\n" .
         "♻️ جایزه تمدید: <b>{$renew}</b>\n\n" .
-        "🎁 جایزه عادی: <b>{$normal} گیگ</b>\n" .
+        "🎁 وضعیت جایزه عادی: <b>{$normalState}</b>\n" .
+        "📊 درصد جایزه عادی: <b>{$normalPercent}% حجم همان خرید/تمدید</b>\n" .
+        "   مثال با {$normalPercent}%: پلن 5 گیگ → <b>" . v2raystore_rewardFormatGb(5 * floatval($cfg['normal_percent']) / 100) . " گیگ</b> | پلن 10 گیگ → <b>" . v2raystore_rewardFormatGb(10 * floatval($cfg['normal_percent']) / 100) . " گیگ</b>\n" .
         "🎲 شانس پایه جایزه ویژه: <b>" . intval($cfg['special_chance']) . "%</b>\n" .
         "⭐ موجودی جوایز ویژه فعال: <b>" . intval($stats['special_remaining']) . " عدد</b>\n" .
         "🏆 جوایز ثبت‌شده در این دوره: <b>" . intval($stats['awarded_total']) . " عدد</b>\n\n" .
         "📈 شانس واقعی به‌صورت خودکار با حجم خرید/تمدید بیشتر می‌شود و در خریدهای حجیم‌تر، جوایز ویژه بزرگ‌تر وزن انتخاب بیشتری دارند.\n" .
-        "📌 اگر قرعه جایزه ویژه به کاربر نخورد، جایزه عادی به همان سرویس اضافه می‌شود. وقتی موجودی جوایز ویژه تمام شود نیز همه فقط جایزه عادی را دریافت می‌کنند.\n" .
+        $normalRule .
         "⚠️ سرویس‌های نامحدود تغییر داده نمی‌شوند تا محدودیت حجمی ناخواسته برایشان ایجاد نشود.";
 }
 
@@ -4166,13 +4195,15 @@ function v2raystore_rewardSettingsKeyboard(){
     $onOff = $cfg['enabled'] ? '🟢 روشن' : '🔴 خاموش';
     $purchase = $cfg['purchase_enabled'] ? '✅ خرید' : '❌ خرید';
     $renew = $cfg['renew_enabled'] ? '✅ تمدید' : '❌ تمدید';
+    $normal = $cfg['normal_enabled'] ? '✅ روشن' : '❌ خاموش';
     return json_encode(['inline_keyboard'=>[
         [['text'=>'وضعیت: ' . $onOff, 'callback_data'=>'rewardToggleFeature']],
         [
             ['text'=>$purchase, 'callback_data'=>'rewardTogglePurchase'],
             ['text'=>$renew, 'callback_data'=>'rewardToggleRenew'],
         ],
-        [['text'=>'🎁 جایزه عادی: ' . v2raystore_rewardFormatGb($cfg['normal_gb']) . ' گیگ', 'callback_data'=>'rewardSetNormal']],
+        [['text'=>'🎁 جایزه عادی: ' . $normal, 'callback_data'=>'rewardToggleNormal']],
+        [['text'=>'📊 درصد جایزه عادی: ' . v2raystore_rewardFormatGb($cfg['normal_percent']) . '% حجم پلن', 'callback_data'=>'rewardSetNormal']],
         [['text'=>'🎲 شانس پایه ویژه: ' . intval($cfg['special_chance']) . '%', 'callback_data'=>'rewardSetChance']],
         [['text'=>'➕ افزودن جایزه ویژه محدود', 'callback_data'=>'rewardAddSpecial']],
         [['text'=>'⭐ مدیریت جوایز ویژه', 'callback_data'=>'rewardPrizes']],
@@ -4512,15 +4543,16 @@ function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $p
     $logId = intval($connection->insert_id);
 
     $qualifyingVolumeGb = v2raystore_rewardResolveQualifyingVolumeGb($order, $qualifyingVolumeGb);
+    $normalVolumeGb = !empty($cfg['normal_enabled']) ? v2raystore_rewardNormalVolumeGb($qualifyingVolumeGb, $cfg['normal_percent']) : 0.0;
     $effectiveSpecialChance = v2raystore_rewardEffectiveSpecialChance($cfg['special_chance'], $qualifyingVolumeGb);
     $special = v2raystore_rewardReserveSpecialPrize($effectiveSpecialChance, $qualifyingVolumeGb);
     $prizeType = $special ? 'special' : 'normal';
     $prizeId = $special ? intval($special['id']) : 0;
-    $volumeGb = $special ? floatval($special['volume_gb']) : floatval($cfg['normal_gb']);
+    $volumeGb = $special ? floatval($special['volume_gb']) : $normalVolumeGb;
 
     if($volumeGb <= 0){
         if($prizeId > 0) v2raystore_rewardReleaseSpecialPrize($prizeId);
-        $reason = 'برای این قرعه جایزه عادی/ویژه قابل اعمال وجود نداشت.';
+        $reason = empty($cfg['normal_enabled']) ? 'جایزه عادی خاموش بود و در قرعه ویژه نیز برنده نشد.' : 'برای این قرعه جایزه عادی/ویژه قابل اعمال وجود نداشت.';
         $stmt = $connection->prepare("UPDATE `purchase_reward_logs` SET `status`='skipped', `prize_type`=?, `prize_id`=?, `volume_gb`=?, `error_text`=? WHERE `id`=?");
         if($stmt){ $stmt->bind_param('sidsi',$prizeType,$prizeId,$volumeGb,$reason,$logId); $stmt->execute(); $stmt->close(); }
         return ['ok'=>true,'skipped'=>true,'message'=>$reason];
