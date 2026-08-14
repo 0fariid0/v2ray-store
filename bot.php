@@ -10660,7 +10660,7 @@ function v2raystore_newPlanMultiInboundView($planId){
         $network = is_object($stream) ? trim((string)($stream->network ?? '')) : '';
         $checked = in_array($iid, $selected, true) ? '✅' : '▫️';
         if($checked === '✅' && $rowProtocol !== '' && !in_array($rowProtocol, $selectedProtocols, true)) $selectedProtocols[] = $rowProtocol;
-        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($rowProtocol) : strtoupper($rowProtocol);
+        $protoLabel = function_exists('v2raystore_inboundProtocolFeatureLabel') ? v2raystore_inboundProtocolFeatureLabel($row) : (function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($rowProtocol) : strtoupper($rowProtocol));
         $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '');
         if($network !== '') $title .= ' | ' . $network;
         if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
@@ -10798,7 +10798,7 @@ function v2raystore_serverPlansMultiInboundManageView($serverId){
         $protocol = strtolower(trim((string)($row->protocol ?? '')));
         if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($protocol)) continue;
         $remark = trim((string)($row->remark ?? ''));
-        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($protocol) : strtoupper($protocol);
+        $protoLabel = function_exists('v2raystore_inboundProtocolFeatureLabel') ? v2raystore_inboundProtocolFeatureLabel($row) : (function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($protocol) : strtoupper($protocol));
         $checked = ($state['uniform'] && in_array($iid, $selected, true)) ? '✅' : '▫️';
         $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '');
         if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
@@ -10871,7 +10871,7 @@ function v2raystore_planMultiInboundManageView($planId){
         $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
         if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
         $remark = trim((string)($row->remark ?? ''));
-        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($rowProtocol) : strtoupper($rowProtocol);
+        $protoLabel = function_exists('v2raystore_inboundProtocolFeatureLabel') ? v2raystore_inboundProtocolFeatureLabel($row) : (function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($rowProtocol) : strtoupper($rowProtocol));
         $checked = in_array($iid, $selected, true) ? '✅' : '▫️';
         if($checked === '✅' && $rowProtocol !== '' && !in_array($rowProtocol, $selectedProtocols, true)) $selectedProtocols[] = $rowProtocol;
         $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '');

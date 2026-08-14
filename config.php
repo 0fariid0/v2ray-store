@@ -2096,6 +2096,122 @@ function v2raystore_inboundProtocolLabel($protocol){
     return $protocol === '' ? '-' : strtoupper($protocol);
 }
 
+function v2raystore_inboundProtocolFeatureLabel($row){
+    $protocol = '';
+    if(is_object($row)) $protocol = strtolower(trim((string)($row->protocol ?? '')));
+    elseif(is_array($row)) $protocol = strtolower(trim((string)($row['protocol'] ?? '')));
+    $label = v2raystore_inboundProtocolLabel($protocol);
+    if($protocol === 'vless' && function_exists('v2raystore_vlessEncryptionLabel')){
+        $encLabel = v2raystore_vlessEncryptionLabel($row);
+        if($encLabel !== '') $label .= ' • ' . $encLabel;
+    }
+    return $label;
+}
+
+
+function v2raystore_vlessEncryptionInfo($row){
+    if(is_object($row)) $row = json_decode(json_encode($row), true);
+    if(!is_array($row)) return ['active'=>false, 'encryption'=>'none', 'decryption'=>'none', 'kind'=>null, 'label'=>''];
+    $protocol = strtolower(trim((string)($row['protocol'] ?? '')));
+    if($protocol !== 'vless') return ['active'=>false, 'encryption'=>'none', 'decryption'=>'none', 'kind'=>null, 'label'=>''];
+
+    $settings = function_exists('v2raystore_decodeMaybeJson')
+        ? v2raystore_decodeMaybeJson($row['settings'] ?? '{}', true)
+        : (json_decode((string)($row['settings'] ?? '{}'), true) ?: []);
+    if(!is_array($settings)) $settings = [];
+
+    $encryption = trim((string)($settings['encryption'] ?? 'none'));
+    $decryption = trim((string)($settings['decryption'] ?? 'none'));
+    if($encryption === '') $encryption = 'none';
+    if($decryption === '') $decryption = 'none';
+    $active = strtolower($encryption) !== 'none' || strtolower($decryption) !== 'none';
+    if(!$active) return ['active'=>false, 'encryption'=>'none', 'decryption'=>'none', 'kind'=>null, 'label'=>''];
+
+    // Mirrors 3x-ui's vlessEncryptionAuthKind(): the second dot-separated token
+    // is native/xorpub/random and the final auth key length distinguishes X25519
+    // from ML-KEM-768.
+    $classificationValue = strtolower($encryption) !== 'none' ? $encryption : $decryption;
+    $parts = array_values(array_filter(explode('.', $classificationValue), static function($v){ return $v !== ''; }));
+    $mode = isset($parts[1]) ? strtolower(trim((string)$parts[1])) : 'native';
+    if(!in_array($mode, ['native','xorpub','random'], true)) $mode = 'native';
+    $authKey = !empty($parts) ? (string)$parts[count($parts)-1] : '';
+    $keyType = strlen($authKey) > 300 ? 'mlkem768' : 'x25519';
+    $kind = $keyType . ($mode === 'native' ? '' : '_' . $mode);
+    $label = ($keyType === 'mlkem768' ? 'ML-KEM-768' : 'X25519') . ' (' . $mode . ')';
+
+    return [
+        'active'=>true,
+        'encryption'=>$encryption,
+        'decryption'=>$decryption,
+        'kind'=>$kind,
+        'label'=>$label,
+    ];
+}
+
+function v2raystore_vlessEncryptionEnabled($row){
+    $info = v2raystore_vlessEncryptionInfo($row);
+    return !empty($info['active']);
+}
+
+function v2raystore_vlessEncryptionLabel($row){
+    $info = v2raystore_vlessEncryptionInfo($row);
+    return !empty($info['active']) ? (string)($info['label'] ?? 'VLESS ENC') : '';
+}
+
+function v2raystore_vlessEncryptionValue($row){
+    $info = v2raystore_vlessEncryptionInfo($row);
+    return !empty($info['active']) ? (string)($info['encryption'] ?? 'none') : 'none';
+}
+
+function v2raystore_inboundTlsFlowCapable($row){
+    if(is_object($row)) $row = json_decode(json_encode($row), true);
+    if(!is_array($row)) return false;
+    if(strtolower(trim((string)($row['protocol'] ?? ''))) !== 'vless') return false;
+    $stream = function_exists('v2raystore_decodeMaybeJson')
+        ? v2raystore_decodeMaybeJson($row['streamSettings'] ?? '{}', true)
+        : (json_decode((string)($row['streamSettings'] ?? '{}'), true) ?: []);
+    if(!is_array($stream)) $stream = [];
+    $network = strtolower(trim((string)($stream['network'] ?? 'tcp')));
+    $security = strtolower(trim((string)($stream['security'] ?? 'none')));
+    if($network === 'tcp' && in_array($security, ['tls','reality'], true)) return true;
+    if($network === 'xhttp' && v2raystore_vlessEncryptionEnabled($row)) return true;
+    return false;
+}
+
+function v2raystore_planHasVlessEncryption($plan){
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return false;
+    $serverId = intval($plan['server_id'] ?? 0);
+    if($serverId <= 0) return false;
+    $ids = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [intval($plan['inbound_id'] ?? 0)];
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if(empty($ids)) return false;
+    $panel = getJson($serverId);
+    if(!$panel || empty($panel->success) || !isset($panel->obj) || !is_array($panel->obj)) return false;
+    foreach($panel->obj as $row){
+        if(!is_object($row) || !in_array(intval($row->id ?? 0), $ids, true)) continue;
+        if(v2raystore_vlessEncryptionEnabled($row)) return true;
+    }
+    return false;
+}
+
+function v2raystore_planHasTlsFlowCapableInbound($plan){
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(!is_array($plan)) return false;
+    $serverId = intval($plan['server_id'] ?? 0);
+    if($serverId <= 0) return false;
+    $ids = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [intval($plan['inbound_id'] ?? 0)];
+    $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+    if(empty($ids)) return false;
+    $panel = getJson($serverId);
+    if(!$panel || empty($panel->success) || !isset($panel->obj) || !is_array($panel->obj)) return false;
+    foreach($panel->obj as $row){
+        if(!is_object($row) || !in_array(intval($row->id ?? 0), $ids, true)) continue;
+        if(v2raystore_inboundTlsFlowCapable($row)) return true;
+    }
+    return false;
+}
+
 function v2raystore_randomBytesSafe($length){
     $length = max(1, intval($length));
     try{
@@ -10954,6 +11070,10 @@ function getPlanDetailsKeys($planId){
     $stmt->close();
 
     $reality = $server_info['reality'];
+    $showFlow = ($reality == "true");
+    if(!$showFlow && ($server_info['type'] ?? '') == 'sanaei_new' && function_exists('v2raystore_planHasTlsFlowCapableInbound')){
+        $showFlow = v2raystore_planHasTlsFlowCapableInbound($pd);
+    }
 
 
     if($pdResult->num_rows == 0) return null;
@@ -11001,7 +11121,7 @@ function getPlanDetailsKeys($planId){
             ($reality == "true"?[['text'=>$dest,'callback_data'=>"editDestName$id"],['text'=>"dest",'callback_data'=>"v2raystore"]]:[]),
             ($reality == "true"?[['text'=>$serverName,'callback_data'=>"editServerNames$id"],['text'=>"serverNames",'callback_data'=>"v2raystore"]]:[]),
             ($reality == "true"?[['text'=>$spiderX,'callback_data'=>"editSpiderX$id"],['text'=>"spiderX",'callback_data'=>"v2raystore"]]:[]),
-            ($reality == "true"?[['text'=>$flow,'callback_data'=>"editFlow$id"],['text'=>"flow",'callback_data'=>"v2raystore"]]:[]),
+            ($showFlow?[['text'=>$flow,'callback_data'=>"editFlow$id"],['text'=>"flow",'callback_data'=>"v2raystore"]]:[]),
             [['text'=>$v2raystoreplanaccnumber,'callback_data'=>"v2raystore"],['text'=>"🎗 تعداد اکانت های فروخته شده",'callback_data'=>"v2raystore"]],
             ($pd['inbound_id'] != 0?[['text'=>"$acount",'callback_data'=>"v2raystoreplanslimit$id"],['text'=>"🚪 تغییر ظرفیت کانفیگ",'callback_data'=>"v2raystore"]]:[]),
             (($server_info['type'] ?? '') != "sanaei_new" && $pd['inbound_id'] != 0 ? [['text'=>$pd['inbound_id'],'callback_data'=>"v2raystoreplansinobundid$id"],['text'=>"🚪 سطر کانفیگ",'callback_data'=>"v2raystore"]] : []),
@@ -13673,16 +13793,30 @@ function v2raystore_addInboundAccountMulti($server_id, $client_id, $inbound_ids,
             'subId' => RandomString(16)
         ];
 
-        if(($server_info['reality'] ?? '') == "true" && $planId !== null){
-            $stmt = @$connection->prepare("SELECT `flow` FROM `server_plans` WHERE `id`=? LIMIT 1");
-            if($stmt){
-                $pid = intval($planId);
-                $stmt->bind_param("i", $pid);
-                $stmt->execute();
-                $plan = $stmt->get_result()->fetch_assoc();
-                $stmt->close();
-                $flow = isset($plan['flow']) && $plan['flow'] != "None" ? (string)$plan['flow'] : "";
-                if($flow !== '') $client['flow'] = $flow;
+        if($planId !== null){
+            // Reality/TLS-TCP and VLESS Encryption over XHTTP can use a VLESS flow.
+            // For mixed-protocol plans it is safe to send the flow once: 3x-ui applies it only
+            // to flow-capable VLESS inbounds and keeps the other attached protocols unaffected.
+            $flowAllowed = (($server_info['reality'] ?? '') == "true");
+            if(!$flowAllowed && function_exists('v2raystore_inboundTlsFlowCapable')){
+                foreach($validIds as $flowInboundId){
+                    if(isset($available[$flowInboundId]) && v2raystore_inboundTlsFlowCapable($available[$flowInboundId])){
+                        $flowAllowed = true;
+                        break;
+                    }
+                }
+            }
+            if($flowAllowed){
+                $stmt = @$connection->prepare("SELECT `flow` FROM `server_plans` WHERE `id`=? LIMIT 1");
+                if($stmt){
+                    $pid = intval($planId);
+                    $stmt->bind_param("i", $pid);
+                    $stmt->execute();
+                    $plan = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+                    $flow = isset($plan['flow']) && $plan['flow'] != "None" ? (string)$plan['flow'] : "";
+                    if($flow !== '') $client['flow'] = $flow;
+                }
             }
         }
     }
@@ -13758,7 +13892,11 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
     $id_label = $protocol == 'trojan' ? 'password' : 'id';
     if($newarr == ''){
 		if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
-		    if($reality == "true"){
+            $flowCapable = ($reality == "true");
+            if(!$flowCapable && $serverType == "sanaei_new" && function_exists('v2raystore_inboundTlsFlowCapable')){
+                $flowCapable = v2raystore_inboundTlsFlowCapable($row);
+            }
+		    if($flowCapable && $planId !== null){
                 $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `id`=?");
                 $stmt->bind_param("i", $planId);
                 $stmt->execute();
@@ -14025,11 +14163,13 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
     $planDomain = v2raystore_normalizePlanDomainInput($customDomain);
     if($planDomain !== '') $server_ip = $planDomain;
 
+    $vlessEncryption = 'none';
     $response = getJson($server_id)->obj;
     foreach($response as $row){
         if($inbound_id == 0){
             $clients = json_decode($row->settings)->clients;
             if($clients[0]->id == $uniqid || $clients[0]->password == $uniqid) {
+                if(function_exists('v2raystore_vlessEncryptionValue')) $vlessEncryption = v2raystore_vlessEncryptionValue($row);
                 if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = json_decode($row->settings,true);
                     $email = $settings['clients'][0]['email'];
@@ -14111,6 +14251,7 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
             }
         }else{
             if($row->id == $inbound_id) {
+                if(function_exists('v2raystore_vlessEncryptionValue')) $vlessEncryption = v2raystore_vlessEncryptionValue($row);
                 if(isset($row->protocol) && trim((string)$row->protocol) !== '') $protocol = strtolower((string)$row->protocol);
                 if($serverType == "sanaei" || $serverType == "sanaei_new" || $serverType == "alireza"){
                     $settings = json_decode($row->settings);
@@ -14194,6 +14335,8 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
 
     }
     $protocol = strtolower($protocol);
+    if(trim((string)$vlessEncryption) === '') $vlessEncryption = 'none';
+    $vlessEncryptionParam = rawurlencode((string)$vlessEncryption);
     $serverIp = explode("\n",$server_ip);
     $outputLink = array();
     foreach($serverIp as $server_ip){
@@ -14215,9 +14358,9 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                         }
                     }
                 }
-                $psting = '';
+                $psting = "&encryption=$vlessEncryptionParam";
                 if(($header_type == 'http' && $rahgozar != true && $netType != "grpc" && $netType != "httpupgrade")) $psting .= "&path=/&host=$host";
-                if($netType == "ws" && $rahgozar != true) $psting .= "&encryption=none&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"");
+                if($netType == "ws" && $rahgozar != true) $psting .= "&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"");
                 if($netType == "httpupgrade" && $rahgozar != true){
                     $psting .= "&path=" . rawurlencode($path ?: '/');
                     if(!empty($host)) $psting .= "&host=$host";
@@ -14227,13 +14370,13 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                 if(strlen($serverName)>1 && $tlsStatus=="xtls") $server_ip = $serverName;
                 if($tlsStatus == "xtls" && $netType == "tcp") $psting .= "&flow=xtls-rprx-direct";
                 if($tlsStatus=="reality") $psting .= "&fp=$fp&pbk=$pbk&sni=$sni" . ($flow != ""?"&flow=$flow":"") . "&sid=$sid&spx=$spiderX";
-                if($rahgozar == true) $psting .= "&path=" . rawurlencode($path . ($customPath == true?"?ed=2048":"")) . "&encryption=none&host=$host";
+                if($rahgozar == true) $psting .= "&path=" . rawurlencode($path . ($customPath == true?"?ed=2048":"")) . "&host=$host";
                 $outputlink = "$protocol://$uniqid@$server_ip:" . ($rahgozar == true?($customPort!="0"?$customPort:"443"):$port) . "?type=$netType&security=" . ($rahgozar==true?"tls":$tlsStatus) . "{$psting}#$remark";
                 if($netType == 'grpc' && $tlsStatus != "reality"){
                     if($tlsStatus == 'tls'){
-                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&serviceName=$serviceName&sni=$sni#$remark";
+                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=$vlessEncryptionParam&serviceName=$serviceName&sni=$sni#$remark";
                     }else{
-                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&serviceName=$serviceName#$remark";
+                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=$vlessEncryptionParam&serviceName=$serviceName#$remark";
                     }
     
                 }
@@ -14327,7 +14470,8 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     }
                 }
                 
-                if(strlen($sni) > 1 && in_array($tlsStatus, ["tls", "xtls"], true)) $psting = "&sni=$sni"; else $psting = '';
+                $psting = "&encryption=$vlessEncryptionParam";
+                if(strlen($sni) > 1 && in_array($tlsStatus, ["tls", "xtls"], true)) $psting .= "&sni=$sni";
                 if($netType == 'tcp'){
                     if($netType == 'tcp' and $header_type == 'http') $psting .= '&headerType=http';
                     if($tlsStatus=="xtls") $psting .= "&flow=xtls-rprx-direct";
@@ -14335,22 +14479,22 @@ function getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netT
                     if($header_type == "http") $psting .= "&path=/&host=$host";
                     $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus{$psting}#$remark";
                 }elseif($netType == 'ws'){
-                    if($rahgozar == true)$outputlink = "$protocol://$uniqid@$server_ip:" . ($customPort!=0?$customPort:"443") . "?type=$netType&security=tls&path=" . rawurlencode($path . ($customPath == true?"?ed=2048":"")) . "&encryption=none&host=$host{$psting}#$remark";
-                    else $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=none&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"") . "{$psting}#$remark";
+                    if($rahgozar == true)$outputlink = "$protocol://$uniqid@$server_ip:" . ($customPort!=0?$customPort:"443") . "?type=$netType&security=tls&path=" . rawurlencode($path . ($customPath == true?"?ed=2048":"")) . "&host=$host{$psting}#$remark";
+                    else $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"") . "{$psting}#$remark";
                 }elseif($netType == 'httpupgrade'){
                     $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&path=" . rawurlencode($path ?: '/') . (!empty($host)?"&host=$host":"") . "{$psting}#$remark";
                 }
                 elseif($netType == 'kcp')
-                    $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&headerType=$kcpType&seed=$kcpSeed#$remark";
+                    $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=$vlessEncryptionParam&headerType=$kcpType&seed=$kcpSeed#$remark";
                 elseif($netType == 'grpc'){
                     if($tlsStatus == 'tls'){
-                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&serviceName=$serviceName&sni=$sni#$remark";
+                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=$vlessEncryptionParam&serviceName=$serviceName&sni=$sni#$remark";
                     }
                     elseif($tlsStatus=="reality"){
-                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&serviceName=$serviceName&fp=$fp&pbk=$pbk&sni=$sni" . ($flow != ""?"&flow=$flow":"") . "&sid=$sid&spx=$spiderX#$remark";
+                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=$vlessEncryptionParam&serviceName=$serviceName&fp=$fp&pbk=$pbk&sni=$sni" . ($flow != ""?"&flow=$flow":"") . "&sid=$sid&spx=$spiderX#$remark";
                     }
                     else{
-                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&serviceName=$serviceName#$remark";
+                        $outputlink = "$protocol://$uniqid@$server_ip:$port?type=$netType&security=$tlsStatus&encryption=$vlessEncryptionParam&serviceName=$serviceName#$remark";
                     }
                 }
             }elseif($protocol == 'trojan'){                
@@ -14460,6 +14604,7 @@ function v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protoc
     if($serverType === 'sanaei_new' && !empty($inboundIds)){
         $panelProtocols = [];
         $hasShadowsocks = false;
+        $hasVlessEncryption = false;
         $panelJson = getJson($server_id);
         if($panelJson && !empty($panelJson->success) && isset($panelJson->obj) && is_array($panelJson->obj)){
             foreach($panelJson->obj as $pRow){
@@ -14467,14 +14612,16 @@ function v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protoc
                 $pProto = strtolower(trim((string)($pRow->protocol ?? '')));
                 if($pProto !== '' && !in_array($pProto, $panelProtocols, true)) $panelProtocols[] = $pProto;
                 if($pProto === 'shadowsocks') $hasShadowsocks = true;
+                if($pProto === 'vless' && function_exists('v2raystore_vlessEncryptionEnabled') && v2raystore_vlessEncryptionEnabled($pRow)) $hasVlessEncryption = true;
             }
         }
-        if($hasShadowsocks || count($panelProtocols) > 1){
+        if($hasShadowsocks || $hasVlessEncryption || count($panelProtocols) > 1){
             $panelLinks = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uniqid, $fallbackInboundId > 0 ? $fallbackInboundId : intval($inboundIds[0]));
             if(!empty($panelLinks)) return $panelLinks;
-            // Shadowsocks (especially the 2022 ciphers) must be serialized by the panel itself.
-            // Never fall through to the legacy local link builder, which only knows VLESS/VMess/Trojan.
-            if($hasShadowsocks) return [];
+            // Shadowsocks 2022 and VLESS Encryption (X25519 / ML-KEM-768) carry
+            // protocol-specific key material that the panel already serializes correctly.
+            // Never silently downgrade to the legacy local builder if the panel could not return it.
+            if($hasShadowsocks || $hasVlessEncryption) return [];
         }
     }
 
