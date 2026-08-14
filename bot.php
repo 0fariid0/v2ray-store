@@ -1965,6 +1965,155 @@ if(($data=="gateWays_Channels" or preg_match("/^changeGateWays(\w+)/",$data,$mat
     }
     editText($message_id,$mainValues['change_bot_settings_message'],getGateWaysKeys());
 }
+
+// ==================== تنظیمات جایزه خرید و تمدید ====================
+if($data=="rewardSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
+    exit();
+}
+if(in_array($data, ['rewardToggleFeature','rewardTogglePurchase','rewardToggleRenew'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $cfg = v2raystore_getPurchaseRewardConfig();
+    if($data === 'rewardToggleFeature') $cfg['enabled'] = empty($cfg['enabled']);
+    elseif($data === 'rewardTogglePurchase') $cfg['purchase_enabled'] = empty($cfg['purchase_enabled']);
+    elseif($data === 'rewardToggleRenew') $cfg['renew_enabled'] = empty($cfg['renew_enabled']);
+    v2raystore_savePurchaseRewardConfig($cfg);
+    editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
+    exit();
+}
+if($data=="rewardSetNormal" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("🎁 <b>جایزه عادی</b>\n\nحجم هدیه عادی را به گیگ وارد کنید.\nمثال: <code>3</code> یا <code>1.5</code>\n\nاگر <code>0</code> بزنید، جایزه عادی غیرفعال می‌شود و فقط در صورت برنده‌شدن جایزه ویژه حجم هدیه داده می‌شود.", $cancelKey, 'HTML');
+    setUser('rewardSetNormalStep');
+    exit();
+}
+if($userInfo['step'] == 'rewardSetNormalStep' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $value = function_exists('v2raystore_rewardNormalizeNumberInput') ? v2raystore_rewardNormalizeNumberInput($text) : str_replace(',', '.', trim((string)$text));
+    if(!is_numeric($value) || floatval($value) < 0 || floatval($value) > 100000){
+        sendMessage("⚠️ حجم را فقط به عدد و بین 0 تا 100000 گیگ وارد کنید.", $cancelKey, 'HTML');
+        exit();
+    }
+    $cfg = v2raystore_getPurchaseRewardConfig();
+    $cfg['normal_gb'] = round(floatval($value), 2);
+    v2raystore_savePurchaseRewardConfig($cfg);
+    setUser();
+    sendMessage("✅ جایزه عادی روی <b>" . v2raystore_rewardFormatGb($cfg['normal_gb']) . " گیگ</b> تنظیم شد.", $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
+    exit();
+}
+if($data=="rewardSetChance" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    sendMessage("🎲 <b>شانس جایزه ویژه</b>\n\nیک عدد بین <code>0</code> تا <code>100</code> وارد کنید.\nمثلاً <code>25</code> یعنی در هر خرید/تمدید 25٪ شانس وجود دارد که یکی از جوایز ویژه موجود، به‌جای جایزه عادی داده شود.\n\nاگر موجودی ویژه تمام شود، جایزه عادی ادامه پیدا می‌کند.", $cancelKey, 'HTML');
+    setUser('rewardSetChanceStep');
+    exit();
+}
+if($userInfo['step'] == 'rewardSetChanceStep' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $value = function_exists('v2raystore_rewardNormalizeNumberInput') ? v2raystore_rewardNormalizeNumberInput($text) : trim((string)$text);
+    if(!preg_match('/^\d{1,3}$/', $value) || intval($value) < 0 || intval($value) > 100){
+        sendMessage("⚠️ فقط یک عدد صحیح بین 0 تا 100 وارد کنید.", $cancelKey, 'HTML');
+        exit();
+    }
+    $cfg = v2raystore_getPurchaseRewardConfig();
+    $cfg['special_chance'] = intval($value);
+    v2raystore_savePurchaseRewardConfig($cfg);
+    setUser();
+    sendMessage("✅ شانس جایزه ویژه روی <b>" . intval($cfg['special_chance']) . "%</b> تنظیم شد.", $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
+    exit();
+}
+if($data=="rewardAddSpecial" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    delMessage();
+    setUser('', 'temp');
+    sendMessage("⭐ <b>افزودن جایزه ویژه محدود</b>\n\nابتدا حجم هر جایزه را به گیگ وارد کنید.\nمثال: برای جایزه 10 گیگ، <code>10</code> را بفرستید.", $cancelKey, 'HTML');
+    setUser('rewardAddSpecialVolumeStep');
+    exit();
+}
+if($userInfo['step'] == 'rewardAddSpecialVolumeStep' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $value = function_exists('v2raystore_rewardNormalizeNumberInput') ? v2raystore_rewardNormalizeNumberInput($text) : str_replace(',', '.', trim((string)$text));
+    if(!is_numeric($value) || floatval($value) <= 0 || floatval($value) > 100000){
+        sendMessage("⚠️ حجم جایزه ویژه باید عددی بزرگ‌تر از صفر باشد.", $cancelKey, 'HTML');
+        exit();
+    }
+    setUser(json_encode(['reward_special_volume'=>round(floatval($value),2)], JSON_UNESCAPED_UNICODE), 'temp');
+    setUser('rewardAddSpecialCountStep');
+    sendMessage("📦 حالا <b>تعداد موجودی</b> این جایزه را وارد کنید.\n\nمثلاً برای «2 تا جایزه 10 گیگ» عدد <code>2</code> را بفرستید.", $cancelKey, 'HTML');
+    exit();
+}
+if($userInfo['step'] == 'rewardAddSpecialCountStep' && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $countText = function_exists('v2raystore_rewardNormalizeNumberInput') ? v2raystore_rewardNormalizeNumberInput($text) : trim((string)$text);
+    $ctx = json_decode((string)($userInfo['temp'] ?? ''), true);
+    $volume = is_array($ctx) ? floatval($ctx['reward_special_volume'] ?? 0) : 0;
+    if($volume <= 0){
+        setUser(); setUser('', 'temp');
+        sendMessage("❌ اطلاعات مرحله قبل پیدا نشد. دوباره از «افزودن جایزه ویژه» شروع کنید.", $removeKeyboard, 'HTML');
+        exit();
+    }
+    if(!preg_match('/^\d+$/', $countText) || intval($countText) <= 0 || intval($countText) > 100000){
+        sendMessage("⚠️ تعداد باید یک عدد صحیح بزرگ‌تر از صفر باشد.", $cancelKey, 'HTML');
+        exit();
+    }
+    $count = intval($countText);
+    $ok = v2raystore_rewardAddSpecialPrize($volume, $count);
+    setUser(); setUser('', 'temp');
+    if(!$ok){
+        sendMessage("❌ ثبت جایزه ویژه در دیتابیس انجام نشد.", $removeKeyboard, 'HTML');
+        exit();
+    }
+    sendMessage("✅ <b>{$count} عدد جایزه " . v2raystore_rewardFormatGb($volume) . " گیگ</b> به موجودی جوایز ویژه اضافه شد.", $removeKeyboard, 'HTML');
+    $menu = v2raystore_rewardPrizesMenu();
+    sendMessage($menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
+if($data=="rewardPrizes" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $menu = v2raystore_rewardPrizesMenu();
+    editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
+if(preg_match('/^rewardPrize_(\d+)$/', (string)$data, $rewardPrizeMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $menu = v2raystore_rewardPrizeDetailMenu(intval($rewardPrizeMatch[1]));
+    if(!$menu){ alert('جایزه پیدا نشد.'); exit(); }
+    editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
+if(preg_match('/^rewardPrizeToggle_(\d+)$/', (string)$data, $rewardPrizeMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($rewardPrizeMatch[1]);
+    $row = v2raystore_rewardGetPrize($pid);
+    if(!$row){ alert('جایزه پیدا نشد.'); exit(); }
+    $newState = intval($row['active'] ?? 0) === 1 ? 0 : 1;
+    $now = time();
+    $stmt = $connection->prepare("UPDATE `purchase_reward_prizes` SET `active`=?, `updated_at`=? WHERE `id`=?");
+    if($stmt){ $stmt->bind_param('iii',$newState,$now,$pid); $stmt->execute(); $stmt->close(); }
+    $menu = v2raystore_rewardPrizeDetailMenu($pid);
+    editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
+if(preg_match('/^rewardPrizeResetAsk_(\d+)$/', (string)$data, $rewardPrizeMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($rewardPrizeMatch[1]);
+    $row = v2raystore_rewardGetPrize($pid);
+    if(!$row){ alert('جایزه پیدا نشد.'); exit(); }
+    $gb = v2raystore_rewardFormatGb($row['volume_gb']);
+    $total = intval($row['total_count']);
+    editText($message_id, "⚠️ موجودی جایزه <b>#{$pid} - {$gb} گیگ</b> دوباره روی <b>{$total}</b> قرار بگیرد؟\n\nاین کار فقط موجودی قابل قرعه‌کشی را ریست می‌کند و سوابق برندگان قبلی پاک نمی‌شود.", json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ بله، ریست موجودی', 'callback_data'=>'rewardPrizeReset_' . $pid]],
+        [['text'=>'« انصراف', 'callback_data'=>'rewardPrize_' . $pid]],
+    ]], JSON_UNESCAPED_UNICODE), 'HTML');
+    exit();
+}
+if(preg_match('/^rewardPrizeReset_(\d+)$/', (string)$data, $rewardPrizeMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $pid = intval($rewardPrizeMatch[1]);
+    $now = time();
+    $stmt = $connection->prepare("UPDATE `purchase_reward_prizes` SET `remaining_count`=`total_count`, `updated_at`=? WHERE `id`=?");
+    if($stmt){ $stmt->bind_param('ii',$now,$pid); $stmt->execute(); $stmt->close(); }
+    $menu = v2raystore_rewardPrizeDetailMenu($pid);
+    if($menu) editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    else alert('جایزه پیدا نشد.');
+    exit();
+}
+if(preg_match('/^rewardWinners_(\d+)$/', (string)$data, $rewardWinnersMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $page = v2raystore_rewardWinnersPage(intval($rewardWinnersMatch[1]));
+    editText($message_id, $page['text'], $page['keyboard'], 'HTML');
+    exit();
+}
+
 if($data=="changeConfigRemarkType"){
     switch($botState['remark']){
         case "digits":
@@ -3716,6 +3865,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
     alert($mainValues['sending_config_to_user']);
     if(!defined('IMAGE_WIDTH')) define('IMAGE_WIDTH',540);
     if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
+    $v2raystoreRewardOrderIds = [];
     for($i = 1; $i <= $accountCount; $i++){
         $uniqid = generateRandomString(42,$protocol);
         
@@ -3850,8 +4000,19 @@ if($subLink != "") $acc_text .= "
             VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?,1, ?, 0, ?, ?);");
         $stmt->bind_param("ssiiisssisiiii", $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $eachPrice, $date, $rahgozar, $agentBought);
         $stmt->execute();
+        $v2raystoreRewardOrderIds[] = intval($connection->insert_id);
         $order = $stmt->get_result(); 
         $stmt->close();
+    }
+
+    if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
+        $rewardPayHash = trim((string)($payInfo['hash_id'] ?? ''));
+        foreach($v2raystoreRewardOrderIds as $rewardOrderId){
+            try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $uid, $price); }
+            catch(Throwable $rewardError){
+                if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$uid}</code>\n🧾 سفارش: <code>{$rewardOrderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+            }
+        }
     }
     
     if($userInfo['refered_by'] != null){
@@ -4074,6 +4235,8 @@ elseif($payType == "RENEW_SCONFIG"){
     $remark = $configInfo['remark'];
     $uuid = $configInfo['uuid'];
     $isMarzban = $configInfo['marzban'];
+    $rewardLegacyUuid = (string)($configInfo['uuid'] ?? '');
+    $rewardLegacyRemark = (string)($configInfo['remark'] ?? '');
     
     $remark = $payInfo['description'];
     $inbound_id = $payInfo['volume']; 
@@ -4095,6 +4258,20 @@ elseif($payType == "RENEW_SCONFIG"){
 	$stmt->bind_param("iiisii", $uid, $server_id, $inbound_id, $remark, $price, $time);
 	$stmt->execute();
 	$stmt->close();
+
+    if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
+        $rewardPayHash = trim((string)($payInfo['hash_id'] ?? ''));
+        if($rewardPayHash === '') $rewardPayHash = 'weswap:' . intval($payInfo['id'] ?? 0);
+        $legacyRewardOrder = [
+            'id'=>0, 'userid'=>intval($uid), 'server_id'=>intval($server_id),
+            'inbound_id'=>intval($inbound_id), 'uuid'=>$rewardLegacyUuid,
+            'remark'=>$rewardLegacyRemark, 'status'=>1
+        ];
+        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $uid, $price, $legacyRewardOrder); }
+        catch(Throwable $rewardError){
+            if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$uid}</code>\n🔮 سرویس: <code>" . htmlspecialchars($rewardLegacyRemark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+        }
+    }
 
     sendMessage("
     🔋|💰 تمدید مشخصات کانفیگ با ( کیف پول )
@@ -6952,9 +7129,18 @@ if($subLink != "") $acc_text .= "
 	    VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?,1, ?, 0, ?, ?);");
     $stmt->bind_param("ssiiisssisiiii", $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $price, $date, $rahgozar, $agentBought);
     $stmt->execute();
+    $rewardOrderId = intval($connection->insert_id);
     $order = $stmt->get_result();
     $stmt->close();
 
+    // خرید سفارشی کارت‌به‌کارت هم باید دقیقاً روی همین سرویس جایزه بگیرد.
+    if($price > 0 && $rewardOrderId > 0 && function_exists('v2raystore_rewardMaybeAward')){
+        $rewardPayHash = trim((string)($payInfo['hash_id'] ?? $match[1] ?? ''));
+        try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $uid, $price); }
+        catch(Throwable $rewardError){
+            if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$uid}</code>\n🧾 سفارش: <code>{$rewardOrderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+        }
+    }
 
     if(function_exists('v2raystore_orderStatusKeyboard')){
         editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $uid, 'success'));
@@ -7100,6 +7286,8 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         $uuid = $configInfo['uuid'];
         $remark = $configInfo['remark'];
         $isMarzban = $configInfo['marzban'];
+        $rewardLegacyUuid = (string)($configInfo['uuid'] ?? '');
+        $rewardLegacyRemark = (string)($configInfo['remark'] ?? '');
         
         $inbound_id = $payInfo['volume']; 
         
@@ -7126,6 +7314,18 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             ],
             ]]);
         editText($message_id,"✅سرویس $remark با موفقیت تمدید شد",$keys);
+        if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
+            $rewardPayHash = trim((string)($payInfo['hash_id'] ?? $match[1] ?? ''));
+            $legacyRewardOrder = [
+                'id'=>0, 'userid'=>intval($uid), 'server_id'=>intval($server_id),
+                'inbound_id'=>intval($inbound_id), 'uuid'=>$rewardLegacyUuid,
+                'remark'=>$rewardLegacyRemark, 'status'=>1
+            ];
+            try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $uid, $price, $legacyRewardOrder); }
+            catch(Throwable $rewardError){
+                if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$uid}</code>\n🔮 سرویس: <code>" . htmlspecialchars($rewardLegacyRemark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+            }
+        }
     }else{
         $accountCount = $payInfo['agent_count']!=0?$payInfo['agent_count']:1;
         
