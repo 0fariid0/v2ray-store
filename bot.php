@@ -763,13 +763,15 @@ function v2raystore_addTestPlanInboundSelectView($serverId, $selectedIds = []){
         if(!is_object($row)) continue;
         $iid = intval($row->id ?? 0);
         if($iid <= 0) continue;
-        $proto = trim((string)($row->protocol ?? ''));
+        $proto = strtolower(trim((string)($row->protocol ?? '')));
+        if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($proto)) continue;
         $net = '';
         $ss = json_decode($row->streamSettings ?? '');
         if($ss && isset($ss->network)) $net = trim((string)$ss->network);
         $remark = trim((string)($row->remark ?? ''));
         $checked = in_array($iid, $selectedIds, true) ? '✅' : '▫️';
-        $title = $checked . ' #' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($proto !== '' ? ' | ' . $proto : '') . ($net !== '' ? '/' . $net : '');
+        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($proto) : strtoupper($proto);
+        $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '') . ($net !== '' ? ' | ' . $net : '');
         if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
         $rows[] = [[ 'text'=>$title, 'callback_data'=>'toggleAddTestPlanInbound_' . $serverId . '_' . $iid ]];
     }
@@ -789,7 +791,7 @@ function v2raystore_addTestPlanInboundSelectView($serverId, $selectedIds = []){
     $text = "🚪 <b>انتخاب Inboundهای اکانت تست</b>\n\n" .
             "می‌توانی یک یا چند Inbound را انتخاب کنی. روی گزینه‌ها بزن تا تیک بخورند و در پایان «ادامه با انتخاب‌ها» را بزن.\n\n" .
             "انتخاب فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n\n" .
-            "این قابلیت فقط برای پنل سنایی جدید استفاده می‌شود.";
+            "می‌توانی VLESS، VMess، Trojan و Shadowsocks را هم‌زمان انتخاب کنی. این قابلیت فقط برای پنل سنایی جدید استفاده می‌شود.";
     return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE)];
 }
 }
@@ -870,7 +872,10 @@ if(preg_match('/^addTestPlanInboundAll_(\d+)$/', $data ?? '', $m) && ($from_id =
     $json = function_exists('getJson') ? getJson($sid) : null;
     if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
         foreach($json->obj as $row){
-            if(is_object($row) && intval($row->id ?? 0) > 0) $ids[] = intval($row->id);
+            if(!is_object($row) || intval($row->id ?? 0) <= 0) continue;
+            $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+            if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
+            $ids[] = intval($row->id);
         }
     }
     $ids = array_values(array_unique($ids));
@@ -912,7 +917,10 @@ if(preg_match('/^addTestPlanInboundDone_(\d+)$/', $data ?? '', $m) && ($from_id 
     $available = [];
     if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
         foreach($json->obj as $row){
-            if(is_object($row) && intval($row->id ?? 0) > 0) $available[intval($row->id)] = $row;
+            if(!is_object($row) || intval($row->id ?? 0) <= 0) continue;
+            $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+            if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
+            $available[intval($row->id)] = $row;
         }
     }
     $ids = array_values(array_filter($ids, function($iid) use ($available){ return isset($available[intval($iid)]); }));
@@ -10222,18 +10230,38 @@ if(preg_match('/(addNewRahgozarPlan|addNewPlan|addNewMarzbanPlan)/',$userInfo['s
         else editText($message_id, "📅 | لطفاً تعداد روز های اعتبار این پلن را وارد کنید:");
     }
     if($step==51 and $text!=$buttonValues['cancel'] and preg_match('/^with(Specific|Shared)Port/',$data,$match)){
-        if($userInfo['step'] == "addNewRahgozarPlan") $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess)";
-        else $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess | trojan)";
-        editText($message_id,$msg);
-        if($match[1] == "Shared"){
-            $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0");
-            $stmt->execute();
-            $stmt->close();
+        $draftServerType = '';
+        if($match[1] == "Shared" && $userInfo['step'] == "addNewPlan"){
+            $stmt = $connection->prepare("SELECT sc.`type` FROM `server_plans` sp LEFT JOIN `server_config` sc ON sc.`id`=sp.`server_id` WHERE sp.`active`=0 LIMIT 1");
+            if($stmt){
+                $stmt->execute();
+                $draftServer = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+                $draftServerType = (string)($draftServer['type'] ?? '');
+            }
         }
-        elseif($match[1] == "Specific"){
-            $stmt = $connection->prepare("UPDATE server_plans SET step=52 WHERE active=0");
+
+        // On sanaei_new shared plans the protocol is derived from the selected inbound(s), so one panel/plan
+        // can contain VLESS + Shadowsocks (or other supported combinations) without asking for one fixed protocol.
+        if($match[1] == "Shared" && $userInfo['step'] == "addNewPlan" && $draftServerType === 'sanaei_new'){
+            $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`='', `step`=61 WHERE `active`=0");
             $stmt->execute();
             $stmt->close();
+            editText($message_id, "📅 | لطفاً تعداد روز های اعتبار این پلن را وارد کنید:");
+        }else{
+            if($userInfo['step'] == "addNewRahgozarPlan") $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess)";
+            else $msg =  "📡 | لطفاً پروتکل پلن مورد نظر را وارد کنید (vless | vmess | trojan)";
+            editText($message_id,$msg);
+            if($match[1] == "Shared"){
+                $stmt = $connection->prepare("UPDATE `server_plans` SET `step`=60 WHERE `active`=0");
+                $stmt->execute();
+                $stmt->close();
+            }
+            elseif($match[1] == "Specific"){
+                $stmt = $connection->prepare("UPDATE server_plans SET step=52 WHERE active=0");
+                $stmt->execute();
+                $stmt->close();
+            }
         }
     }
     if($step==60 and $text!=$buttonValues['cancel']){
@@ -10614,46 +10642,50 @@ function v2raystore_newPlanMultiInboundView($planId){
         return ['text'=>'پلن در حال ساخت پیدا نشد.', 'keyboard'=>json_encode(['inline_keyboard'=>[]])];
     }
     $serverId = intval($plan['server_id'] ?? 0);
-    $protocol = trim((string)($plan['protocol'] ?? ''));
     $selected = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, false) : [];
     $selected = array_values(array_unique(array_filter(array_map('intval', $selected))));
 
     $json = getJson($serverId);
     $rows = ($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)) ? $json->obj : [];
     $keyboard = [];
-    $availableIds = [];
+    $selectedProtocols = [];
     foreach($rows as $row){
         if(!is_object($row)) continue;
         $iid = intval($row->id ?? 0);
         if($iid <= 0) continue;
-        $rowProtocol = trim((string)($row->protocol ?? ''));
-        if($protocol !== '' && $rowProtocol !== '' && $rowProtocol !== $protocol) continue;
-        $availableIds[] = $iid;
+        $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+        if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
         $remark = trim((string)($row->remark ?? ''));
         $stream = json_decode((string)($row->streamSettings ?? '{}'));
         $network = is_object($stream) ? trim((string)($stream->network ?? '')) : '';
         $checked = in_array($iid, $selected, true) ? '✅' : '▫️';
-        $title = $checked . ' #' . $iid . ($remark !== '' ? ' - ' . $remark : '');
+        if($checked === '✅' && $rowProtocol !== '' && !in_array($rowProtocol, $selectedProtocols, true)) $selectedProtocols[] = $rowProtocol;
+        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($rowProtocol) : strtoupper($rowProtocol);
+        $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '');
         if($network !== '') $title .= ' | ' . $network;
-        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 48) $title = mb_substr($title, 0, 45, 'UTF-8') . '...';
+        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
         $keyboard[] = [['text'=>$title, 'callback_data'=>'newPlanInboundToggle_'.$planId.'_'.$iid]];
     }
 
     if(empty($keyboard)){
-        $keyboard[] = [['text'=>'هیچ inbound سازگار با پروتکل پلن پیدا نشد', 'callback_data'=>'v2raystore']];
+        $keyboard[] = [['text'=>'Inbound پشتیبانی‌شده‌ای پیدا نشد', 'callback_data'=>'v2raystore']];
     }else{
         $keyboard[] = [
-            ['text'=>'✅ انتخاب همه', 'callback_data'=>'newPlanInboundAll_'.$planId],
+            ['text'=>'✅ انتخاب همه پشتیبانی‌شده‌ها', 'callback_data'=>'newPlanInboundAll_'.$planId],
             ['text'=>'🧹 پاک کردن انتخاب', 'callback_data'=>'newPlanInboundClear_'.$planId],
         ];
         $keyboard[] = [['text'=>'💾 ذخیره و ادامه', 'callback_data'=>'newPlanInboundSave_'.$planId]];
     }
 
     $summary = empty($selected) ? 'هنوز انتخاب نشده' : (count($selected) . ' اینباند: ' . implode(', ', $selected));
-    $text = "🚪 <b>انتخاب اینباندهای پلن</b>\n\n" .
-            "برای این پلن می‌توانی یک یا چند Inbound را همزمان انتخاب کنی.\n" .
-            "پروتکل پلن: <code>" . htmlspecialchars($protocol, ENT_QUOTES, 'UTF-8') . "</code>\n" .
+    $protocolText = empty($selectedProtocols) ? 'بعد از انتخاب مشخص می‌شود' : implode(' + ', array_map(function($p){
+        return function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($p) : strtoupper($p);
+    }, $selectedProtocols));
+    $text = "🚪 <b>انتخاب Inboundهای پلن</b>\n\n" .
+            "می‌توانی یک یا چند Inbound با پروتکل‌های متفاوت انتخاب کنی؛ مثلاً <b>VLESS + Shadowsocks</b>.\n" .
+            "پروتکل‌های انتخابی: <code>" . htmlspecialchars($protocolText, ENT_QUOTES, 'UTF-8') . "</code>\n" .
             "انتخاب فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n\n" .
+            "پروتکل‌های قابل استفاده در این بخش: VLESS، VMess، Trojan و Shadowsocks.\n" .
             "بعد از انتخاب، «ذخیره و ادامه» را بزن.";
     return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE)];
 }
@@ -10704,32 +10736,35 @@ function v2raystore_applyServerPlansMultiInboundIds($serverId, $ids){
 
     $state = v2raystore_serverPlansMultiInboundState($serverId);
     if(intval($state['count'] ?? 0) <= 0) return ['ok'=>false, 'message'=>'پلن Inbound‌داری برای این سرور پیدا نشد.'];
-    $planProtocols = $state['protocols'] ?? [];
-    if(count($planProtocols) > 1) return ['ok'=>false, 'message'=>'پروتکل پلن‌های این سرور متفاوت است؛ برای جلوگیری از خرابی، تغییر جمعی Inbound انجام نشد.'];
-    $requiredProtocol = count($planProtocols) === 1 ? (string)$planProtocols[0] : '';
 
     $jsonPanel = getJson($serverId);
     $rows = ($jsonPanel && !empty($jsonPanel->success) && isset($jsonPanel->obj) && is_array($jsonPanel->obj)) ? $jsonPanel->obj : [];
     $found = [];
-    $selectedProtocols = [];
+    $available = [];
     foreach($rows as $row){
         if(!is_object($row)) continue;
         $iid = intval($row->id ?? 0);
         if(!in_array($iid, $ids, true)) continue;
+        $proto = strtolower(trim((string)($row->protocol ?? '')));
+        if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($proto)){
+            return ['ok'=>false, 'message'=>'پروتکل Inbound #' . $iid . ' در پلن چندپروتکله پشتیبانی نمی‌شود: ' . $proto];
+        }
         $found[] = $iid;
-        $proto = trim((string)($row->protocol ?? ''));
-        if($proto !== '' && !in_array($proto, $selectedProtocols, true)) $selectedProtocols[] = $proto;
+        $available[$iid] = $row;
     }
     if(count(array_unique($found)) !== count($ids)) return ['ok'=>false, 'message'=>'یکی از Inboundهای انتخاب‌شده دیگر داخل پنل وجود ندارد.'];
-    if(count($selectedProtocols) > 1) return ['ok'=>false, 'message'=>'Inboundهای انتخاب‌شده پروتکل متفاوت دارند و نمی‌توانند با هم روی یک پلن قرار بگیرند.'];
-    if($requiredProtocol !== '' && count($selectedProtocols) === 1 && $selectedProtocols[0] !== $requiredProtocol){
-        return ['ok'=>false, 'message'=>'پروتکل Inbound انتخاب‌شده با پروتکل پلن‌های این سرور سازگار نیست.'];
-    }
+
+    $primary = intval($ids[0]);
+    $primaryRow = $available[$primary] ?? null;
+    if(!$primaryRow) return ['ok'=>false, 'message'=>'Inbound اصلی انتخاب‌شده پیدا نشد.'];
+    $primaryProtocol = strtolower(trim((string)($primaryRow->protocol ?? 'vless')));
+    $stream = json_decode((string)($primaryRow->streamSettings ?? '{}'));
+    $primaryNetwork = is_object($stream) ? trim((string)($stream->network ?? 'tcp')) : 'tcp';
+    if($primaryNetwork === '') $primaryNetwork = 'tcp';
 
     $json = json_encode(array_values($ids), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    $primary = intval($ids[0]);
-    $stmt = $connection->prepare("UPDATE `server_plans` SET `multi_inbound_ids`=?, `inbound_id`=? WHERE `server_id`=? AND COALESCE(`price`,0) != 0 AND `step`=10 AND (`inbound_id` != 0 OR (`multi_inbound_ids` IS NOT NULL AND `multi_inbound_ids` != ''))");
-    $stmt->bind_param('sii', $json, $primary, $serverId);
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `multi_inbound_ids`=?, `inbound_id`=?, `protocol`=?, `type`=? WHERE `server_id`=? AND COALESCE(`price`,0) != 0 AND `step`=10 AND (`inbound_id` != 0 OR (`multi_inbound_ids` IS NOT NULL AND `multi_inbound_ids` != ''))");
+    $stmt->bind_param('sissi', $json, $primary, $primaryProtocol, $primaryNetwork, $serverId);
     $stmt->execute();
     $affected = max(0, intval($stmt->affected_rows));
     $stmt->close();
@@ -10753,8 +10788,6 @@ function v2raystore_serverPlansMultiInboundManageView($serverId){
 
     $state = v2raystore_serverPlansMultiInboundState($serverId);
     $selected = $state['ids'];
-    $planProtocols = $state['protocols'] ?? [];
-    $requiredProtocol = count($planProtocols) === 1 ? (string)$planProtocols[0] : '';
     $json = getJson($serverId);
     $rows = ($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)) ? $json->obj : [];
     $keyboard = [];
@@ -10762,31 +10795,27 @@ function v2raystore_serverPlansMultiInboundManageView($serverId){
         if(!is_object($row)) continue;
         $iid = intval($row->id ?? 0);
         if($iid <= 0) continue;
-        $rowProtocol = trim((string)($row->protocol ?? ''));
-        if($requiredProtocol !== '' && $rowProtocol !== '' && $rowProtocol !== $requiredProtocol) continue;
+        $protocol = strtolower(trim((string)($row->protocol ?? '')));
+        if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($protocol)) continue;
         $remark = trim((string)($row->remark ?? ''));
-        $protocol = $rowProtocol;
+        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($protocol) : strtoupper($protocol);
         $checked = ($state['uniform'] && in_array($iid, $selected, true)) ? '✅' : '▫️';
-        $title = $checked . ' #' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($protocol !== '' ? ' (' . $protocol . ')' : '');
-        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 48) $title = mb_substr($title, 0, 45, 'UTF-8') . '...';
+        $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '');
+        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
         $keyboard[] = [['text'=>$title, 'callback_data'=>'serverPlanInboundToggle_'.$serverId.'_'.$iid]];
     }
-    if(count($planProtocols) > 1){
-        $keyboard = [[['text'=>'⚠️ پروتکل پلن‌ها متفاوت است', 'callback_data'=>'v2raystore']]];
-    }elseif(empty($keyboard)){
-        $keyboard[] = [['text'=>'هیچ inbound سازگار از پنل دریافت نشد', 'callback_data'=>'v2raystore']];
+    if(empty($keyboard)){
+        $keyboard[] = [['text'=>'Inbound پشتیبانی‌شده‌ای از پنل دریافت نشد', 'callback_data'=>'v2raystore']];
     }else{
-        $keyboard[] = [['text'=>'✅ انتخاب همه Inboundهای سازگار', 'callback_data'=>'serverPlanInboundAll_'.$serverId]];
+        $keyboard[] = [['text'=>'✅ انتخاب همه Inboundهای پشتیبانی‌شده', 'callback_data'=>'serverPlanInboundAll_'.$serverId]];
     }
     $keyboard[] = [['text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'plansList'.$serverId]];
 
     $title = htmlspecialchars((string)($server['title'] ?? ('Server #' . $serverId)), ENT_QUOTES, 'UTF-8');
     if(intval($state['count']) <= 0){
         $status = 'هیچ پلن کاملی برای این سرور وجود ندارد.';
-    }elseif(count($planProtocols) > 1){
-        $status = 'پروتکل پلن‌ها متفاوت است؛ برای جلوگیری از خرابی، تغییر جمعی غیرفعال شده است.';
     }elseif(!$state['uniform']){
-        $status = 'پلن‌های این سرور الان Inboundهای متفاوتی دارند. با انتخاب اولین Inbound، همه پلن‌های Inbound‌دار یکسان می‌شوند.';
+        $status = 'پلن‌های این سرور الان Inboundهای متفاوتی دارند. با اولین انتخاب، همه پلن‌های Inbound‌دار یکسان می‌شوند.';
     }else{
         $status = empty($selected) ? 'انتخابی ثبت نشده' : (count($selected) . ' اینباند: ' . implode(', ', $selected));
     }
@@ -10794,8 +10823,9 @@ function v2raystore_serverPlansMultiInboundManageView($serverId){
             "سرور: <b>{$title}</b>\n" .
             "تعداد پلن‌های Inbound‌دار: <b>" . intval($state['count']) . "</b>\n" .
             "وضعیت فعلی: <code>" . htmlspecialchars($status, ENT_QUOTES, 'UTF-8') . "</code>\n\n" .
-            "هر Inbound که اینجا انتخاب کنی روی <b>همه پلن‌های Inbound‌دار این سرور</b> اعمال می‌شود. می‌توانی مثلاً دو Inbound را انتخاب کنی تا همه آن پلن‌ها روی همان دو قرار بگیرند. پلن‌های پورت اختصاصی دست‌نخورده می‌مانند.\n" .
-            "اکانت تست از این بخش تغییر نمی‌کند.";
+            "می‌توانی Inboundهای با پروتکل متفاوت را با هم انتخاب کنی؛ مثلاً VLESS + Shadowsocks. انتخاب‌ها روی <b>همه پلن‌های Inbound‌دار این سرور</b> اعمال می‌شوند.\n" .
+            "پروتکل‌های پشتیبانی‌شده: VLESS، VMess، Trojan و Shadowsocks.\n" .
+            "پلن‌های پورت اختصاصی و اکانت تست از این بخش تغییر نمی‌کنند.";
     return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE)];
 }
 
@@ -10822,7 +10852,7 @@ function v2raystore_planMultiInboundManageView($planId){
 
     if(!$server || ($server['type'] ?? '') !== 'sanaei_new'){
         return [
-            'text'=>"🚪 تنظیم چند اینباند فقط برای سنایی جدید فعال است.\n\nبرای نسخه‌های قدیمی همان اینباند تکی پلن استفاده می‌شود.",
+            'text'=>"🚪 تنظیم چند Inbound فقط برای سنایی جدید فعال است.\n\nبرای نسخه‌های قدیمی همان Inbound تکی پلن استفاده می‌شود.",
             'keyboard'=>json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>$backCallback]]]], JSON_UNESCAPED_UNICODE)
         ];
     }
@@ -10833,37 +10863,43 @@ function v2raystore_planMultiInboundManageView($planId){
     $rows = ($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)) ? $json->obj : [];
 
     $keyboard = [];
+    $selectedProtocols = [];
     foreach($rows as $row){
         if(!is_object($row)) continue;
         $iid = intval($row->id ?? 0);
         if($iid <= 0) continue;
+        $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+        if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
         $remark = trim((string)($row->remark ?? ''));
-        $protocol = $rowProtocol;
+        $protoLabel = function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($rowProtocol) : strtoupper($rowProtocol);
         $checked = in_array($iid, $selected, true) ? '✅' : '▫️';
-        $title = $checked . ' #' . $iid . ($remark !== '' ? ' - ' . $remark : '') . ($protocol !== '' ? ' (' . $protocol . ')' : '');
-        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 48) $title = mb_substr($title, 0, 45, 'UTF-8') . '...';
+        if($checked === '✅' && $rowProtocol !== '' && !in_array($rowProtocol, $selectedProtocols, true)) $selectedProtocols[] = $rowProtocol;
+        $title = $checked . ' #' . $iid . ' [' . $protoLabel . ']' . ($remark !== '' ? ' - ' . $remark : '');
+        if(function_exists('mb_strlen') && mb_strlen($title, 'UTF-8') > 52) $title = mb_substr($title, 0, 49, 'UTF-8') . '...';
         $keyboard[] = [['text'=>$title, 'callback_data'=>'togglePlanInbound_'.$planId.'_'.$iid]];
     }
 
-    if(empty($keyboard)) $keyboard[] = [['text'=>'هیچ inbound از پنل دریافت نشد', 'callback_data'=>'v2raystore']];
+    if(empty($keyboard)) $keyboard[] = [['text'=>'Inbound پشتیبانی‌شده‌ای از پنل دریافت نشد', 'callback_data'=>'v2raystore']];
     else{
         $keyboard[] = [
             ['text'=>'✅ انتخاب همه', 'callback_data'=>'planInboundAll_'.$planId],
-            ['text'=>'🧹 پاک کردن', 'callback_data'=>'planInboundClear_'.$planId],
+            ['text'=>'🧹 فقط Inbound اصلی', 'callback_data'=>'planInboundClear_'.$planId],
         ];
     }
     $keyboard[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>$backCallback]];
 
     $summary = function_exists('v2raystore_planMultiInboundSummary') ? v2raystore_planMultiInboundSummary($plan) : implode(',', $selected);
-    $text = $isTestPlan ? "🚪 تنظیم چند اینباند برای اکانت تست\n\n" : "🚪 انتخاب اینباندهای پلن\n\n";
+    $protocolText = empty($selectedProtocols) ? '-' : implode(' + ', array_map(function($p){
+        return function_exists('v2raystore_inboundProtocolLabel') ? v2raystore_inboundProtocolLabel($p) : strtoupper($p);
+    }, $selectedProtocols));
+    $text = $isTestPlan ? "🚪 تنظیم Inboundهای اکانت تست\n\n" : "🚪 انتخاب Inboundهای پلن\n\n";
     $text .= ($isTestPlan ? "اکانت تست: <b>" : "پلن: <b>") . htmlspecialchars((string)($plan['title'] ?? $planId), ENT_QUOTES, 'UTF-8') . "</b>\n";
-    $text .= "وضعیت فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n\n";
-    $text .= "با انتخاب چند اینباند، کاربر هنگام خرید همین پلن روی همه اینباندهای انتخابی سنایی جدید ثبت می‌شود و لینک‌های همان کلاینت برای کاربر ارسال می‌شود.\n";
-    $text .= "اولین اینباند انتخاب‌شده به‌عنوان اینباند اصلی سفارش ذخیره می‌شود.";
+    $text .= "وضعیت فعلی: <code>" . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8') . "</code>\n";
+    $text .= "پروتکل‌ها: <code>" . htmlspecialchars($protocolText, ENT_QUOTES, 'UTF-8') . "</code>\n\n";
+    $text .= "می‌توانی Inboundهای VLESS، VMess، Trojan و Shadowsocks را هم‌زمان انتخاب کنی. کاربر روی همه Inboundهای انتخابی ثبت می‌شود و اولین Inbound به‌عنوان Inbound اصلی سفارش نگه داشته می‌شود.";
 
     return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE)];
 }
-
 
 
 
@@ -10924,15 +10960,14 @@ if(preg_match('/^newPlanInboundAll_(\d+)$/', $data ?? '', $match) && ($from_id =
     $plan = function_exists('v2raystore_getPlanRow') ? v2raystore_getPlanRow($planId) : null;
     if(!$plan || intval($plan['active'] ?? 0) !== 0 || intval($plan['step'] ?? 0) !== 66){ alert('پلن در حال ساخت پیدا نشد.'); exit; }
     $serverId = intval($plan['server_id'] ?? 0);
-    $protocol = trim((string)($plan['protocol'] ?? ''));
     $json = getJson($serverId);
     $ids = [];
     if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
         foreach($json->obj as $row){
             if(!is_object($row)) continue;
             $iid = intval($row->id ?? 0);
-            $rowProtocol = trim((string)($row->protocol ?? ''));
-            if($iid > 0 && ($protocol === '' || $rowProtocol === '' || $rowProtocol === $protocol)) $ids[] = $iid;
+            $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+            if($iid > 0 && (!function_exists('v2raystore_isSupportedInboundProtocol') || v2raystore_isSupportedInboundProtocol($rowProtocol))) $ids[] = $iid;
         }
     }
     if(function_exists('v2raystore_savePlanMultiInboundIds')) v2raystore_savePlanMultiInboundIds($planId, $ids);
@@ -10963,19 +10998,22 @@ if(preg_match('/^newPlanInboundSave_(\d+)$/', $data ?? '', $match) && ($from_id 
     $serverId = intval($plan['server_id'] ?? 0);
     $primary = intval($ids[0]);
     $network = '';
+    $primaryProtocol = '';
     $json = getJson($serverId);
     if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
         foreach($json->obj as $row){
             if(is_object($row) && intval($row->id ?? 0) === $primary){
+                $primaryProtocol = strtolower(trim((string)($row->protocol ?? '')));
                 $stream = json_decode((string)($row->streamSettings ?? '{}'));
                 $network = is_object($stream) ? trim((string)($stream->network ?? '')) : '';
                 break;
             }
         }
     }
-    if($network === ''){ alert('اطلاعات Inbound اصلی از پنل دریافت نشد.', true); exit; }
-    $stmt = $connection->prepare("UPDATE `server_plans` SET `type`=?, `step`=64 WHERE `id`=? AND `active`=0 LIMIT 1");
-    $stmt->bind_param('si', $network, $planId);
+    if($network === '' || $primaryProtocol === ''){ alert('اطلاعات Inbound اصلی از پنل دریافت نشد.', true); exit; }
+    if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($primaryProtocol)){ alert('پروتکل Inbound اصلی پشتیبانی نمی‌شود.', true); exit; }
+    $stmt = $connection->prepare("UPDATE `server_plans` SET `protocol`=?, `type`=?, `step`=64 WHERE `id`=? AND `active`=0 LIMIT 1");
+    $stmt->bind_param('ssi', $primaryProtocol, $network, $planId);
     $stmt->execute();
     $stmt->close();
     delMessage();
@@ -11009,21 +11047,17 @@ if(preg_match('/^serverPlanInboundToggle_(\d+)_(\d+)$/', $data ?? '', $match) &&
 }
 if(preg_match('/^serverPlanInboundAll_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $serverId = intval($match[1]);
-    $state = v2raystore_serverPlansMultiInboundState($serverId);
-    $planProtocols = $state['protocols'] ?? [];
-    if(count($planProtocols) > 1){ alert('پروتکل پلن‌ها متفاوت است؛ تغییر جمعی انجام نشد.', true); exit; }
-    $requiredProtocol = count($planProtocols) === 1 ? (string)$planProtocols[0] : '';
     $json = getJson($serverId);
     $ids = [];
     if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
         foreach($json->obj as $row){
             if(!is_object($row) || intval($row->id ?? 0) <= 0) continue;
-            $rowProtocol = trim((string)($row->protocol ?? ''));
-            if($requiredProtocol !== '' && $rowProtocol !== '' && $rowProtocol !== $requiredProtocol) continue;
+            $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+            if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
             $ids[] = intval($row->id);
         }
     }
-    if(empty($ids)){ alert('هیچ Inbound سازگاری از پنل دریافت نشد.', true); exit; }
+    if(empty($ids)){ alert('هیچ Inbound پشتیبانی‌شده‌ای از پنل دریافت نشد.', true); exit; }
     $apply = v2raystore_applyServerPlansMultiInboundIds($serverId, $ids);
     if(empty($apply['ok'])){ alert($apply['message'] ?? 'تغییر انجام نشد.', true); exit; }
     $view = v2raystore_serverPlansMultiInboundManageView($serverId);
@@ -11074,7 +11108,10 @@ if(preg_match('/^planInboundAll_(\d+)$/', $data, $match) && ($from_id == $admin 
     $ids = [];
     if($json && !empty($json->success) && isset($json->obj) && is_array($json->obj)){
         foreach($json->obj as $row){
-            if(is_object($row) && intval($row->id ?? 0) > 0) $ids[] = intval($row->id);
+            if(!is_object($row) || intval($row->id ?? 0) <= 0) continue;
+            $rowProtocol = strtolower(trim((string)($row->protocol ?? '')));
+            if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($rowProtocol)) continue;
+            $ids[] = intval($row->id);
         }
     }
     if(function_exists('v2raystore_savePlanMultiInboundIds')) v2raystore_savePlanMultiInboundIds($planId, $ids);

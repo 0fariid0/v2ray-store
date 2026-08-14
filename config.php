@@ -262,7 +262,7 @@ function v2raystore_isMyConfigProtocolRow($row){
     foreach($texts as $t){
         $plain = trim(str_replace(['☑️','✅','✔️','✓'], '', $t));
         $plain = trim(preg_replace('/\s+/u', ' ', $plain));
-        if(preg_match('/\b(vless|vmess|trojan)\b/i', $plain)) $hasProtocolWord = true;
+        if(preg_match('/\b(vless|vmess|trojan|shadowsocks)\b/i', $plain)) $hasProtocolWord = true;
         else $allProtocolButtons = false;
     }
     if($hasProtocolWord && $allProtocolButtons) return true;
@@ -2081,6 +2081,62 @@ function v2raystore_getTestPlanDetailsKeys($planId){
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
+function v2raystore_supportedInboundProtocols(){
+    // Protocols that the bot can safely attach to one logical client on sanaei_new.
+    return ['vless','vmess','trojan','shadowsocks'];
+}
+
+function v2raystore_isSupportedInboundProtocol($protocol){
+    return in_array(strtolower(trim((string)$protocol)), v2raystore_supportedInboundProtocols(), true);
+}
+
+function v2raystore_inboundProtocolLabel($protocol){
+    $protocol = strtolower(trim((string)$protocol));
+    if($protocol === 'shadowsocks') return 'Shadowsocks';
+    return $protocol === '' ? '-' : strtoupper($protocol);
+}
+
+function v2raystore_randomBytesSafe($length){
+    $length = max(1, intval($length));
+    try{
+        return random_bytes($length);
+    }catch(Throwable $e){
+        if(function_exists('openssl_random_pseudo_bytes')){
+            $buf = openssl_random_pseudo_bytes($length);
+            if(is_string($buf) && strlen($buf) === $length) return $buf;
+        }
+    }
+    $out = '';
+    while(strlen($out) < $length) $out .= hash('sha256', uniqid('', true) . mt_rand(), true);
+    return substr($out, 0, $length);
+}
+
+function v2raystore_shadowsocksRequiredKeyBytes($row){
+    if(is_object($row)) $row = json_decode(json_encode($row), true);
+    if(!is_array($row)) return 0;
+    $settings = v2raystore_decodeMaybeJson($row['settings'] ?? '{}', true);
+    $method = strtolower(trim((string)($settings['method'] ?? '')));
+    if(strpos($method, '2022-blake3-aes-128') !== false) return 16;
+    if(strpos($method, '2022-blake3-aes-256') !== false || strpos($method, '2022-blake3-chacha20') !== false) return 32;
+    return 0;
+}
+
+function v2raystore_shadowsocksPasswordValidForInbound($password, $row){
+    $password = trim((string)$password);
+    if($password === '') return false;
+    $bytes = v2raystore_shadowsocksRequiredKeyBytes($row);
+    if($bytes <= 0) return true;
+    $decoded = base64_decode($password, true);
+    return is_string($decoded) && strlen($decoded) === $bytes;
+}
+
+function v2raystore_shadowsocksClientPasswordForInbound($row){
+    $bytes = v2raystore_shadowsocksRequiredKeyBytes($row);
+    if($bytes > 0) return base64_encode(v2raystore_randomBytesSafe($bytes));
+    // Classic Shadowsocks accepts an arbitrary non-empty password.
+    return bin2hex(v2raystore_randomBytesSafe(16));
+}
+
 function v2raystore_decodePlanMultiInboundIds($value){
     if($value === null) return [];
     if(is_array($value)) $raw = $value;
@@ -2158,12 +2214,42 @@ function v2raystore_savePlanMultiInboundIds($planId, $ids){
         }
         return false;
     }
+
     $ids = v2raystore_decodePlanMultiInboundIds($ids);
+    $serverId = intval($plan['server_id'] ?? 0);
+    $available = [];
+    $panelRead = false;
+    if($serverId > 0 && !empty($ids)){
+        $panel = getJson($serverId);
+        if($panel && !empty($panel->success) && isset($panel->obj) && is_array($panel->obj)){
+            $panelRead = true;
+            foreach($panel->obj as $row){
+                if(!is_object($row)) continue;
+                $iid = intval($row->id ?? 0);
+                $proto = strtolower(trim((string)($row->protocol ?? '')));
+                if($iid > 0 && v2raystore_isSupportedInboundProtocol($proto)) $available[$iid] = $row;
+            }
+        }
+        // If the panel answered successfully, never persist unsupported/missing inbounds.
+        if($panelRead){
+            $ids = array_values(array_filter($ids, function($iid) use ($available){ return isset($available[intval($iid)]); }));
+        }
+    }
+
     $json = !empty($ids) ? json_encode(array_values($ids), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
     $primary = !empty($ids) ? intval($ids[0]) : intval($plan['inbound_id'] ?? 0);
-    $stmt = @$connection->prepare("UPDATE `server_plans` SET `multi_inbound_ids`=?, `inbound_id`=? WHERE `id`=? LIMIT 1");
+    $primaryProtocol = trim((string)($plan['protocol'] ?? ''));
+    $primaryNetwork = trim((string)($plan['type'] ?? ''));
+    if($primary > 0 && isset($available[$primary])){
+        $primaryProtocol = strtolower(trim((string)($available[$primary]->protocol ?? $primaryProtocol)));
+        $stream = v2raystore_decodeMaybeJson($available[$primary]->streamSettings ?? '{}', true);
+        $net = trim((string)($stream['network'] ?? ''));
+        if($net !== '') $primaryNetwork = $net;
+    }
+
+    $stmt = @$connection->prepare("UPDATE `server_plans` SET `multi_inbound_ids`=?, `inbound_id`=?, `protocol`=?, `type`=? WHERE `id`=? LIMIT 1");
     if(!$stmt) return false;
-    $stmt->bind_param('sii', $json, $primary, $planId);
+    $stmt->bind_param('sissi', $json, $primary, $primaryProtocol, $primaryNetwork, $planId);
     $ok = $stmt->execute();
     $stmt->close();
     return $ok;
@@ -4684,23 +4770,43 @@ function v2raystore_sanaeiRequestJson($server_info, $endpoint, $method = 'GET', 
     return is_array($decoded) ? $decoded : null;
 }
 
+function v2raystore_orderRemarkByUuid($server_id, $uuid){
+    global $connection;
+    $server_id = intval($server_id);
+    $uuid = trim((string)$uuid);
+    if($server_id <= 0 || $uuid === '' || !isset($connection)) return '';
+    $stmt = @$connection->prepare("SELECT `remark` FROM `orders_list` WHERE `server_id`=? AND `uuid`=? ORDER BY `id` DESC LIMIT 1");
+    if(!$stmt) return '';
+    $stmt->bind_param('is', $server_id, $uuid);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return trim((string)($row['remark'] ?? ''));
+}
+
 function v2raystore_sanaeiNewFindClientEmail($server_id, $uuid = '', $inbound_id = 0, $remark = ''){
     $remark = trim((string)$remark);
     $uuid = trim((string)$uuid);
     if($remark !== '') return $remark;
     if($uuid === '') return '';
+    $orderRemark = v2raystore_orderRemarkByUuid($server_id, $uuid);
+    if($orderRemark !== '') return $orderRemark;
     $json = getJson($server_id);
     if(!$json || empty($json->success) || !isset($json->obj) || !is_array($json->obj)) return '';
-    foreach($json->obj as $row){
-        if($inbound_id != 0 && intval($row->id ?? 0) != intval($inbound_id)) continue;
-        $settings = v2raystore_decodeMaybeJson($row->settings ?? '{}', true);
-        $clients = $settings['clients'] ?? [];
-        if(!is_array($clients)) continue;
-        foreach($clients as $client){
-            if(!is_array($client)) continue;
-            $cid = (string)($client['id'] ?? '');
-            $pwd = (string)($client['password'] ?? '');
-            if($cid === $uuid || $pwd === $uuid) return (string)($client['email'] ?? '');
+
+    $passes = intval($inbound_id) > 0 ? [intval($inbound_id), 0] : [0];
+    foreach($passes as $wantedInbound){
+        foreach($json->obj as $row){
+            if($wantedInbound > 0 && intval($row->id ?? 0) != $wantedInbound) continue;
+            $settings = v2raystore_decodeMaybeJson($row->settings ?? '{}', true);
+            $clients = $settings['clients'] ?? [];
+            if(!is_array($clients)) continue;
+            foreach($clients as $client){
+                if(!is_array($client)) continue;
+                $cid = (string)($client['id'] ?? '');
+                $pwd = (string)($client['password'] ?? '');
+                if($cid === $uuid || $pwd === $uuid) return (string)($client['email'] ?? '');
+            }
         }
     }
     return '';
@@ -11727,9 +11833,13 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
     $up = 0;
     $down = 0;
     $foundClient = false;
+    $emailHint = ($serverType === 'sanaei_new') ? v2raystore_orderRemarkByUuid($server_id, $uuid) : '';
+    $passes = intval($inbound_id) > 0 ? [intval($inbound_id), 0] : [0];
 
+    foreach($passes as $wantedInbound){
     foreach($response as $panelRow){
-        if(!is_object($panelRow) || intval($panelRow->id ?? 0) != intval($inbound_id)) continue;
+        if(!is_object($panelRow)) continue;
+        if($wantedInbound > 0 && intval($panelRow->id ?? 0) != $wantedInbound) continue;
         $row = $panelRow;
         $settings = json_decode((string)($row->settings ?? '{}'));
         if(!is_object($settings)) $settings = (object)['clients'=>[]];
@@ -11737,8 +11847,12 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
         $clientsStates = isset($row->clientStats) && is_array($row->clientStats) ? $row->clientStats : [];
         foreach($clients as $key => $client){
             if(!is_object($client)) continue;
-            $clientId = $client->id ?? ($client->password ?? '');
-            if($clientId == $uuid){
+            $clientId = (string)($client->id ?? '');
+            $clientPassword = (string)($client->password ?? '');
+            $clientEmail = trim((string)($client->email ?? ''));
+            $matchesClient = ($clientId !== '' && $clientId === (string)$uuid) || ($clientPassword !== '' && $clientPassword === (string)$uuid);
+            if(!$matchesClient && $emailHint !== '' && $clientEmail === $emailHint) $matchesClient = true;
+            if($matchesClient){
                 $foundClient = true;
                 $old_data = $client;
                 unset($clients[$key]);
@@ -11755,11 +11869,12 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
                     $up = 0;
                     $down = 0;
                 }
-                break 2;
+                break 3;
             }
         }
     }
 
+    }
     if(!$foundClient || !$row){
         return ['success'=>true, 'not_found'=>true, 'id'=>$uuid, 'expiryTime'=>0, 'limitIp'=>0, 'flow'=>'', 'total'=>0, 'up'=>0, 'down'=>0];
     }
@@ -11809,9 +11924,11 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
 
         if($serverType == "sanaei_new"){
             $deleteUrls = [];
+            // Prefer the global client endpoint so a multi-inbound client is removed from every attached inbound at once.
+            if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/clients/del/" . rawurlencode($email);
+            // Preserve the old per-inbound delete routes as fallbacks for older/custom panel builds.
             $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($uuid);
             if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/inbounds/" . $inbound_id . "/delClient/" . rawurlencode($email);
-            if(!empty($email)) $deleteUrls[] = "$panel_url/panel/api/clients/del/" . rawurlencode($email);
             $lastDecoded = null;
             foreach(array_values(array_unique($deleteUrls)) as $deleteUrl){
                 v2raystore_sanaeiNewJsonPost($curl, $deleteUrl, $session, null);
@@ -12931,30 +13048,57 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     $exactExpireMs = array_key_exists('expire_ms', $exactEdit) ? intval($exactEdit['expire_ms']) : null;
 
     $response = getJson($server_id);
-    if(!$response) return null;
-    $response = $response->obj;
+    if(!$response || !isset($response->obj)) return null;
+    $response = is_array($response->obj) ? $response->obj : [$response->obj];
     $client_key = 0;
-    foreach($response as $row){
-        if($row->id == $inbound_id) {
-            $settings = json_decode($row->settings, true);
-            $clients = $settings['clients'];
-            
-            $clientsStates = $row->clientStats;
+    $email = '';
+    $settings = null;
+    $row = null;
+    $emailHint = ($serverType === 'sanaei_new') ? v2raystore_orderRemarkByUuid($server_id, $uuid) : '';
+    $passes = intval($inbound_id) > 0 ? [intval($inbound_id), 0] : [0];
+    $foundClient = false;
+
+    foreach($passes as $wantedInbound){
+        foreach($response as $panelRow){
+            if(!is_object($panelRow)) continue;
+            if($wantedInbound > 0 && intval($panelRow->id ?? 0) !== $wantedInbound) continue;
+            $tmpSettings = json_decode((string)($panelRow->settings ?? '{}'), true);
+            if(!is_array($tmpSettings)) continue;
+            $clients = $tmpSettings['clients'] ?? [];
+            if(!is_array($clients)) continue;
             foreach($clients as $key => $client){
-                if($client['id'] == $uuid || $client['password'] == $uuid){
-                    $client_key = $key;
-                    $email = $client['email'];
-                    $emails = array_column($clientsStates,'email');
-                    $emailKey = array_search($email,$emails);
-                    
-                    $total = $clientsStates[$emailKey]->total;
-                    $up = $clientsStates[$emailKey]->up;
-                    $enable = $clientsStates[$emailKey]->enable;
-                    $down = $clientsStates[$emailKey]->down; 
+                if(!is_array($client)) continue;
+                $cid = (string)($client['id'] ?? '');
+                $pwd = (string)($client['password'] ?? '');
+                $mail = trim((string)($client['email'] ?? ''));
+                $match = ($cid !== '' && $cid === (string)$uuid) || ($pwd !== '' && $pwd === (string)$uuid);
+                if(!$match && $emailHint !== '' && $mail === $emailHint) $match = true;
+                if(!$match) continue;
+
+                $row = $panelRow;
+                $settings = $tmpSettings;
+                $client_key = $key;
+                $email = $mail;
+                $clientsStates = isset($panelRow->clientStats) && is_array($panelRow->clientStats) ? $panelRow->clientStats : [];
+                $total = intval($client['totalGB'] ?? 0);
+                $up = 0;
+                $down = 0;
+                $enable = $client['enable'] ?? true;
+                foreach($clientsStates as $stat){
+                    if(!is_object($stat) || trim((string)($stat->email ?? '')) !== $email) continue;
+                    $total = intval($stat->total ?? $total);
+                    $up = intval($stat->up ?? 0);
+                    $down = intval($stat->down ?? 0);
+                    $enable = $stat->enable ?? $enable;
                     break;
                 }
+                $foundClient = true;
+                break 3;
             }
         }
+    }
+    if(!$foundClient || !$row || !is_array($settings) || !isset($settings['clients'][$client_key])){
+        return (object)['success'=>false, 'msg'=>'کلاینت روی پنل پیدا نشد.'];
     }
     if($exactTotalBytes !== null){
         $settings['clients'][$client_key]['totalGB'] = $exactTotalBytes;
@@ -13476,32 +13620,58 @@ function v2raystore_addInboundAccountMulti($server_id, $client_id, $inbound_ids,
     }
 
     $validIds = [];
+    $protocols = [];
+    $shadowsocksRow = null;
+    $shadowsocksKeySizes = [];
     foreach($inbound_ids as $iid){
-        if(isset($available[$iid])) $validIds[] = intval($iid);
+        $iid = intval($iid);
+        if(!isset($available[$iid])) continue;
+        $proto = strtolower(trim((string)($available[$iid]->protocol ?? '')));
+        if(!v2raystore_isSupportedInboundProtocol($proto)){
+            return (object)['success'=>false, 'msg'=>'پروتکل Inbound #' . $iid . ' توسط ربات پشتیبانی نمی‌شود: ' . $proto];
+        }
+        $validIds[] = $iid;
+        if($proto !== '' && !in_array($proto, $protocols, true)) $protocols[] = $proto;
+        if($proto === 'shadowsocks'){
+            if($shadowsocksRow === null) $shadowsocksRow = $available[$iid];
+            $requiredBytes = v2raystore_shadowsocksRequiredKeyBytes($available[$iid]);
+            if($requiredBytes > 0 && !in_array($requiredBytes, $shadowsocksKeySizes, true)) $shadowsocksKeySizes[] = $requiredBytes;
+        }
     }
     $validIds = array_values(array_unique($validIds));
     if(empty($validIds)) return (object)['success'=>false, 'msg'=>'هیچ‌کدام از اینباندهای انتخاب‌شده در پنل پیدا نشد.'];
+    if(count($shadowsocksKeySizes) > 1){
+        return (object)['success'=>false, 'msg'=>'Inboundهای Shadowsocks انتخاب‌شده از cipherهای 2022 با اندازه کلید متفاوت استفاده می‌کنند و نمی‌توانند یک Client مشترک داشته باشند.'];
+    }
 
-    $first = $available[$validIds[0]];
-    $protocol = (string)($first->protocol ?? 'vless');
-    $id_label = ($protocol === 'trojan') ? 'password' : 'id';
     $volumeBytes = ($volume == 0) ? 0 : floor(floatval($volume) * 1073741824);
 
     if(is_array($newarr) && !empty($newarr)){
         $client = $newarr;
+        if(empty($client['id'])) $client['id'] = $client_id;
+        if($shadowsocksRow !== null && !v2raystore_shadowsocksPasswordValidForInbound($client['password'] ?? '', $shadowsocksRow)){
+            $client['password'] = v2raystore_shadowsocksClientPasswordForInbound($shadowsocksRow);
+        }elseif($shadowsocksRow === null && empty($client['password'])){
+            $client['password'] = $client_id;
+        }
+        if(empty($client['email'])) $client['email'] = $remark;
     }else{
+        // Keep both identity families populated. UUID is used by VLESS/VMess; Password is used by Trojan/SS.
+        // When Shadowsocks exists, pre-generate a method-valid password so the same logical client remains
+        // consistent even when Trojan + Shadowsocks are selected together.
+        $password = ($shadowsocksRow !== null)
+            ? v2raystore_shadowsocksClientPasswordForInbound($shadowsocksRow)
+            : $client_id;
         $client = [
-            "$id_label" => $client_id,
-            "enable" => true,
-            "email" => $remark,
-            "limitIp" => intval($limitip),
-            "totalGB" => $volumeBytes,
-            "expiryTime" => intval($expiryTime),
-            "subId" => RandomString(16)
+            'id' => $client_id,
+            'password' => $password,
+            'enable' => true,
+            'email' => $remark,
+            'limitIp' => intval($limitip),
+            'totalGB' => $volumeBytes,
+            'expiryTime' => intval($expiryTime),
+            'subId' => RandomString(16)
         ];
-        // اگر چند اینباند vless/trojan ترکیبی باشند، وجود هر دو کلید باعث می‌شود سنایی جدید بتواند مقدار مناسب خودش را بردارد.
-        if($id_label !== 'id') $client['id'] = $client_id;
-        if($id_label !== 'password') $client['password'] = $client_id;
 
         if(($server_info['reality'] ?? '') == "true" && $planId !== null){
             $stmt = @$connection->prepare("SELECT `flow` FROM `server_plans` WHERE `id`=? LIMIT 1");
@@ -13520,14 +13690,14 @@ function v2raystore_addInboundAccountMulti($server_id, $client_id, $inbound_ids,
     if(function_exists('v2raystore_applyPanelClientComment')) v2raystore_applyPanelClientComment($client, 0, $client['email'] ?? $remark);
 
     $payload = [
-        "client" => $client,
-        "inboundIds" => array_values($validIds)
+        'client' => $client,
+        'inboundIds' => array_values($validIds)
     ];
     $decoded = v2raystore_sanaeiRequestJson($server_info, '/panel/api/clients/add', 'POST', $payload);
     if(is_array($decoded)){
         return json_decode(json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
-    return (object)['success'=>false, 'msg'=>'پاسخ نامعتبر از پنل هنگام ثبت چند اینباند.'];
+    return (object)['success'=>false, 'msg'=>'پاسخ نامعتبر از پنل هنگام ثبت کاربر روی Inboundهای انتخاب‌شده.'];
 }
 
 
@@ -13577,6 +13747,12 @@ function addInboundAccount($server_id, $client_id, $inbound_id, $expiryTime, $re
         }
     }
     if(!intval($iid)) return "inbound not Found";
+
+    // Shadowsocks clients on sanaei_new must be created through the client API so the panel can
+    // enforce cipher-specific password/key requirements (including Shadowsocks 2022 methods).
+    if($serverType == "sanaei_new" && strtolower(trim((string)$protocol)) === 'shadowsocks'){
+        return v2raystore_addInboundAccountMulti($server_id, $client_id, [$inbound_id], $expiryTime, $remark, ($volume / 1073741824), $limitip, $newarr, $planId);
+    }
 
     $settings = json_decode($row->settings, true);
     $id_label = $protocol == 'trojan' ? 'password' : 'id';
@@ -14278,6 +14454,30 @@ function v2raystore_buildPlanInboundConnectionLinks($server_id, $uniqid, $protoc
     }
 
     $inboundIds = array_values(array_unique(array_filter(array_map('intval', $inboundIds))));
+
+    // For mixed-protocol plans (and for Shadowsocks), use the panel's native per-client link generator.
+    // It knows the actual credential shape for every inbound, while the legacy local builder assumes one protocol/UUID.
+    if($serverType === 'sanaei_new' && !empty($inboundIds)){
+        $panelProtocols = [];
+        $hasShadowsocks = false;
+        $panelJson = getJson($server_id);
+        if($panelJson && !empty($panelJson->success) && isset($panelJson->obj) && is_array($panelJson->obj)){
+            foreach($panelJson->obj as $pRow){
+                if(!is_object($pRow) || !in_array(intval($pRow->id ?? 0), $inboundIds, true)) continue;
+                $pProto = strtolower(trim((string)($pRow->protocol ?? '')));
+                if($pProto !== '' && !in_array($pProto, $panelProtocols, true)) $panelProtocols[] = $pProto;
+                if($pProto === 'shadowsocks') $hasShadowsocks = true;
+            }
+        }
+        if($hasShadowsocks || count($panelProtocols) > 1){
+            $panelLinks = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uniqid, $fallbackInboundId > 0 ? $fallbackInboundId : intval($inboundIds[0]));
+            if(!empty($panelLinks)) return $panelLinks;
+            // Shadowsocks (especially the 2022 ciphers) must be serialized by the panel itself.
+            // Never fall through to the legacy local link builder, which only knows VLESS/VMess/Trojan.
+            if($hasShadowsocks) return [];
+        }
+    }
+
     if(count($inboundIds) <= 1){
         $iid = !empty($inboundIds) ? intval($inboundIds[0]) : $fallbackInboundId;
         return getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $iid, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
