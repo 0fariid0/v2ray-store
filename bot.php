@@ -1967,6 +1967,24 @@ if(($data=="gateWays_Channels" or preg_match("/^changeGateWays(\w+)/",$data,$mat
 }
 
 // ==================== تنظیمات جایزه خرید و تمدید ====================
+// برگشت/لغو داخل فرم‌های جایزه باید به منوی جایزه برگردد، نه منوی اصلی ادمین.
+$rewardBackSteps = [
+    'rewardSetNormalStep',
+    'rewardSetChanceStep',
+    'rewardAddSpecialVolumeStep',
+    'rewardAddSpecialCountStep',
+];
+if(
+    ($text ?? '') === ($buttonValues['cancel'] ?? '') &&
+    in_array(($userInfo['step'] ?? ''), $rewardBackSteps, true) &&
+    ($from_id == $admin || (!empty($userInfo) && ($userInfo['isAdmin'] ?? false) == true))
+){
+    setUser();
+    setUser('', 'temp');
+    sendMessage('↩️ به تنظیمات جایزه برگشتید.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
+    exit();
+}
 if($data=="rewardSettings" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
