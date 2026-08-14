@@ -280,7 +280,27 @@ function v2raystore_warn_delete_previous_message($order){
     if($msgId > 0 && $userId != 0) @delMessage($msgId, $userId);
 }
 
-function v2raystore_warn_send_or_replace($order, $kind, $msg, $notifValue){
+function v2raystore_warn_action_keyboard($order){
+    global $botState;
+    if(!is_array($order) || v2raystore_warn_is_test_order($order)) return null;
+    $orderId = intval($order['id'] ?? 0);
+    if($orderId <= 0) return null;
+
+    $rows = [];
+    if(($botState['renewAccountState'] ?? 'off') === 'on'){
+        $rows[] = [[
+            'text' => '🔥 تمدید همین کانفیگ',
+            'callback_data' => 'renewAccount' . $orderId
+        ]];
+    }
+    $rows[] = [[
+        'text' => '📦 کانفیگ‌های من',
+        'callback_data' => 'mySubscriptions'
+    ]];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_warn_send_or_replace($order, $kind, $msg, $notifValue, $keyboard = null){
     $orderId = intval($order['id'] ?? 0);
     $oldKind = trim((string)($order['notif_kind'] ?? ''));
     $oldMsgId = intval($order['notif_msg_id'] ?? 0);
@@ -289,7 +309,7 @@ function v2raystore_warn_send_or_replace($order, $kind, $msg, $notifValue){
         return $oldMsgId;
     }
     v2raystore_warn_delete_previous_message($order);
-    $res = sendMessage($msg, null, 'HTML', intval($order['userid'] ?? 0));
+    $res = sendMessage($msg, $keyboard, 'HTML', intval($order['userid'] ?? 0));
     $newMsgId = 0;
     if(is_object($res) && isset($res->ok) && $res->ok && isset($res->result->message_id)) $newMsgId = intval($res->result->message_id);
     v2raystore_warn_update_notification_state($orderId, $notifValue, $kind, $newMsgId);
@@ -304,12 +324,17 @@ function v2raystore_warn_clear_notification($order, $deleteMessage = true){
 function v2raystore_warn_build_low_message($order, $kind, $leftBytes, $expiryTime){
     $remark = v2raystore_warn_h($order['remark'] ?? '');
     $isTest = v2raystore_warn_is_test_order($order);
-    if($kind === 'low_volume'){
+    if(strpos($kind, 'low_volume') === 0){
         $left = v2raystore_warn_gb_text($leftBytes);
         if($isTest){
             return "⚠️ <b>حجم اکانت تست شما رو به پایان است</b>\n\n🔮 نام اکانت تست: <code>{$remark}</code>\n🔋 حجم باقی‌مانده: <b>{$left} گیگ</b>\n\nاین اکانت تست است؛ در صورت رضایت از کیفیت سرویس، می‌توانید از منوی خرید سرویس اصلی تهیه کنید.";
         }
-        return "⚠️ <b>هشدار حجم سرویس</b>\n\nاز حجم اکانت شما کمتر از <b>۱ گیگ</b> باقی مانده است.\n🔮 نام اکانت: <code>{$remark}</code>\n🔋 حجم باقی‌مانده: <b>{$left} گیگ</b>\n\nبرای جلوگیری از قطع سرویس، از بخش «کانفیگ‌های من» سرویس را تمدید یا افزایش حجم دهید.";
+        global $botState;
+        $renewEnabled = (($botState['renewAccountState'] ?? 'off') === 'on');
+        $actionText = $renewEnabled
+            ? "برای جلوگیری از قطع سرویس، می‌توانید از دکمه «تمدید همین کانفیگ» زیر استفاده کنید؛ یا از بخش «کانفیگ‌های من» سرویس را تمدید یا افزایش حجم دهید."
+            : "برای جلوگیری از قطع سرویس، از بخش «کانفیگ‌های من» سرویس را تمدید یا افزایش حجم دهید.";
+        return "⚠️ <b>هشدار حجم سرویس</b>\n\nاز حجم اکانت شما کمتر از <b>۱ گیگ</b> باقی مانده است.\n🔮 نام اکانت: <code>{$remark}</code>\n🔋 حجم باقی‌مانده: <b>{$left} گیگ</b>\n\n{$actionText}";
     }
 
     $leftSeconds = max(0, intval($expiryTime) - time());
@@ -417,12 +442,13 @@ if($orders){
 
             $lowKind = '';
             if($expiryTime > 0 && $expiryTime < time() + 86400) $lowKind = 'low_time';
-            elseif($total > 0 && $totalLeft > 0 && $totalLeft <= 1073741824) $lowKind = 'low_volume';
+            elseif($total > 0 && $totalLeft > 0 && $totalLeft <= 1073741824) $lowKind = 'low_volume_action_v2';
 
             if($lowKind !== ''){
                 if($storedKind !== $lowKind){
                     $msg = v2raystore_warn_build_low_message($order, $lowKind, $totalLeft, $expiryTime);
-                    v2raystore_warn_send_or_replace($order, $lowKind, $msg, -1);
+                    $keyboard = (strpos($lowKind, 'low_volume') === 0) ? v2raystore_warn_action_keyboard($order) : null;
+                    v2raystore_warn_send_or_replace($order, $lowKind, $msg, -1, $keyboard);
                 }else{
                     v2raystore_warn_update_notification_state($orderId, -1, $lowKind, intval($order['notif_msg_id'] ?? 0));
                 }
