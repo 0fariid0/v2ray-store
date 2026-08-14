@@ -3999,6 +3999,93 @@ function v2raystore_rewardRandomInt($min, $max){
 }
 
 /**
+ * The configured chance is the base chance. Larger paid traffic raises the
+ * effective chance smoothly, while keeping the administrator's base value
+ * meaningful. The result is always capped to avoid a guaranteed special win.
+ */
+function v2raystore_rewardEffectiveSpecialChance($baseChance, $qualifyingVolumeGb){
+    $baseChance = max(0, min(100, floatval($baseChance)));
+    $volumeGb = max(0, floatval($qualifyingVolumeGb));
+    if($baseChance <= 0) return 0;
+    if($baseChance >= 100) return 100;
+    if($volumeGb <= 0) return round($baseChance, 2);
+
+    // Smooth volume multiplier: 5GB≈1.47x, 10GB≈1.80x, 20GB≈2.27x,
+    // 40GB≈2.86x, 100GB≈3.77x. Cap keeps the lottery meaningful.
+    $factor = 1 + (0.80 * (log(1 + ($volumeGb / 10), 2)));
+    return round(min(95, $baseChance * $factor), 2);
+}
+
+function v2raystore_rewardResolveQualifyingVolumeGb($order, $explicitVolumeGb = null){
+    global $connection;
+    if($explicitVolumeGb !== null && is_numeric($explicitVolumeGb) && floatval($explicitVolumeGb) > 0){
+        return round(floatval($explicitVolumeGb), 2);
+    }
+    if(!is_array($order)) return 0;
+    if(isset($order['_reward_volume_gb']) && is_numeric($order['_reward_volume_gb']) && floatval($order['_reward_volume_gb']) > 0){
+        return round(floatval($order['_reward_volume_gb']), 2);
+    }
+    $planId = intval($order['fileid'] ?? 0);
+    if($planId > 0 && isset($connection) && ($connection instanceof mysqli)){
+        $stmt = @$connection->prepare("SELECT `volume` FROM `server_plans` WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $planId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($row && is_numeric($row['volume'] ?? null) && floatval($row['volume']) > 0) return round(floatval($row['volume']), 2);
+        }
+    }
+    return 0;
+}
+
+function v2raystore_rewardAwardsByPayment($payHash, $eventType = ''){
+    global $connection;
+    $out = ['rows'=>[], 'by_order'=>[], 'total_gb'=>0.0, 'count'=>0];
+    $payHash = trim((string)$payHash);
+    $eventType = strtolower(trim((string)$eventType));
+    if($payHash === '' || !v2raystore_ensurePurchaseRewardSchema()) return $out;
+    if($eventType !== '' && in_array($eventType, ['purchase','renew'], true)){
+        $stmt = @$connection->prepare("SELECT `order_id`,`event_type`,`prize_type`,`volume_gb`,`remark`,`awarded_at` FROM `purchase_reward_logs` WHERE `pay_hash`=? AND `event_type`=? AND `status`='awarded' ORDER BY `id` ASC");
+        if(!$stmt) return $out;
+        $stmt->bind_param('ss', $payHash, $eventType);
+    }else{
+        $stmt = @$connection->prepare("SELECT `order_id`,`event_type`,`prize_type`,`volume_gb`,`remark`,`awarded_at` FROM `purchase_reward_logs` WHERE `pay_hash`=? AND `status`='awarded' ORDER BY `id` ASC");
+        if(!$stmt) return $out;
+        $stmt->bind_param('s', $payHash);
+    }
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while($row = $res->fetch_assoc()){
+        $gb = max(0, floatval($row['volume_gb'] ?? 0));
+        if($gb <= 0) continue;
+        $row['volume_gb'] = $gb;
+        $out['rows'][] = $row;
+        $oid = intval($row['order_id'] ?? 0);
+        if(!isset($out['by_order'][$oid])) $out['by_order'][$oid] = 0.0;
+        $out['by_order'][$oid] += $gb;
+        $out['total_gb'] += $gb;
+        $out['count']++;
+    }
+    $stmt->close();
+    $out['total_gb'] = round($out['total_gb'], 2);
+    return $out;
+}
+
+function v2raystore_rewardPaymentSummaryText($payHash, $eventType = '', $orderId = null){
+    $awards = v2raystore_rewardAwardsByPayment($payHash, $eventType);
+    $gb = 0.0;
+    if($orderId !== null){
+        $oid = intval($orderId);
+        $gb = floatval($awards['by_order'][$oid] ?? 0);
+    }else{
+        $gb = floatval($awards['total_gb'] ?? 0);
+    }
+    if($gb <= 0) return '';
+    return '• 🎁 حجم هدیه : ' . v2raystore_rewardFormatGb($gb) . ' گیگ';
+}
+
+/**
  * Current visible reward period. Old rows are intentionally retained for
  * idempotency; a period reset only moves the visible log-id boundary.
  */
@@ -4066,9 +4153,10 @@ function v2raystore_rewardSettingsText(){
         "🛒 جایزه خرید جدید: <b>{$purchase}</b>\n" .
         "♻️ جایزه تمدید: <b>{$renew}</b>\n\n" .
         "🎁 جایزه عادی: <b>{$normal} گیگ</b>\n" .
-        "🎲 شانس جایزه ویژه در هر خرید/تمدید: <b>" . intval($cfg['special_chance']) . "%</b>\n" .
+        "🎲 شانس پایه جایزه ویژه: <b>" . intval($cfg['special_chance']) . "%</b>\n" .
         "⭐ موجودی جوایز ویژه فعال: <b>" . intval($stats['special_remaining']) . " عدد</b>\n" .
         "🏆 جوایز ثبت‌شده در این دوره: <b>" . intval($stats['awarded_total']) . " عدد</b>\n\n" .
+        "📈 شانس واقعی به‌صورت خودکار با حجم خرید/تمدید بیشتر می‌شود و در خریدهای حجیم‌تر، جوایز ویژه بزرگ‌تر وزن انتخاب بیشتری دارند.\n" .
         "📌 اگر قرعه جایزه ویژه به کاربر نخورد، جایزه عادی به همان سرویس اضافه می‌شود. وقتی موجودی جوایز ویژه تمام شود نیز همه فقط جایزه عادی را دریافت می‌کنند.\n" .
         "⚠️ سرویس‌های نامحدود تغییر داده نمی‌شوند تا محدودیت حجمی ناخواسته برایشان ایجاد نشود.";
 }
@@ -4085,7 +4173,7 @@ function v2raystore_rewardSettingsKeyboard(){
             ['text'=>$renew, 'callback_data'=>'rewardToggleRenew'],
         ],
         [['text'=>'🎁 جایزه عادی: ' . v2raystore_rewardFormatGb($cfg['normal_gb']) . ' گیگ', 'callback_data'=>'rewardSetNormal']],
-        [['text'=>'🎲 شانس جایزه ویژه: ' . intval($cfg['special_chance']) . '%', 'callback_data'=>'rewardSetChance']],
+        [['text'=>'🎲 شانس پایه ویژه: ' . intval($cfg['special_chance']) . '%', 'callback_data'=>'rewardSetChance']],
         [['text'=>'➕ افزودن جایزه ویژه محدود', 'callback_data'=>'rewardAddSpecial']],
         [['text'=>'⭐ مدیریت جوایز ویژه', 'callback_data'=>'rewardPrizes']],
         [['text'=>'👥 لیست دریافت‌کنندگان جایزه', 'callback_data'=>'rewardWinners_0']],
@@ -4217,28 +4305,45 @@ function v2raystore_rewardWinnersPage($offset = 0){
     return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
 }
 
-function v2raystore_rewardReserveSpecialPrize($chance){
+function v2raystore_rewardReserveSpecialPrize($chance, $qualifyingVolumeGb = 0){
     global $connection;
     if(!v2raystore_ensurePurchaseRewardSchema()) return null;
-    $chance = max(0, min(100, intval($chance)));
-    if($chance <= 0 || v2raystore_rewardRandomInt(1,100) > $chance) return null;
+    $chance = max(0, min(100, floatval($chance)));
+    if($chance <= 0 || v2raystore_rewardRandomInt(1,10000) > intval(round($chance * 100))) return null;
+    $qualifyingVolumeGb = max(0, floatval($qualifyingVolumeGb));
+
     for($attempt=0; $attempt<4; $attempt++){
         $rows = [];
-        $totalUnits = 0;
+        $maxPrizeGb = 0.0;
         $res = @($connection->query("SELECT `id`,`volume_gb`,`remaining_count` FROM `purchase_reward_prizes` WHERE `active`=1 AND `remaining_count`>0 ORDER BY `id` ASC"));
         if(!$res) return null;
         while($row=$res->fetch_assoc()){
             $count = max(0, intval($row['remaining_count']));
-            if($count <= 0) continue;
+            $gb = max(0, floatval($row['volume_gb']));
+            if($count <= 0 || $gb <= 0) continue;
             $rows[] = $row;
-            $totalUnits += $count;
+            if($gb > $maxPrizeGb) $maxPrizeGb = $gb;
         }
-        if($totalUnits <= 0) return null;
-        $pick = v2raystore_rewardRandomInt(1, $totalUnits);
+        if(empty($rows) || $maxPrizeGb <= 0) return null;
+
+        // Larger purchases progressively favor the larger special prizes.
+        // Stock is still part of the weight, so limited quantities remain meaningful.
+        $power = $qualifyingVolumeGb > 0 ? min(3.0, max(0.25, sqrt($qualifyingVolumeGb / 10) / 2)) : 0.25;
+        $totalWeight = 0;
+        foreach($rows as $idx => $row){
+            $count = max(1, intval($row['remaining_count']));
+            $ratio = max(0.0001, floatval($row['volume_gb']) / $maxPrizeGb);
+            $weight = max(1, intval(round($count * pow($ratio, $power) * 10000)));
+            $rows[$idx]['_reward_weight'] = $weight;
+            $totalWeight += $weight;
+        }
+        if($totalWeight <= 0) return null;
+
+        $pick = v2raystore_rewardRandomInt(1, $totalWeight);
         $chosen = null;
         $cursor = 0;
         foreach($rows as $row){
-            $cursor += intval($row['remaining_count']);
+            $cursor += intval($row['_reward_weight'] ?? 0);
             if($pick <= $cursor){ $chosen = $row; break; }
         }
         if(!$chosen) return null;
@@ -4362,7 +4467,7 @@ function v2raystore_rewardApplyVolumeToOrder($order, $volumeGb){
     return ['ok'=>true];
 }
 
-function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $paidAmount = 0, $orderOverride = null){
+function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $paidAmount = 0, $orderOverride = null, $qualifyingVolumeGb = null){
     global $connection;
     $eventType = strtolower(trim((string)$eventType));
     if(!in_array($eventType, ['purchase','renew'], true)) return ['ok'=>false,'skipped'=>true,'message'=>'نوع رویداد جایزه معتبر نیست.'];
@@ -4406,7 +4511,9 @@ function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $p
     if(intval($connection->affected_rows) <= 0) return ['ok'=>true,'skipped'=>true,'duplicate'=>true,'message'=>'جایزه این تراکنش قبلاً پردازش شده است.'];
     $logId = intval($connection->insert_id);
 
-    $special = v2raystore_rewardReserveSpecialPrize($cfg['special_chance']);
+    $qualifyingVolumeGb = v2raystore_rewardResolveQualifyingVolumeGb($order, $qualifyingVolumeGb);
+    $effectiveSpecialChance = v2raystore_rewardEffectiveSpecialChance($cfg['special_chance'], $qualifyingVolumeGb);
+    $special = v2raystore_rewardReserveSpecialPrize($effectiveSpecialChance, $qualifyingVolumeGb);
     $prizeType = $special ? 'special' : 'normal';
     $prizeId = $special ? intval($special['id']) : 0;
     $volumeGb = $special ? floatval($special['volume_gb']) : floatval($cfg['normal_gb']);
@@ -4445,7 +4552,7 @@ function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $p
         $message = "🎁 <b>هدیه {$action} شما</b>\n\n✨ <b>{$gbText} گیگ</b> حجم هدیه روی همین سرویس اضافه شد:\n🔮 <code>{$safeRemarkHtml}</code>\n\n✅ هدیه با موفقیت به حجم سرویس اضافه شد.";
     }
     sendMessage($message, null, 'HTML', $userId);
-    return ['ok'=>true,'awarded'=>true,'prize_type'=>$prizeType,'prize_id'=>$prizeId,'volume_gb'=>$volumeGb,'log_id'=>$logId];
+    return ['ok'=>true,'awarded'=>true,'prize_type'=>$prizeType,'prize_id'=>$prizeId,'volume_gb'=>$volumeGb,'log_id'=>$logId,'qualifying_volume_gb'=>$qualifyingVolumeGb,'effective_special_chance'=>$effectiveSpecialChance];
 }
 
 function v2raystore_botFeatureEnabled($key, $default = 'on'){
@@ -18735,6 +18842,8 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
         if(is_array($decodedOrders)) $orderIds = $decodedOrders;
     }
     $orders = v2raystore_getOrderRowsForFullPaymentReport($orderIds);
+    $rewardAwards = function_exists('v2raystore_rewardAwardsByPayment') ? v2raystore_rewardAwardsByPayment($hashId) : ['by_order'=>[], 'total_gb'=>0.0];
+    $rewardByOrder = is_array($rewardAwards['by_order'] ?? null) ? $rewardAwards['by_order'] : [];
 
     $lines = [];
     $lines[] = '• 🛍 موجودی جدید کاربر : ' . number_format($walletAfter);
@@ -18767,6 +18876,9 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
             if(($result['type'] ?? '') === 'INCREASE_VOLUME' && !empty($result['increase_volume'])) $lines[] = '• 🚘 ترافیک افزوده‌شده : ' . v2raystore_h($result['increase_volume']) . ' گیگ';
             elseif(($result['type'] ?? '') === 'INCREASE_DAY' && !empty($result['increase_day'])) $lines[] = '• 🗓 زمان افزوده‌شده : ' . v2raystore_h($result['increase_day']) . ' روز';
             else $lines[] = '• 🚘 ترافیک : ' . v2raystore_formatGbForReport($volume);
+            $rewardOrderId = intval($order['id'] ?? 0);
+            $rewardGbForOrder = floatval($rewardByOrder[$rewardOrderId] ?? 0);
+            if($rewardGbForOrder > 0) $lines[] = '• 🎁 حجم هدیه : ' . v2raystore_rewardFormatGb($rewardGbForOrder) . ' گیگ';
             if(($result['type'] ?? '') === 'RENEW_ACCOUNT' && ($result['renew_mode'] ?? '') === 'reset'){
                 if(!empty($result['renew_previous_volume'])) $lines[] = '• 📦 حجم قبل تمدید : ' . v2raystore_h($result['renew_previous_volume']);
                 if(!empty($result['renew_previous_days'])) $lines[] = '• 📆 روز قبل تمدید : ' . v2raystore_h($result['renew_previous_days']);
@@ -18787,6 +18899,8 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
         elseif(!empty($result['renew_remark'])) $lines[] = '• 🔑 کد سرویس : ' . v2raystore_h($result['renew_remark']);
         if(!empty($result['increase_volume'])) $lines[] = '• 🚘 ترافیک افزوده‌شده : ' . v2raystore_h($result['increase_volume']) . ' گیگ';
         if(!empty($result['increase_day'])) $lines[] = '• 🗓 زمان افزوده‌شده : ' . v2raystore_h($result['increase_day']) . ' روز';
+        $rewardTotalGb = floatval($rewardAwards['total_gb'] ?? 0);
+        if($rewardTotalGb > 0) $lines[] = '• 🎁 حجم هدیه : ' . v2raystore_rewardFormatGb($rewardTotalGb) . ' گیگ';
         $lines[] = '• 💰 مبلغ پرداخت : ' . number_format($price) . ' تومان';
         $lines[] = '• ⌛️ زمان انجام : ' . v2raystore_h($duration);
     }
@@ -20658,7 +20772,7 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     // جایزه تمدید باید بعد از موفقیت کامل تمدید و در یک پیام جدا اعمال شود.
     if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
         try{
-            v2raystore_rewardMaybeAward('renew', $hashId, $orderId, $uid, $price);
+            v2raystore_rewardMaybeAward('renew', $hashId, $orderId, $uid, $price, null, $volume);
         }catch(Throwable $rewardError){
             if(function_exists('v2raystore_reportEvent')){
                 v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$uid}</code>\n🧾 سفارش: <code>{$orderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
@@ -20792,7 +20906,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         sendMessage($legacyRenewedUserMessage, null, 'HTML', $uid);
         if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
             $legacyRewardOrder = ['id'=>0, 'userid'=>$uid, 'server_id'=>$server_id, 'inbound_id'=>$renewInbound, 'uuid'=>$uuid, 'remark'=>$remark, 'status'=>1];
-            try{ v2raystore_rewardMaybeAward('renew', $hashId, 0, $uid, $price, $legacyRewardOrder); }
+            try{ v2raystore_rewardMaybeAward('renew', $hashId, 0, $uid, $price, $legacyRewardOrder, $volume); }
             catch(Throwable $rewardError){
                 if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$uid}</code>\n🔮 سرویس: <code>" . htmlspecialchars($remark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
             }
@@ -20941,7 +21055,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     if($price > 0 && !empty($orderIds) && function_exists('v2raystore_rewardMaybeAward')){
         foreach($orderIds as $rewardOrderId){
             try{
-                v2raystore_rewardMaybeAward('purchase', $hashId, intval($rewardOrderId), $uid, $price);
+                v2raystore_rewardMaybeAward('purchase', $hashId, intval($rewardOrderId), $uid, $price, null, $volume);
             }catch(Throwable $rewardError){
                 if(function_exists('v2raystore_reportEvent')){
                     v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$uid}</code>\n🧾 سفارش: <code>" . intval($rewardOrderId) . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');

@@ -2002,7 +2002,7 @@ if($userInfo['step'] == 'rewardSetNormalStep' && $text != $buttonValues['cancel'
 }
 if($data=="rewardSetChance" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
-    sendMessage("🎲 <b>شانس جایزه ویژه</b>\n\nیک عدد بین <code>0</code> تا <code>100</code> وارد کنید.\nمثلاً <code>25</code> یعنی در هر خرید/تمدید 25٪ شانس وجود دارد که یکی از جوایز ویژه موجود، به‌جای جایزه عادی داده شود.\n\nاگر موجودی ویژه تمام شود، جایزه عادی ادامه پیدا می‌کند.", $cancelKey, 'HTML');
+    sendMessage("🎲 <b>شانس پایه جایزه ویژه</b>\n\nیک عدد بین <code>0</code> تا <code>100</code> وارد کنید.\nاین عدد شانس پایه است؛ ربات بر اساس حجم همان خرید یا تمدید، شانس واقعی را بیشتر می‌کند. هرچه حجم بالاتر باشد، هم احتمال جایزه ویژه بیشتر می‌شود و هم در قرعه ویژه، جوایز حجیم‌تر وزن بیشتری می‌گیرند.\n\nاگر موجودی ویژه تمام شود، جایزه عادی ادامه پیدا می‌کند.", $cancelKey, 'HTML');
     setUser('rewardSetChanceStep');
     exit();
 }
@@ -2016,7 +2016,7 @@ if($userInfo['step'] == 'rewardSetChanceStep' && $text != $buttonValues['cancel'
     $cfg['special_chance'] = intval($value);
     v2raystore_savePurchaseRewardConfig($cfg);
     setUser();
-    sendMessage("✅ شانس جایزه ویژه روی <b>" . intval($cfg['special_chance']) . "%</b> تنظیم شد.", $removeKeyboard, 'HTML');
+    sendMessage("✅ شانس پایه جایزه ویژه روی <b>" . intval($cfg['special_chance']) . "%</b> تنظیم شد. شانس نهایی با حجم خرید/تمدید به‌صورت خودکار افزایش پیدا می‌کند.", $removeKeyboard, 'HTML');
     sendMessage(v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
 }
@@ -4034,7 +4034,7 @@ if($subLink != "") $acc_text .= "
     if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
         $rewardPayHash = trim((string)($payInfo['hash_id'] ?? ''));
         foreach($v2raystoreRewardOrderIds as $rewardOrderId){
-            try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $uid, $price); }
+            try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $uid, $price, null, $volume); }
             catch(Throwable $rewardError){
                 if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$uid}</code>\n🧾 سفارش: <code>{$rewardOrderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
             }
@@ -4075,6 +4075,8 @@ if($subLink != "") $acc_text .= "
     $msg = str_replace(['SERVERNAME', 'TYPE', 'USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'VOLUME', 'DAYS'],
                 [$serverTitle, 'ارزی ریالی', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);
     $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
+    $rewardAdminLine = function_exists('v2raystore_rewardPaymentSummaryText') ? v2raystore_rewardPaymentSummaryText((string)($payInfo['hash_id'] ?? ''), 'purchase') : '';
+    if($rewardAdminLine !== '') $msg .= "\n" . $rewardAdminLine;
     
     sendMessage($msg,$keys,"html", $admin);
 }
@@ -4091,6 +4093,8 @@ elseif($payType == "RENEW_ACCOUNT"){
         ],
     ]], JSON_UNESCAPED_UNICODE);
     $msg = str_replace(['TYPE', "USER-ID", "USERNAME", "NAME", "PRICE", "REMARK", "VOLUME", "DAYS"],['کیف پول/درگاه', $from_id, $username, $first_name, ($result['price'] ?? 0), ($result['renew_remark'] ?? ''), ($result['renew_volume'] ?? ''), ($result['renew_days'] ?? '')], $mainValues['renew_account_request_message']);
+    $rewardAdminLine = function_exists('v2raystore_rewardPaymentSummaryText') ? v2raystore_rewardPaymentSummaryText((string)($payInfo['hash_id'] ?? ''), 'renew', intval($result['renew_order_id'] ?? 0)) : '';
+    if($rewardAdminLine !== '') $msg .= "\n" . $rewardAdminLine;
     sendMessage($msg, $keys,"html", $admin);
 }
 elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType, $increaseInfo)){
@@ -4293,13 +4297,14 @@ elseif($payType == "RENEW_SCONFIG"){
             'inbound_id'=>intval($inbound_id), 'uuid'=>$rewardLegacyUuid,
             'remark'=>$rewardLegacyRemark, 'status'=>1
         ];
-        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $uid, $price, $legacyRewardOrder); }
+        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $uid, $price, $legacyRewardOrder, $volume); }
         catch(Throwable $rewardError){
             if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$uid}</code>\n🔮 سرویس: <code>" . htmlspecialchars($rewardLegacyRemark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
         }
     }
 
-    sendMessage("
+    $rewardAdminLine = function_exists('v2raystore_rewardPaymentSummaryText') ? v2raystore_rewardPaymentSummaryText((string)($payInfo['hash_id'] ?? ''), 'renew') : '';
+    $renewAdminMessage = "
     🔋|💰 تمدید مشخصات کانفیگ با ( کیف پول )
     
     ▫️آیدی کاربر: $from_id
@@ -4308,9 +4313,12 @@ elseif($payType == "RENEW_SCONFIG"){
     🎈 نام سرویس: $remark
     ⏰ مدت کانفیگ: $volume گیگ
     حجم کانفیگ:  $days روز
-    💰قیمت: $price تومان
+    💰قیمت: $price تومان";
+    if($rewardAdminLine !== '') $renewAdminMessage .= "\n    " . $rewardAdminLine;
+    $renewAdminMessage .= "
     ⁮⁮ ⁮⁮
-    ",$keys,"html", $admin);
+    ";
+    sendMessage($renewAdminMessage,$keys,"html", $admin);
 
 }
     
@@ -7162,7 +7170,7 @@ if($subLink != "") $acc_text .= "
     // خرید سفارشی کارت‌به‌کارت هم باید دقیقاً روی همین سرویس جایزه بگیرد.
     if($price > 0 && $rewardOrderId > 0 && function_exists('v2raystore_rewardMaybeAward')){
         $rewardPayHash = trim((string)($payInfo['hash_id'] ?? $match[1] ?? ''));
-        try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $uid, $price); }
+        try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $uid, $price, null, $volume); }
         catch(Throwable $rewardError){
             if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$uid}</code>\n🧾 سفارش: <code>{$rewardOrderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
         }
@@ -7221,6 +7229,8 @@ if($subLink != "") $acc_text .= "
             ]]);
         $msg = str_replace(['USER-ID', 'USERNAME', 'NAME', 'PRICE', 'REMARK', 'FILENAME'],
             [$uid, $user_name, $uname, $price, $remark,$filename], $mainValues['invite_buy_new_account']);
+        $rewardAdminLine = function_exists('v2raystore_rewardPaymentSummaryText') ? v2raystore_rewardPaymentSummaryText((string)($payInfo['hash_id'] ?? ($match[1] ?? '')), 'purchase', $rewardOrderId) : '';
+        if($rewardAdminLine !== '') $msg .= "\n" . $rewardAdminLine;
         sendMessage($msg,null,null,$admin);
     }
     
@@ -7347,7 +7357,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 'inbound_id'=>intval($inbound_id), 'uuid'=>$rewardLegacyUuid,
                 'remark'=>$rewardLegacyRemark, 'status'=>1
             ];
-            try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $uid, $price, $legacyRewardOrder); }
+            try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $uid, $price, $legacyRewardOrder, $volume); }
             catch(Throwable $rewardError){
                 if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$uid}</code>\n🔮 سرویس: <code>" . htmlspecialchars($rewardLegacyRemark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
             }
@@ -7579,6 +7589,9 @@ if($subLink != "") $acc_text .= "
                 [$serverTitle, 'کیف پول', $from_id, $username, $first_name, $price, $remark,$volume, $days], $mainValues['buy_new_account_request']);
         $msg = v2raystore_appendServerPlanToChannelReport($msg, $serverTitle, $file_detail['title'] ?? '');
     }
+    $rewardEventForAdmin = (($payInfo['type'] ?? '') === 'RENEW_SCONFIG') ? 'renew' : 'purchase';
+    $rewardAdminLine = function_exists('v2raystore_rewardPaymentSummaryText') ? v2raystore_rewardPaymentSummaryText((string)($payInfo['hash_id'] ?? ($match[1] ?? '')), $rewardEventForAdmin) : '';
+    if($rewardAdminLine !== '') $msg .= "\n" . $rewardAdminLine;
 
     sendMessage($msg,$keys,"html", $admin);
 }
