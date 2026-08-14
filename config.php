@@ -3998,6 +3998,41 @@ function v2raystore_rewardRandomInt($min, $max){
     catch(Throwable $e){ return mt_rand($min, $max); }
 }
 
+/**
+ * Current visible reward period. Old rows are intentionally retained for
+ * idempotency; a period reset only moves the visible log-id boundary.
+ */
+function v2raystore_rewardPeriodState(){
+    $raw = function_exists('v2raystore_getSettingValue') ? v2raystore_getSettingValue('PURCHASE_REWARD_PERIOD_STATE', '') : '';
+    $state = json_decode((string)$raw, true);
+    if(!is_array($state)) $state = [];
+    return [
+        'started_at' => max(0, intval($state['started_at'] ?? 0)),
+        'after_log_id' => max(0, intval($state['after_log_id'] ?? 0)),
+    ];
+}
+
+function v2raystore_rewardPeriodStartedAt(){
+    $state = v2raystore_rewardPeriodState();
+    return intval($state['started_at']);
+}
+
+function v2raystore_rewardPeriodAfterLogId(){
+    $state = v2raystore_rewardPeriodState();
+    return intval($state['after_log_id']);
+}
+
+function v2raystore_rewardStartNewPeriod(){
+    global $connection;
+    if(!function_exists('v2raystore_setSettingValue') || !v2raystore_ensurePurchaseRewardSchema()) return false;
+    $lastLogId = 0;
+    $res = @($connection->query("SELECT COALESCE(MAX(`id`),0) AS max_id FROM `purchase_reward_logs`"));
+    if($res && ($row = $res->fetch_assoc())) $lastLogId = max(0, intval($row['max_id'] ?? 0));
+    $state = ['started_at'=>time(), 'after_log_id'=>$lastLogId];
+    $ok = v2raystore_setSettingValue('PURCHASE_REWARD_PERIOD_STATE', json_encode($state, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    return $ok ? $state : false;
+}
+
 function v2raystore_rewardStats(){
     global $connection;
     v2raystore_ensurePurchaseRewardSchema();
@@ -4008,7 +4043,9 @@ function v2raystore_rewardStats(){
         $stats['special_remaining'] = intval($row['remaining_count'] ?? 0);
         $stats['special_active'] = intval($row['active_count'] ?? 0);
     }
-    $res = @($connection->query("SELECT COUNT(*) AS c, SUM(CASE WHEN `prize_type`='special' THEN 1 ELSE 0 END) AS special_c, SUM(CASE WHEN `prize_type`='normal' THEN 1 ELSE 0 END) AS normal_c FROM `purchase_reward_logs` WHERE `status`='awarded'"));
+    $periodAfterId = v2raystore_rewardPeriodAfterLogId();
+    $periodWhere = $periodAfterId > 0 ? " AND `id` > " . intval($periodAfterId) : '';
+    $res = @($connection->query("SELECT COUNT(*) AS c, SUM(CASE WHEN `prize_type`='special' THEN 1 ELSE 0 END) AS special_c, SUM(CASE WHEN `prize_type`='normal' THEN 1 ELSE 0 END) AS normal_c FROM `purchase_reward_logs` WHERE `status`='awarded'{$periodWhere}"));
     if($res && ($row = $res->fetch_assoc())){
         $stats['awarded_total'] = intval($row['c'] ?? 0);
         $stats['awarded_special'] = intval($row['special_c'] ?? 0);
@@ -4031,7 +4068,7 @@ function v2raystore_rewardSettingsText(){
         "🎁 جایزه عادی: <b>{$normal} گیگ</b>\n" .
         "🎲 شانس جایزه ویژه در هر خرید/تمدید: <b>" . intval($cfg['special_chance']) . "%</b>\n" .
         "⭐ موجودی جوایز ویژه فعال: <b>" . intval($stats['special_remaining']) . " عدد</b>\n" .
-        "🏆 کل جوایز پرداخت‌شده: <b>" . intval($stats['awarded_total']) . " عدد</b>\n\n" .
+        "🏆 جوایز ثبت‌شده در این دوره: <b>" . intval($stats['awarded_total']) . " عدد</b>\n\n" .
         "📌 اگر قرعه جایزه ویژه به کاربر نخورد، جایزه عادی به همان سرویس اضافه می‌شود. وقتی موجودی جوایز ویژه تمام شود نیز همه فقط جایزه عادی را دریافت می‌کنند.\n" .
         "⚠️ سرویس‌های نامحدود تغییر داده نمی‌شوند تا محدودیت حجمی ناخواسته برایشان ایجاد نشود.";
 }
@@ -4112,7 +4149,9 @@ function v2raystore_rewardPrizeDetailMenu($id){
     $row = v2raystore_rewardGetPrize($id);
     if(!$row) return null;
     $id = intval($row['id']);
-    $stmt = $connection->prepare("SELECT COUNT(*) AS c FROM `purchase_reward_logs` WHERE `prize_id`=? AND `status`='awarded'");
+    $periodAfterId = v2raystore_rewardPeriodAfterLogId();
+    $periodWhere = $periodAfterId > 0 ? " AND `id` > " . intval($periodAfterId) : '';
+    $stmt = $connection->prepare("SELECT COUNT(*) AS c FROM `purchase_reward_logs` WHERE `prize_id`=? AND `status`='awarded'{$periodWhere}");
     $given = 0;
     if($stmt){ $stmt->bind_param('i',$id); $stmt->execute(); $given=intval($stmt->get_result()->fetch_assoc()['c']??0); $stmt->close(); }
     $state = intval($row['active']) === 1 ? '🟢 فعال' : '⚫️ غیرفعال';
@@ -4121,7 +4160,7 @@ function v2raystore_rewardPrizeDetailMenu($id){
         "🎁 حجم: <b>{$gb} گیگ</b>\n" .
         "📦 تعداد اولیه: <b>" . intval($row['total_count']) . "</b>\n" .
         "⏳ موجودی فعلی: <b>" . intval($row['remaining_count']) . "</b>\n" .
-        "🏆 تعداد برنده ثبت‌شده: <b>{$given}</b>\n" .
+        "🏆 برنده ثبت‌شده در این دوره: <b>{$given}</b>\n" .
         "وضعیت: <b>{$state}</b>";
     $toggleText = intval($row['active']) === 1 ? '⏸ غیرفعال کردن' : '▶️ فعال کردن';
     $kb = json_encode(['inline_keyboard'=>[
@@ -4137,14 +4176,24 @@ function v2raystore_rewardWinnersPage($offset = 0){
     v2raystore_ensurePurchaseRewardSchema();
     $offset = max(0, intval($offset));
     $limit = 10;
-    $sql = "SELECT l.*, u.`name`, u.`username` FROM `purchase_reward_logs` l LEFT JOIN `users` u ON u.`userid`=l.`user_id` WHERE l.`status`='awarded' ORDER BY l.`id` DESC LIMIT {$offset}," . ($limit + 1);
+    $periodStart = v2raystore_rewardPeriodStartedAt();
+    $periodAfterId = v2raystore_rewardPeriodAfterLogId();
+    $periodWhere = $periodAfterId > 0 ? " AND l.`id` > " . intval($periodAfterId) : '';
+    $sql = "SELECT l.*, u.`name`, u.`username` FROM `purchase_reward_logs` l LEFT JOIN `users` u ON u.`userid`=l.`user_id` WHERE l.`status`='awarded'{$periodWhere} ORDER BY l.`id` DESC LIMIT {$offset}," . ($limit + 1);
     $res = @($connection->query($sql));
     $rows = [];
     if($res){ while($r=$res->fetch_assoc()) $rows[]=$r; }
     $hasMore = count($rows) > $limit;
     if($hasMore) array_pop($rows);
-    $text = "👥 <b>دریافت‌کنندگان جایزه</b>\n\n";
-    if(empty($rows)) $text .= "هنوز جایزه‌ای ثبت نشده است.";
+    $text = "👥 <b>دریافت‌کنندگان جایزه - دوره فعلی</b>\n";
+    if($periodStart > 0){
+        $periodDate = function_exists('jdate') ? jdate('Y/m/d H:i', $periodStart) : date('Y/m/d H:i', $periodStart);
+        $text .= "🗓 شروع دوره: <b>{$periodDate}</b>\n";
+    }else{
+        $text .= "🗓 شروع دوره: <b>از ابتدای ثبت جوایز</b>\n";
+    }
+    $text .= "\n";
+    if(empty($rows)) $text .= "هنوز در این دوره جایزه‌ای ثبت نشده است.";
     foreach($rows as $row){
         $uid = intval($row['user_id']);
         $name = trim((string)($row['name'] ?? ''));
@@ -4163,6 +4212,7 @@ function v2raystore_rewardWinnersPage($offset = 0){
     if($offset > 0) $nav[] = ['text'=>'« قبلی', 'callback_data'=>'rewardWinners_' . max(0, $offset-$limit)];
     if($hasMore) $nav[] = ['text'=>'بعدی »', 'callback_data'=>'rewardWinners_' . ($offset+$limit)];
     if($nav) $keys[] = $nav;
+    $keys[] = [['text'=>'🗑 پاک کردن لیست و شروع دوره جدید', 'callback_data'=>'rewardWinnersResetAsk']];
     $keys[] = [['text'=>'« بازگشت', 'callback_data'=>'rewardSettings']];
     return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
 }

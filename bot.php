@@ -2113,6 +2113,32 @@ if(preg_match('/^rewardWinners_(\d+)$/', (string)$data, $rewardWinnersMatch) && 
     editText($message_id, $page['text'], $page['keyboard'], 'HTML');
     exit();
 }
+if($data=="rewardWinnersResetAsk" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id,
+        "⚠️ <b>پاک کردن لیست دریافت‌کنندگان و شروع دوره جدید</b>\n\n" .
+        "با تأیید این گزینه، لیست و آمار برندگان دوره فعلی از صفر شروع می‌شود.\n" .
+        "✅ تنظیمات جایزه تغییر نمی‌کند.\n" .
+        "✅ موجودی جوایز ویژه تغییر نمی‌کند.\n" .
+        "✅ روشن/خاموش بودن جایزه تغییر نمی‌کند.\n\n" .
+        "برای جلوگیری از پرداخت تکراری، سوابق فنی تراکنش‌های قبلی در دیتابیس حفظ می‌شوند اما دیگر در لیست دوره جدید نمایش داده نمی‌شوند.",
+        json_encode(['inline_keyboard'=>[
+            [['text'=>'🗑 بله، پاک کن و دوره جدید بساز', 'callback_data'=>'rewardWinnersResetDo']],
+            [['text'=>'« انصراف', 'callback_data'=>'rewardWinners_0']],
+        ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        'HTML'
+    );
+    exit();
+}
+if($data=="rewardWinnersResetDo" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $startedAt = v2raystore_rewardStartNewPeriod();
+    if($startedAt === false){
+        alert('❌ شروع دوره جدید انجام نشد. دوباره تلاش کنید.');
+        exit();
+    }
+    $page = v2raystore_rewardWinnersPage(0);
+    editText($message_id, "✅ <b>دوره جدید جایزه شروع شد.</b>\n\nلیست دریافت‌کنندگان این دوره از صفر شروع شد. تنظیمات و موجودی جوایز ویژه تغییری نکرده است.\n\n" . $page['text'], $page['keyboard'], 'HTML');
+    exit();
+}
 
 if($data=="changeConfigRemarkType"){
     switch($botState['remark']){
