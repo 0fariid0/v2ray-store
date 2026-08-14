@@ -2288,7 +2288,7 @@ if(preg_match('/^removeAgent(\d+)/',$data,$match) && ($from_id == $admin || $use
     alert($mainValues['agent_deleted_successfuly']);
     $keys = getAgentsList();
     if($keys != null) editKeys($keys);
-    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]]]]));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>"adminUsersMenu"]]]]));
 }
 if(preg_match('/^agentPercentDetails(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
@@ -2807,7 +2807,7 @@ if($data=="editInviteAmount" && ($from_id == $admin || $userInfo['isAdmin'] == t
     sendMessage("لطفاً مبلغ پورسانت رو به تومان وارد کن",$cancelKey);
     setUser($data);
 } 
-if($userInfo['step'] == "editInviteAmount" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if($userInfo['step'] == "editInviteAmount" && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(is_numeric($text)){
         $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'INVITE_BANNER_AMOUNT'");
         $stmt->execute();
@@ -3062,7 +3062,7 @@ if(preg_match('/^decPayment(.*)/',$data,$match) && ($from_id == $admin || $userI
     sendMessage("لطفاً دلیل عدم تأیید افزایش موجودی را وارد کنید",$cancelKey);
     setUser("decPayment" . $message_id . "_" . $match[1]);
 }
-if(preg_match('/^decPayment(\d+)_(.*)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^decPayment(\d+)_(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
     $stmt->bind_param("s", $match[2]);
     $stmt->execute();
@@ -3287,7 +3287,7 @@ if($data=='createMultipleAccounts' && ($from_id == $admin || $userInfo['isAdmin'
         $flag = $cat['flag'];
         $keyboard[] = ['text' => "$flag $name", 'callback_data' => "createAccServer$id"];
     }
-    $keyboard[] = ['text'=>$buttonValues['back_to_main'],'callback_data'=>"managePanel"];
+    $keyboard[] = ['text'=>$buttonValues['back_to_main'],'callback_data'=>"adminConfigsMenu"];
     $keyboard = array_chunk($keyboard,1);
     editText($message_id, $mainValues['buy_sub_select_location'], json_encode(['inline_keyboard'=>$keyboard]));
     
@@ -5151,7 +5151,7 @@ if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin']
     setUser();
     if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
     $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText() : "🗑 پنل پاکسازی در دسترس نیست.";
-    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'managePanel']]]], JSON_UNESCAPED_UNICODE);
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'adminConfigsMenu']]]], JSON_UNESCAPED_UNICODE);
     editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
@@ -5159,7 +5159,7 @@ if($data == "cleanOldConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin']
 if(in_array($data ?? '', ["cleanOldConfigsPreview", "cleanOldConfigsRefreshPanel", "cleanOldConfigsQueueStatus"], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(function_exists('v2raystore_registerCleanOldUiMessage')) v2raystore_registerCleanOldUiMessage($from_id, $message_id);
     $txt = function_exists('v2raystore_buildCleanOldControlPanelText') ? v2raystore_buildCleanOldControlPanelText() : "🗑 وضعیت در دسترس نیست.";
-    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'managePanel']]]], JSON_UNESCAPED_UNICODE);
+    $keys = function_exists('v2raystore_cleanOldControlPanelKeyboard') ? v2raystore_cleanOldControlPanelKeyboard() : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'adminConfigsMenu']]]], JSON_UNESCAPED_UNICODE);
     editText($message_id, $txt, $keys, 'HTML');
     exit();
 }
@@ -5428,7 +5428,7 @@ if($data == "xuiMsgMenu" && ($from_id == $admin || $userInfo['isAdmin'] == true)
         [["text"=>"📛 لیست تمام‌شده‌ها (حجم/تاریخ)","callback_data"=>"xuiMsgExpired_0"]],
         [["text"=>"⏳ لیست نزدیک به اتمام","callback_data"=>"xuiMsgNear_0"]],
         [["text"=>"⚙️ تنظیم آستانه","callback_data"=>"xuiMsgSettings"]],
-        [["text"=>$buttonValues['back_button'],"callback_data"=>"managePanel"]],
+        [["text"=>$buttonValues['back_button'],"callback_data"=>"adminMessagesMenu"]],
     ]], JSON_UNESCAPED_UNICODE);
 
     editText($message_id, $txt, $keys);
@@ -8367,7 +8367,7 @@ if(preg_match('/^deleteDayPlan(\d+)/',$data,$match) and ($from_id == $admin || $
        editText($message_id, 'لیست پلن های زمانی خالی است ',json_encode([
                 'inline_keyboard' => [
                     [['text' => "افزودن پلن زمانی جدید", 'callback_data' =>"addNewDayPlan"]],
-                    [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]]
+                    [['text'=>$buttonValues['back_button'],'callback_data'=>"backplan"]]
                 ]
             ]));
         exit;
@@ -8383,7 +8383,7 @@ if(preg_match('/^deleteDayPlan(\d+)/',$data,$match) and ($from_id == $admin || $
         $keyboard[] = [['text'=>"❌",'callback_data'=>"deleteDayPlan" . $id],['text'=>$price,'callback_data'=>"changeDayPlanPrice" . $id],['text'=>$title,'callback_data'=>"changeDayPlanDay" . $id]];
     }
     $keyboard[] = [['text' => "افزودن پلن زمانی جدید", 'callback_data' =>"addNewDayPlan"]];
-    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "backplan"]];
     $msg = ' 📍 برای دیدن جزییات پلن زمانی روی آن بزنید👇';
     
     editText($message_id,$msg,json_encode([
@@ -8417,7 +8417,7 @@ if(preg_match('/^changeDayPlanPrice(\d+)/',$userInfo['step'],$match) and $text !
            sendMessage( 'لیست پلن های زمانی خالی است ',json_encode([
                     'inline_keyboard' => [
                         [['text' => "افزودن پلن زمانی جدید", 'callback_data' =>"addNewDayPlan"]],
-                        [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]]
+                        [['text'=>$buttonValues['back_button'],'callback_data'=>"backplan"]]
                     ]
                 ]));
             exit;
@@ -8433,7 +8433,7 @@ if(preg_match('/^changeDayPlanPrice(\d+)/',$userInfo['step'],$match) and $text !
             $keyboard[] = [['text'=>"❌",'callback_data'=>"deleteDayPlan" . $id],['text'=>$price,'callback_data'=>"changeDayPlanPrice" . $id],['text'=>$title,'callback_data'=>"changeDayPlanDay" . $id]];
         }
         $keyboard[] = [['text' => "افزودن پلن زمانی جدید", 'callback_data' =>"addNewDayPlan"]];
-        $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+        $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "backplan"]];
         $msg = ' 📍 برای دیدن جزییات پلن زمانی روی آن بزنید👇';
         
         sendMessage($msg,json_encode([
@@ -8469,7 +8469,7 @@ if(preg_match('/^changeDayPlanDay(\d+)/',$userInfo['step'],$match) && ($from_id 
        sendMessage( 'لیست پلن های زمانی خالی است ',json_encode([
                 'inline_keyboard' => [
                     [['text' => "افزودن پلن زمانی جدید", 'callback_data' =>"addNewDayPlan"]],
-                    [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]]
+                    [['text'=>$buttonValues['back_button'],'callback_data'=>"backplan"]]
                 ]
             ]));
         exit;
@@ -8485,7 +8485,7 @@ if(preg_match('/^changeDayPlanDay(\d+)/',$userInfo['step'],$match) && ($from_id 
         $keyboard[] = [['text'=>"❌",'callback_data'=>"deleteDayPlan" . $id],['text'=>$price,'callback_data'=>"changeDayPlanPrice" . $id],['text'=>$title,'callback_data'=>"changeDayPlanDay" . $id]];
     }
     $keyboard[] = [['text' => "افزودن پلن زمانی جدید", 'callback_data' =>"addNewDayPlan"]];
-    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "backplan"]];
     $msg = ' 📍 برای دیدن جزییات پلن زمانی روی آن بزنید👇';
     
     sendMessage($msg,json_encode([
@@ -8567,7 +8567,7 @@ if(preg_match('/^deleteVolumePlan(\d+)/',$data,$match) and ($from_id == $admin |
        editText($message_id, 'لیست پلن های حجمی خالی است ',json_encode([
                 'inline_keyboard' => [
                     [['text' => "افزودن پلن حجمی جدید", 'callback_data' =>"addNewVolumePlan"]],
-                    [['text' => $buttonValues['back_button'],'callback_data'=>"managePanel"]]
+                    [['text' => $buttonValues['back_button'],'callback_data'=>"backplan"]]
                     ]]));
         exit;
     }
@@ -8581,7 +8581,7 @@ if(preg_match('/^deleteVolumePlan(\d+)/',$data,$match) and ($from_id == $admin |
         $keyboard[] = [['text'=>"❌",'callback_data'=>"deleteVolumePlan" . $id],['text'=>$price,'callback_data'=>"changeVolumePlanPrice" . $id],['text'=>$title,'callback_data'=>"changeVolumePlanVolume" . $id]];
     }
     $keyboard[] = [['text' => "افزودن پلن حجمی جدید", 'callback_data' =>"addNewVolumePlan"]];
-    $keyboard[] = [['text' =>$buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keyboard[] = [['text' =>$buttonValues['back_button'], 'callback_data' => "backplan"]];
     $msg = ' 📍 برای دیدن جزییات پلن حجمی روی آن بزنید👇';
     
     $res = editText($message_id, $msg,json_encode([
@@ -8613,7 +8613,7 @@ if(preg_match('/^changeVolumePlanPrice(\d+)/',$userInfo['step'],$match) and $tex
            sendMessage( 'لیست پلن های حجمی خالی است ',json_encode([
                     'inline_keyboard' => [
                         [['text' => "افزودن پلن حجمی جدید", 'callback_data' =>"addNewVolumePlan"]],
-                        [['text' => $buttonValues['back_button'],'callback_data'=>"managePanel"]]
+                        [['text' => $buttonValues['back_button'],'callback_data'=>"backplan"]]
                         ]]));
             exit;
         }
@@ -8627,7 +8627,7 @@ if(preg_match('/^changeVolumePlanPrice(\d+)/',$userInfo['step'],$match) and $tex
             $keyboard[] = [['text'=>"❌",'callback_data'=>"deleteVolumePlan" . $id],['text'=>$price,'callback_data'=>"changeVolumePlanPrice" . $id],['text'=>$title,'callback_data'=>"changeVolumePlanVolume" . $id]];
         }
         $keyboard[] = [['text' => "افزودن پلن حجمی جدید", 'callback_data' =>"addNewVolumePlan"]];
-        $keyboard[] = [['text' =>$buttonValues['back_button'], 'callback_data' => "managePanel"]];
+        $keyboard[] = [['text' =>$buttonValues['back_button'], 'callback_data' => "backplan"]];
         $msg = ' 📍 برای دیدن جزییات پلن حجمی روی آن بزنید👇';
         
         $res = sendMessage($msg,json_encode([
@@ -8661,7 +8661,7 @@ if(preg_match('/^changeVolumePlanVolume(\d+)/',$userInfo['step'], $match) and $t
        sendMessage( 'لیست پلن های حجمی خالی است ',json_encode([
                 'inline_keyboard' => [
                     [['text' => "افزودن پلن حجمی جدید", 'callback_data' =>"addNewVolumePlan"]],
-                    [['text' => $buttonValues['back_button'],'callback_data'=>"managePanel"]]
+                    [['text' => $buttonValues['back_button'],'callback_data'=>"backplan"]]
                     ]]));
         exit;
     }
@@ -8675,7 +8675,7 @@ if(preg_match('/^changeVolumePlanVolume(\d+)/',$userInfo['step'], $match) and $t
         $keyboard[] = [['text'=>"❌",'callback_data'=>"deleteVolumePlan" . $id],['text'=>$price,'callback_data'=>"changeVolumePlanPrice" . $id],['text'=>$title,'callback_data'=>"changeVolumePlanVolume" . $id]];
     }
     $keyboard[] = [['text' => "افزودن پلن حجمی جدید", 'callback_data' =>"addNewVolumePlan"]];
-    $keyboard[] = [['text' =>$buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keyboard[] = [['text' =>$buttonValues['back_button'], 'callback_data' => "backplan"]];
     $msg = ' 📍 برای دیدن جزییات پلن حجمی روی آن بزنید👇';
     
     $res = sendMessage( $msg,json_encode([
@@ -8969,7 +8969,7 @@ if($data=="ticketsList" and ($from_id == $admin || $userInfo['isAdmin'] == true)
             ['text'=>"همه ی تیکت ها",'callback_data'=>"allTickets"],
             ['text'=>"دسته بندی تیکت ها",'callback_data'=>"ticketsCategory"]
             ],
-        [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]]
+        [['text' => $buttonValues['back_button'], 'callback_data' => "adminMessagesMenu"]]
         ]]);
     editText($message_id, "به بخش تیکت ها خوش اومدید، 
     
@@ -9338,7 +9338,7 @@ if($userInfo['step'] == "addNewMainButton" && $text != $buttonValues['cancel'] &
     sendMessage("لطفاً پاسخ دکمه را وارد کنید");
     setUser("setMainButtonAnswer" . $text);
 }
-if(preg_match('/^setMainButtonAnswer(.*)/',$userInfo['step'],$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^setMainButtonAnswer(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(!isset($update->message->text)){
         sendMessage("لطفاً فقط متن بفرستید");
         exit();
@@ -9840,7 +9840,7 @@ if(preg_match('/^releaseRejectedAgent(\d+)/',$data,$match) && ($from_id == $admi
     $keys = getRejectedAgentList();
     if($keys != null){
         editText($message_id,"لیست کاربران رد شده از نمایندگی",$keys);
-    }else editText($message_id,"کاربری یافت نشد",json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"managePanel"]]]]));
+    }else editText($message_id,"کاربری یافت نشد",json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'],'callback_data'=>"adminReportsMenu"]]]]));
 }
 if($data=="showUUIDLeft" && ($botState['searchState']=="on" || $from_id== $admin)){
     delMessage();
@@ -10797,7 +10797,7 @@ if($data == 'backplan' and ($from_id == $admin || $userInfo['isAdmin'] == true))
                     ];
     $keyboard[] = [['text'=>'➕ افزودن پلن حجمی','callback_data'=>"volumePlanSettings"],['text'=>'➕ افزودن پلن زمانی','callback_data'=>"dayPlanSettings"]];
     $keyboard[] = [['text' => "➕ افزودن پلن دلخواه", 'callback_data' => "editCustomPlan"]];
-    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminSalesMenu"]];
 
     $msg = ' ☑️ مدیریت پلن ها:';
     
@@ -13375,7 +13375,7 @@ if($data=="giftVolumeAndDay" && ($from_id == $admin || $userInfo['isAdmin'] == t
         $keyboard[] = ['text' => "$name", 'callback_data' => "giftToServer{$sid}"];
     }
     $keyboard = array_chunk($keyboard,2);
-    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminUsersMenu"]];
     editText($message_id, ' 📍 لطفاً برای هدیه دادن, یکی از سرورها را انتخاب کنید👇',json_encode([
             'inline_keyboard' => $keyboard
         ]));
@@ -15518,6 +15518,58 @@ if($data == 'reciveApplications') {
 ✅ پیشنهاد ما برنامه V2rayng است زیرا کار با آن ساده است و برای تمام سیستم عامل ها قابل اجرا است، میتوانید به بخش سیستم عامل مورد نظر مراجعه کنید و لینک دانلود را دریافت کنید
 ", json_encode(['inline_keyboard'=>$keyboard]));
 }
+// برگشت سراسری فرم‌های مدیریت: هر فرم به بخش والد خودش برمی‌گردد، نه منوی اصلی مدیریت/کاربر.
+if (($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || (!empty($userInfo) && ($userInfo['isAdmin'] ?? false) == true))){
+    $adminCancelStep = (string)($userInfo['step'] ?? '');
+    setUser();
+    setUser('', 'temp');
+
+    $adminCancelSection = 'Main';
+    $adminCancelSpecific = '';
+
+    if(preg_match('/^(manualAttachConfig|createAcc|cleanOldConfigs|inboundMove|addTestPlan|editTestPlan|resetOneTestAccount|setTestAccount|removeTestAccount|testAccount)/', $adminCancelStep)) $adminCancelSection = 'Configs';
+    elseif(preg_match('/^(setAutoApprove|addAutoApprove|removeAutoApprove|autoCancelOrder)/', $adminCancelStep)){ $adminCancelSection = 'Configs'; $adminCancelSpecific = 'autoApprove'; }
+    elseif(preg_match('/^(addNewDayPlan|changeDayPlan|addNewVolumePlan|changeVolumePlan|editCustom|v2raystoreplan|editDestName|editSpiderX|editServerNames|editFlow|editPFlow|addNewPlan|addNewRahgozarPlan|addNewMarzbanPlan)/', $adminCancelStep)){ $adminCancelSection = 'Sales'; $adminCancelSpecific = 'plans'; }
+    elseif(preg_match('/^(addserverName|addServer|changesServer|editServerPane|editInboundAddr|editServer)/', $adminCancelStep)) $adminCancelSection = 'Sales';
+    elseif(preg_match('/^(v2raystorecategoryedit)/', $adminCancelStep)) $adminCancelSection = 'Sales';
+    elseif(preg_match('/^(addDiscount|changeDiscount|editRewardChannel|editLockChannel)/', $adminCancelStep)) $adminCancelSection = 'Sales';
+    elseif(preg_match('/^reward/', $adminCancelStep)){ $adminCancelSection = 'Sales'; $adminCancelSpecific = 'reward'; }
+    elseif(preg_match('/^(increaseUserWallet|decreaseUserWallet|increaseWalletUser|decreaseWalletUser|banUser|unbanUser|giftServer)/', $adminCancelStep)) $adminCancelSection = 'Users';
+    elseif(preg_match('/^(addAgent|saveAgent|agent|setBuyersAccessCode|addJoinExemptUser|removeJoinExemptUser|addNewAdmin)/', $adminCancelStep)) $adminCancelSection = 'Users';
+    elseif(preg_match('/^(message2All|forwardToAll|broadcast|xuiMsg|editDiagAdminText|addTicketCategory|answer_|reply|sendMsg_)/', $adminCancelStep)) $adminCancelSection = 'Messages';
+    elseif(preg_match('/^(searchUsersConfig|messageToSpeceficUser|userReports|decPayment|setReport|setDailyChannelStatsTime)/', $adminCancelStep)){ $adminCancelSection = 'Reports'; if(strpos($adminCancelStep,'setReport')===0 || $adminCancelStep==='setDailyChannelStatsTime') $adminCancelSpecific='reports'; }
+    elseif(preg_match('/^(editStartWelcomeText|editPurchaseRulesText|editSwitch|editInvite|editRewardTime|setMainButton|addNewMainButton|adminHelp)/', $adminCancelStep)) $adminCancelSection = 'Settings';
+
+    $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
+    if($stmt){ $stmt->execute(); $stmt->close(); }
+
+    sendMessage($mainValues['waiting_message'], $removeKeyboard);
+
+    if($adminCancelSpecific === 'reward' && function_exists('v2raystore_rewardSettingsText') && function_exists('v2raystore_rewardSettingsKeyboard')){
+        sendMessage(v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
+    }elseif($adminCancelSpecific === 'autoApprove' && function_exists('v2raystore_getAutoApproveMenuText') && function_exists('v2raystore_getAutoApproveMenuKeys')){
+        sendMessage(v2raystore_getAutoApproveMenuText(), v2raystore_getAutoApproveMenuKeys(), 'HTML');
+    }elseif($adminCancelSpecific === 'reports' && function_exists('v2raystore_getReportSettingsMenuText') && function_exists('v2raystore_getReportSettingsMenuKeys')){
+        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    }elseif($adminCancelSpecific === 'plans'){
+        sendMessage('<b>🖥 سرورها، پلن‌ها و فروش</b>', getAdminSalesMenuKeys(), 'HTML');
+    }else{
+        $adminCancelMenus = [
+            'Reports' => ['📊 گزارش‌ها و جستجو', 'getAdminReportsMenuKeys'],
+            'Configs' => ['🧾 کانفیگ‌ها و سرویس‌ها', 'getAdminConfigsMenuKeys'],
+            'Sales' => ['🖥 سرورها، پلن‌ها و فروش', 'getAdminSalesMenuKeys'],
+            'Users' => ['👥 کاربران، نماینده‌ها و دسترسی‌ها', 'getAdminUsersMenuKeys'],
+            'Messages' => ['📨 پیام‌ها، پشتیبانی و محتوا', 'getAdminMessagesMenuKeys'],
+            'Settings' => ['⚙️ تنظیمات، ظاهر و آموزش‌ها', 'getAdminSettingsMenuKeys'],
+            'Main' => [$mainValues['reached_main_menu'] ?? 'مدیریت ربات', 'getAdminKeysPlus'],
+        ];
+        $adminCancelMenu = $adminCancelMenus[$adminCancelSection] ?? $adminCancelMenus['Main'];
+        $adminCancelKeysFn = $adminCancelMenu[1];
+        sendMessage('<b>' . $adminCancelMenu[0] . '</b>', function_exists($adminCancelKeysFn) ? $adminCancelKeysFn() : getAdminKeysPlus(), 'HTML');
+    }
+    exit();
+}
+
 if ($text == $buttonValues['cancel']) {
     setUser();
     $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
@@ -15782,7 +15834,7 @@ function farid_inboundMoveMenuKeys($page = 0){
         if($page < $maxPage) $nav[] = ['text'=>'بعدی ➡️', 'callback_data'=>'inboundMoveSourcesPage_' . ($page + 1)];
         $rows[] = $nav;
     }
-    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigsMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -15860,7 +15912,7 @@ function farid_inboundMoveTargetSelectKeys($mode, $serverId, $sourceInbound, $or
         $rows[] = [['text'=>'❌ inbound مقصدی غیر از مبدا پیدا نشد', 'callback_data'=>'v2raystore']];
     }
     $rows[] = [['text'=>'⬅️ برگشت به لیست همین مبدا', 'callback_data'=>'inboundMoveSrc_' . $serverId . '_' . $sourceInbound . '_0']];
-    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigsMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -15900,7 +15952,7 @@ function farid_inboundMoveSourceKeys($serverId, $sourceInbound, $page = 0){
         $rows[] = $nav;
     }
     $rows[] = [['text'=>'⬅️ برگشت به مبداها', 'callback_data'=>'inboundMoveMenu']];
-    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigsMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -15944,7 +15996,7 @@ function farid_inboundMoveProgressKeys($job){
     }else{
         $rows[] = [['text'=>'🔁 عملیات جدید', 'callback_data'=>'inboundMoveMenu']];
     }
-    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'managePanel']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigsMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 

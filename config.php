@@ -3354,7 +3354,7 @@ function farid_getBroadcastTargetKeyboard($mode = 'message'){
         [['text'=>'📆 ۳۰ روز بدون خرید', 'callback_data'=>$prefix.'no_purchase_30', 'style'=>'primary']],
         [['text'=>'🚪 خارج‌شده از کانال', 'callback_data'=>$prefix.'left_channel', 'style'=>'warning']],
         [['text'=>'⚠️ کانفیگ غیرفعال', 'callback_data'=>$prefix.'inactive_config', 'style'=>'warning']],
-        [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']],
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']],
     ]], JSON_UNESCAPED_UNICODE);
 }
 
@@ -3445,7 +3445,7 @@ function farid_getBroadcastStatusKeyboard($sendId = 0){
     }else{
         $rows[] = [['text'=>'🔄 بروزرسانی وضعیت', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary']];
     }
-    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']];
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -5101,7 +5101,7 @@ function v2raystore_getNewMemberAccessMenuKeys(){
             ['text'=>'🧹 حذف کد ورود', 'callback_data'=>'clearBuyersAccessCode', 'style'=>'danger'],
             ['text'=>'🚪 معافیت جوین اجباری کانال', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
         ],
-        [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'managePanel', 'style'=>'primary']]
+        [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'adminUsersMenu', 'style'=>'primary']]
     ]);
 }
 
@@ -6243,7 +6243,7 @@ function v2raystore_helpAdminHomeKeys(){
     return v2raystore_inlineKeyboardJson([
         [[ 'text'=>'❓ مدیریت سوالات متداول', 'callback_data'=>'adminHelpList_faq', 'style'=>'primary' ]],
         [[ 'text'=>'📚 مدیریت آموزش‌های اتصال', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
-        [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'managePanel', 'style'=>'primary' ]]
+        [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary' ]]
     ]);
 }
 
@@ -6699,7 +6699,7 @@ function v2raystore_getUserButtonSettingsKeys(){
         ['text'=>'✅ نمایش همه', 'callback_data'=>'setAllUserButtons_on', 'style'=>'success'],
         ['text'=>'❌ مخفی کردن همه', 'callback_data'=>'setAllUserButtons_off', 'style'=>'danger']
     ];
-    $keys[] = [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'managePanel', 'style'=>'primary']];
+    $keys[] = [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary']];
     return v2raystore_inlineKeyboardJson($keys);
 }
 
@@ -8325,7 +8325,7 @@ function v2raystore_cleanOldControlPanelKeyboard(){
         ['text'=>$autoTitle,'callback_data'=>'cleanOldConfigsToggleAuto','style'=>($auto === 'on' ? 'success' : 'danger')]
     ];
     $rows[] = [
-        ['text'=>'⬅️ مدیریت','callback_data'=>'managePanel','style'=>'primary']
+        ['text'=>'⬅️ مدیریت','callback_data'=>'adminConfigsMenu','style'=>'primary']
     ];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }}
@@ -10437,7 +10437,7 @@ function v2raystore_getTestAccountManageKeys(){
             ['text'=>'🧹 ریست استفاده تست برای همه', 'callback_data'=>'resetAllTestAccountsAsk', 'style'=>'danger']
         ],
         [
-            ['text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'mainMenu', 'style'=>'primary']
+            ['text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'adminConfigsMenu', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
@@ -10509,7 +10509,7 @@ function getRejectedAgentList(){
             
             $keys[] = [['text'=>"✅",'callback_data'=>"releaseRejectedAgent" . $userId],['text'=>$fullName,'callback_data'=>"v2raystore"],['text'=>$userId,'callback_data'=>"v2raystore"]];
         }
-        $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]];
+        $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminUsersMenu"]];
         return json_encode(['inline_keyboard'=>$keys]);
     }else return null;
 }
@@ -10598,7 +10598,7 @@ function getAgentsList($offset = 0){
     $keys = array();
     if($agentList->num_rows == 0 && $offset == 0){
         $keys[] = [['text'=>'➕ افزودن نماینده دستی', 'callback_data'=>'addAgentManual', 'style'=>'success']];
-        $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+        $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminUsersMenu"]];
         return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
     }
     
@@ -10630,7 +10630,7 @@ function getAgentsList($offset = 0){
             ['text'=>" «« صفحه قبلی ««",'callback_data'=>"nextAgentList" . ($offset - $limit)]
             ];
             
-    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminUsersMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function getAgentDiscounts($agentId){
@@ -10961,7 +10961,7 @@ function getServerListKeys($offset = 0){
         ['text'=>"➕ ثبت سرور مرزبان",'callback_data'=>"addNewMarzbanPanel"]
         ];
     $keys[] = [['text'=>'🛒 مدیریت فروش سرورها', 'callback_data'=>'serverSalesManagement']];
-    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminSalesMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function getCategoriesKeys($offset = 0){
@@ -11001,7 +11001,7 @@ function getCategoriesKeys($offset = 0){
     }
     
     $keys[] = [['text'=>'➕ افزودن دسته جدید','callback_data'=>"addNewCategory"]];
-    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminSalesMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function getGateWaysKeys(){
@@ -11120,7 +11120,7 @@ function getGateWaysKeys(){
             ['text'=>$lockChannel,'callback_data'=>'editLockChannel'],
             ['text'=>"کانال قفل",'callback_data'=>'v2raystore']
             ],
-        [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]]
+        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminSalesMenu"]]
         ]]);
 
 }
@@ -11320,7 +11320,7 @@ function getBotSettingKeys(){
             ['text'=>$rewaredTime,'callback_data'=>'editRewardTime'],
             ['text'=>"ارسال گزارش درآمد", 'callback_data'=>'v2raystore']
             ],
-        [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]]
+        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminSettingsMenu"]]
         ]]);
 
 }
@@ -11399,7 +11399,7 @@ function getBotReportKeys(){
             ['text'=>"درآمد ماه",'callback_data'=>'v2raystore']
         ],
         [
-            ['text'=>$buttonValues['back_button'] ?? "برگشت به مدیریت",'callback_data'=>'managePanel']
+            ['text'=>$buttonValues['back_button'] ?? "برگشت به مدیریت",'callback_data'=>'adminReportsMenu']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
@@ -11436,7 +11436,7 @@ function getAdminsKeys(){
         $keys[] = [['text'=>"لیست ادمین های فرعی خالی است ❕",'callback_data'=>"v2raystore"]];
     }
     $keys[] = [['text'=>"➕ افزودن ادمین",'callback_data'=>"addNewAdmin"]];
-    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]];
+    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminUsersMenu"]];
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 function getUserInfoKeys($userId){
@@ -11489,7 +11489,7 @@ function getUserInfoKeys($userId){
                 ['text'=>"موجودی کیف پول",'callback_data'=>"v2raystore"]
             ],
             [
-                ['text'=>$buttonValues['back_button'],'callback_data'=>"mainMenu"]
+                ['text'=>$buttonValues['back_button'],'callback_data'=>"adminReportsMenu"]
             ],
         ]], JSON_UNESCAPED_UNICODE);
     }else return null;
@@ -11520,7 +11520,7 @@ function getDiscountCodeKeys(){
     }
     
     $keys[] = [['text'=>"افزودن کد تخفیف",'callback_data'=>"addDiscountCode"]];
-    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]];
+    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminSalesMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function getMainMenuButtonsKeys(){
@@ -11545,7 +11545,7 @@ function getMainMenuButtonsKeys(){
         $keys[] = [['text'=>"دکمه ای یافت نشد ❕",'callback_data'=>"v2raystore"]];
     }
     $keys[] = [['text'=>"افزودن دکمه جدید ➕",'callback_data'=>"addNewMainButton"]];
-    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"managePanel"]];
+    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminSettingsMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 
@@ -12129,7 +12129,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
             $keyboard[] = [['text' => $buttonValues['change_config_location'] ?? '🌎 تغییر لوکیشن', 'callback_data' => "switchLocation{$id}", 'style'=>'primary']];
         }
     
-        $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "managePanel"]];
+        $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminReportsMenu"]];
         return ["keyboard"=>v2raystore_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }
@@ -18536,7 +18536,7 @@ function v2raystore_getReportSettingsMenuKeys(){
         if(count($pair) == 2){ $rows[] = $pair; $pair = []; }
     }
     if(count($pair) > 0) $rows[] = $pair;
-    $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'managePanel', 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'adminReportsMenu', 'style'=>'primary' ]];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -19226,7 +19226,7 @@ function v2raystore_getAutoApproveMenuKeys(){
             ['text'=>'🚀 بررسی و اجرای الان', 'callback_data'=>'runAutoApproveOrdersNow', 'style'=>'success']
         ],
         [
-            ['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel', 'style'=>'primary']
+            ['text'=>'⬅️ بازگشت', 'callback_data'=>'adminConfigsMenu', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
