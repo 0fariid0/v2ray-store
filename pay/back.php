@@ -315,6 +315,7 @@ if($payType == "BUY_SUB"){
     include_once '../phpqrcode/qrlib.php';
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
+    $v2raystoreRewardOrderIds = [];
 
     for($i =1; $i<= $accountCount; $i++){
         $uniqid = generateRandomString(42,$protocol); 
@@ -468,9 +469,20 @@ if($payType == "BUY_SUB"){
     	    VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?,1, ?, 0, ?, ?);");
         $stmt->bind_param("ssiiisssisiiii", $user_id, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $eachPrice, $date, $rahgozar, $agentBought);        
         $stmt->execute();
+        $v2raystoreRewardOrderIds[] = intval($connection->insert_id);
         $order = $stmt->get_result(); 
         $stmt->close();
         
+    }
+
+    if($amount > 0 && function_exists('v2raystore_rewardMaybeAward')){
+        $rewardPayHash = trim((string)($payParam['hash_id'] ?? ''));
+        foreach($v2raystoreRewardOrderIds as $rewardOrderId){
+            try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $user_id, $amount); }
+            catch(Throwable $rewardError){
+                if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$user_id}</code>\n🧾 سفارش: <code>{$rewardOrderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+            }
+        }
     }
 
     showForm('پرداخت شما با موفقیت انجام شد 🚀 | 😍 در حال ارسال کانفیگ به تلگرام شما ...',$payDescription, true);
@@ -602,6 +614,14 @@ elseif($payType == "RENEW_ACCOUNT"){
 	$stmt->close();
 	
     showForm("✅سرویس $remark با موفقیت تمدید شد",$payDescription, true);
+
+    if($amount > 0 && function_exists('v2raystore_rewardMaybeAward')){
+        $rewardPayHash = trim((string)($payParam['hash_id'] ?? ''));
+        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, $oid, $user_id, $amount); }
+        catch(Throwable $rewardError){
+            if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$user_id}</code>\n🧾 سفارش: <code>{$oid}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+        }
+    }
     
     $keys = json_encode(['inline_keyboard'=>[
         [
@@ -814,6 +834,8 @@ elseif($payType == "RENEW_SCONFIG"){
     $uuid = $configInfo['uuid'];
     $remark = $configInfo['remark'];
     $isMarzban = $configInfo['marzban'];
+    $rewardLegacyUuid = (string)($configInfo['uuid'] ?? '');
+    $rewardLegacyRemark = (string)($configInfo['remark'] ?? '');
     
     $uuid = $payParam['description'];
     $inbound_id = $payParam['volume']; 
@@ -836,6 +858,19 @@ elseif($payType == "RENEW_SCONFIG"){
 	$stmt->execute();
 	$stmt->close();
     sendMessage("✅سرویس $remark با موفقیت تمدید شد",null,null,$user_id);
+    if($amount > 0 && function_exists('v2raystore_rewardMaybeAward')){
+        $rewardPayHash = trim((string)($payParam['hash_id'] ?? ''));
+        if($rewardPayHash === '') $rewardPayHash = 'gateway:' . intval($rowId);
+        $legacyRewardOrder = [
+            'id'=>0, 'userid'=>intval($user_id), 'server_id'=>intval($server_id),
+            'inbound_id'=>intval($inbound_id), 'uuid'=>$rewardLegacyUuid,
+            'remark'=>$rewardLegacyRemark, 'status'=>1
+        ];
+        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $user_id, $amount, $legacyRewardOrder); }
+        catch(Throwable $rewardError){
+            if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$user_id}</code>\n🔮 سرویس: <code>" . htmlspecialchars($rewardLegacyRemark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+        }
+    }
 
 }
 sendMessage("پرداخت شما با موفقیت انجام شد",json_encode(['inline_keyboard'=>[[['text'=>"صفحه اصلی 🏘",'callback_data'=>"mainMenu"]]]]),null,$user_id);
