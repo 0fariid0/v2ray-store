@@ -119,6 +119,7 @@ while($payParam = $paysList->fetch_assoc()){
                     define('IMAGE_WIDTH',540);
                     define('IMAGE_HEIGHT',540);
                     sendMessage("پرداخت شما با تکسید آیدی $hash_id با موفقیت انجام شد 🚀 | 😍 در حال ارسال کانفیگ به تلگرام شما ...",null,null,$user_id);
+                    $v2raystoreRewardOrderIds = [];
 
                     for($i =1; $i<= $accountCount; $i++){
                         $uniqid = generateRandomString(42,$protocol); 
@@ -267,9 +268,21 @@ while($payParam = $paysList->fetch_assoc()){
                     	    VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?,1, ?, 0, ?, ?);");
                         $stmt->bind_param("ssiiisssisiiii", $user_id, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $eachPrice, $date, $rahgozar, $agentBought);        
                         $stmt->execute();
+                        $v2raystoreRewardOrderIds[] = intval($connection->insert_id);
                         $order = $stmt->get_result(); 
                         $stmt->close();
                         
+                    }
+
+                    if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
+                        $rewardPayHash = trim((string)($payParam['hash_id'] ?? ''));
+                        if($rewardPayHash === '') $rewardPayHash = 'tron:' . (string)$hash_id;
+                        foreach($v2raystoreRewardOrderIds as $rewardOrderId){
+                            try{ v2raystore_rewardMaybeAward('purchase', $rewardPayHash, $rewardOrderId, $user_id, $price); }
+                            catch(Throwable $rewardError){
+                                if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه خرید', "🆔 کاربر: <code>{$user_id}</code>\n🧾 سفارش: <code>{$rewardOrderId}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+                            }
+                        }
                     }
                 
                     
@@ -400,6 +413,15 @@ while($payParam = $paysList->fetch_assoc()){
                 	$stmt->close();
                 	
                     sendMessage("✅سرویس $remark با موفقیت تمدید شد",null,null,$user_id);
+
+                    if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
+                        $rewardPayHash = trim((string)($payParam['hash_id'] ?? ''));
+                        if($rewardPayHash === '') $rewardPayHash = 'tron:' . (string)$hash_id;
+                        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, $oid, $user_id, $price); }
+                        catch(Throwable $rewardError){
+                            if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$user_id}</code>\n🧾 سفارش: <code>{$oid}</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+                        }
+                    }
                     
                     $keys = json_encode(['inline_keyboard'=>[
                         [
@@ -610,6 +632,8 @@ while($payParam = $paysList->fetch_assoc()){
                     $uuid = $configInfo['uuid'];
                     $remark = $configInfo['remark'];
                     $isMarzban = $configInfo['marzban'];
+                    $rewardLegacyUuid = (string)($configInfo['uuid'] ?? '');
+                    $rewardLegacyRemark = (string)($configInfo['remark'] ?? '');
                     
                     $uuid = $payParam['description'];
                     $inbound_id = $payParam['volume']; 
@@ -640,6 +664,19 @@ while($payParam = $paysList->fetch_assoc()){
                 	$stmt->execute();
                 	$stmt->close();
                     sendMessage("تراکنش شما با تکسید آیدی $hash_id تأیید شد\n✅سرویس $remark با موفقیت تمدید شد",null,null,$user_id);
+                    if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
+                        $rewardPayHash = trim((string)($payParam['hash_id'] ?? ''));
+                        if($rewardPayHash === '') $rewardPayHash = 'tron:' . (string)$hash_id;
+                        $legacyRewardOrder = [
+                            'id'=>0, 'userid'=>intval($user_id), 'server_id'=>intval($server_id),
+                            'inbound_id'=>intval($inbound_id), 'uuid'=>$rewardLegacyUuid,
+                            'remark'=>$rewardLegacyRemark, 'status'=>1
+                        ];
+                        try{ v2raystore_rewardMaybeAward('renew', $rewardPayHash, 0, $user_id, $price, $legacyRewardOrder); }
+                        catch(Throwable $rewardError){
+                            if(function_exists('v2raystore_reportEvent')) v2raystore_reportEvent('⚠️ خطای داخلی جایزه تمدید', "🆔 کاربر: <code>{$user_id}</code>\n🔮 سرویس: <code>" . htmlspecialchars($rewardLegacyRemark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($rewardError->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'reward_failed');
+                        }
+                    }
                 
                 }
             }else{
