@@ -154,6 +154,18 @@ if(preg_match('/^agSendSet(\d+)_(\d+)_(default|both|config|sub)_(\d+)$/', $data 
     exit();
 }
 
+if(preg_match('/^serviceTutorial_(normal|sub)$/', $data ?? '', $match)){
+    $type = $match[1];
+    $item = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial($type) : null;
+    if(!is_array($item) || empty($item['enabled'])){
+        alert('این آموزش فعلاً غیرفعال است.', true);
+        exit();
+    }
+    $ok = function_exists('v2raystore_sendServiceTutorial') ? v2raystore_sendServiceTutorial($type, $from_id) : false;
+    if(isset($callback_query->id) || isset($callbackId)) alert($ok ? 'آموزش ارسال شد.' : 'ارسال آموزش انجام نشد.', !$ok);
+    exit();
+}
+
 if(preg_match('/^appTutorial_(v2rayng|v2rayn|streisand)$/', $data ?? '', $match)){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')){
         alert('دکمه‌های آموزش توسط مدیریت غیرفعال شده است.');
@@ -15392,6 +15404,47 @@ if(preg_match('/^help(Faq|Tut)Item_(\d+)$/', $data ?? '', $match)){
     exit();
 }
 
+if(preg_match('/^adminServiceTutorial_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_serviceTutorialAdminText($match[1]), v2raystore_serviceTutorialAdminKeys($match[1]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminServiceTutorialToggle_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $item = v2raystore_getServiceTutorial($match[1]);
+    v2raystore_saveServiceTutorial($match[1], ['enabled'=>empty($item['enabled'])]);
+    editText($message_id, v2raystore_serviceTutorialAdminText($match[1]), v2raystore_serviceTutorialAdminKeys($match[1]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminServiceTutorialEditText_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("📝 متن جدید " . v2raystore_serviceTutorialLabel($match[1]) . " را ارسال کنید.\n\nمتن قبلی با متن جدید جایگزین می‌شود.", $cancelKey, 'HTML');
+    setUser('adminServiceTutorialEditText_' . $match[1]);
+    exit();
+}
+if(preg_match('/^adminServiceTutorialUploadVideo_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("🎬 ویدیوی " . v2raystore_serviceTutorialLabel($match[1]) . " را همینجا برای ربات ارسال کنید.\n\nمی‌توانید ویدیو را به صورت Video یا فایل ویدیویی (Document) بفرستید.\nربات فایل را دانلود نمی‌کند و فقط file_id تلگرام را ذخیره می‌کند.", $cancelKey, 'HTML');
+    setUser('adminServiceTutorialUploadVideo_' . $match[1]);
+    exit();
+}
+if(preg_match('/^adminServiceTutorialDeleteVideo_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $type = $match[1];
+    $keys = json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ بله، حذف شود', 'callback_data'=>'adminServiceTutorialConfirmDeleteVideo_' . $type]],
+        [['text'=>'🔙 انصراف', 'callback_data'=>'adminServiceTutorial_' . $type]]
+    ]], JSON_UNESCAPED_UNICODE);
+    editText($message_id, "🗑 <b>حذف ویدیوی آموزش</b>\n\nفقط شناسه ویدیوی ذخیره‌شده پاک می‌شود و متن آموزش دست‌نخورده می‌ماند. مطمئن هستید؟", $keys, 'HTML');
+    exit();
+}
+if(preg_match('/^adminServiceTutorialConfirmDeleteVideo_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    v2raystore_saveServiceTutorial($match[1], ['video_file_id'=>'', 'video_media_type'=>'video']);
+    editText($message_id, v2raystore_serviceTutorialAdminText($match[1]), v2raystore_serviceTutorialAdminKeys($match[1]), 'HTML');
+    alert('ویدیوی آموزش حذف شد.');
+    exit();
+}
+if(preg_match('/^adminServiceTutorialPreview_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $ok = v2raystore_sendServiceTutorial($match[1], $from_id, true);
+    alert($ok ? 'پیش‌نمایش ارسال شد.' : 'ارسال پیش‌نمایش انجام نشد.', !$ok);
+    exit();
+}
+
 if($data == 'adminHelpMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, v2raystore_helpAdminHomeText(), v2raystore_helpAdminHomeKeys(), 'HTML');
     exit();
@@ -15444,6 +15497,49 @@ if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $data ?? '', $match)
     setUser('adminHelpEditText_' . $match[1] . '_' . intval($match[2]));
     exit();
 }
+if(preg_match('/^adminServiceTutorial(EditText|UploadVideo)_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $type = $stMatch[2];
+    setUser();
+    sendMessage($mainValues['waiting_message'], $removeKeyboard);
+    sendMessage(v2raystore_serviceTutorialAdminText($type), v2raystore_serviceTutorialAdminKeys($type), 'HTML');
+    exit();
+}
+if(preg_match('/^adminServiceTutorialEditText_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($text ?? '') !== ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $body = trim((string)($text ?? ''));
+    if($body === ''){
+        sendMessage('متن آموزش نمی‌تواند خالی باشد. دوباره متن را ارسال کنید.', $cancelKey, 'HTML');
+        exit();
+    }
+    v2raystore_saveServiceTutorial($stMatch[1], ['text'=>$body]);
+    setUser();
+    sendMessage('✅ متن آموزش ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_serviceTutorialAdminText($stMatch[1]), v2raystore_serviceTutorialAdminKeys($stMatch[1]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminServiceTutorialUploadVideo_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $videoId = '';
+    $mediaType = 'video';
+    if(isset($update->message->video->file_id)){
+        $videoId = trim((string)$update->message->video->file_id);
+        $mediaType = 'video';
+    }elseif(isset($update->message->document->file_id)){
+        $mime = strtolower(trim((string)($update->message->document->mime_type ?? '')));
+        if(strpos($mime, 'video/') === 0){
+            $videoId = trim((string)$update->message->document->file_id);
+            $mediaType = 'document';
+        }
+    }
+    if($videoId === ''){
+        sendMessage("⚠️ لطفاً یک ویدیو ارسال کنید. می‌توانید آن را به صورت <b>Video</b> یا فایل ویدیویی بفرستید.\n\nهیچ فایلی روی هاست ذخیره نمی‌شود.", $cancelKey, 'HTML');
+        exit();
+    }
+    v2raystore_saveServiceTutorial($stMatch[1], ['video_file_id'=>$videoId, 'video_media_type'=>$mediaType]);
+    setUser();
+    sendMessage('✅ ویدیو ثبت شد. فقط file_id تلگرام ذخیره شد و فضای هاست اشغال نشد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_serviceTutorialAdminText($stMatch[1]), v2raystore_serviceTutorialAdminKeys($stMatch[1]), 'HTML');
+    exit();
+}
+
 if(preg_match('/^adminHelpAddTitle_(faq|tutorial)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $title = trim((string)$text);
     if($title === ''){

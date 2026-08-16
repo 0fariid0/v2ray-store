@@ -192,12 +192,9 @@ function v2raystore_safeConfigNoteText($note){
 
 if(!function_exists('v2raystore_subConfigUsageGuide')){
 function v2raystore_subConfigUsageGuide(){
-    return "\n\n📚 <b>آموزش استفاده از لینک ساب</b>\n" .
-           "1) لینک ساب را کامل کپی کنید.\n" .
-           "2) داخل برنامه، بخش Subscription / اشتراک را باز کنید و لینک را اضافه کنید.\n" .
-           "3) بعد از اضافه کردن، حتماً گزینه Update subscription / بروزرسانی ساب را بزنید تا کانفیگ‌ها داخل برنامه نمایش داده شوند.\n" .
-           "4) هر وقت اتصال مشکل داشت، قبل از پیام به پشتیبانی یک بار همان ساب را داخل برنامه بروزرسانی کنید.\n" .
-           "5) اگر با V2rayN ویندوز استفاده می‌کنید، یک بار از داخل خود برنامه Check Update را هم بزنید و Core را بروزرسانی کنید.";
+    // راهنمای ساب دیگر به صورت خودکار زیر لینک چاپ نمی‌شود.
+    // آموزش ساب از بخش مستقل آموزش‌ها و فقط با درخواست کاربر ارسال می‌شود.
+    return '';
 }
 }
 
@@ -4595,17 +4592,158 @@ function v2raystore_botFeatureEnabled($key, $default = 'on'){
     return $value !== 'off';
 }
 
+/* ======================================================================
+   Separate service tutorials (normal config / subscription)
+   Video is NOT downloaded to the host. Only Telegram file_id is saved.
+   ====================================================================== */
+function v2raystore_serviceTutorialNormalizeType($type){
+    $type = strtolower(trim((string)$type));
+    return in_array($type, ['normal','sub'], true) ? $type : 'normal';
+}
+
+function v2raystore_serviceTutorialSettingKey($type){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    return $type === 'sub' ? 'SERVICE_TUTORIAL_SUB' : 'SERVICE_TUTORIAL_NORMAL';
+}
+
+function v2raystore_serviceTutorialDefaults($type){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    if($type === 'sub'){
+        return [
+            'enabled' => true,
+            'title' => 'آموزش استفاده از لینک ساب',
+            'text' => "1) لینک ساب را کامل کپی کنید.\n2) داخل برنامه، بخش Subscription / اشتراک را باز کنید و لینک را اضافه کنید.\n3) بعد از اضافه کردن، گزینه Update subscription / بروزرسانی ساب را بزنید.\n4) هر وقت اتصال مشکل داشت، اول ساب را یک بار بروزرسانی کنید.\n5) در V2rayN ویندوز بهتر است Core برنامه هم بروز باشد.",
+            'video_file_id' => '',
+            'video_media_type' => 'video',
+        ];
+    }
+    return [
+        'enabled' => true,
+        'title' => 'آموزش استفاده از کانفیگ عادی',
+        'text' => "لینک کانفیگ را کامل کپی کنید و از بخش Import / افزودن کانفیگ داخل برنامه وارد کنید. سپس کانفیگ اضافه‌شده را انتخاب و اتصال را فعال کنید.",
+        'video_file_id' => '',
+        'video_media_type' => 'video',
+    ];
+}
+
+function v2raystore_getServiceTutorial($type){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    $defaults = v2raystore_serviceTutorialDefaults($type);
+    $raw = function_exists('v2raystore_getSettingValue') ? v2raystore_getSettingValue(v2raystore_serviceTutorialSettingKey($type), '') : '';
+    $data = json_decode((string)$raw, true);
+    if(!is_array($data)) $data = [];
+    $out = array_merge($defaults, $data);
+    $out['enabled'] = !empty($out['enabled']);
+    $out['title'] = trim((string)($out['title'] ?? $defaults['title']));
+    if($out['title'] === '') $out['title'] = $defaults['title'];
+    $out['text'] = trim((string)($out['text'] ?? ''));
+    $out['video_file_id'] = trim((string)($out['video_file_id'] ?? ''));
+    $out['video_media_type'] = (($out['video_media_type'] ?? 'video') === 'document') ? 'document' : 'video';
+    return $out;
+}
+
+function v2raystore_saveServiceTutorial($type, $changes){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    $current = v2raystore_getServiceTutorial($type);
+    if(!is_array($changes)) $changes = [];
+    foreach(['enabled','title','text','video_file_id','video_media_type'] as $k){
+        if(array_key_exists($k, $changes)) $current[$k] = $changes[$k];
+    }
+    $current['enabled'] = !empty($current['enabled']);
+    $current['title'] = trim((string)$current['title']);
+    $current['text'] = trim((string)$current['text']);
+    $current['video_file_id'] = trim((string)$current['video_file_id']);
+    $current['video_media_type'] = (($current['video_media_type'] ?? 'video') === 'document') ? 'document' : 'video';
+    return v2raystore_setSettingValue(
+        v2raystore_serviceTutorialSettingKey($type),
+        json_encode($current, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+    );
+}
+
+function v2raystore_serviceTutorialLabel($type){
+    return v2raystore_serviceTutorialNormalizeType($type) === 'sub' ? 'آموزش لینک ساب' : 'آموزش کانفیگ عادی';
+}
+
+function v2raystore_serviceTutorialAdminText($type){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    $item = v2raystore_getServiceTutorial($type);
+    $label = v2raystore_serviceTutorialLabel($type);
+    $state = !empty($item['enabled']) ? '✅ فعال' : '🚫 غیرفعال';
+    $video = trim((string)$item['video_file_id']) !== '' ? '✅ ثبت شده' : '➖ ثبت نشده';
+    $body = trim((string)$item['text']);
+    if($body === '') $body = 'متنی ثبت نشده است.';
+    return "📚 <b>{$label}</b>\n\n" .
+           "وضعیت: {$state}\n" .
+           "🎬 ویدیو: {$video}\n\n" .
+           "📝 <b>متن فعلی:</b>\n" . htmlspecialchars($body, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') .
+           "\n\n💡 ویدیو روی هاست ذخیره نمی‌شود؛ فقط شناسه فایل تلگرام نگهداری می‌شود و همان فایل برای کاربران دوباره ارسال می‌شود.";
+}
+
+function v2raystore_serviceTutorialAdminKeys($type){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    $item = v2raystore_getServiceTutorial($type);
+    $rows = [
+        [[ 'text'=>(!empty($item['enabled']) ? '🚫 غیرفعال کردن' : '✅ فعال کردن'), 'callback_data'=>'adminServiceTutorialToggle_' . $type, 'style'=>(!empty($item['enabled']) ? 'danger' : 'success') ]],
+        [[ 'text'=>'📝 ویرایش متن آموزش', 'callback_data'=>'adminServiceTutorialEditText_' . $type, 'style'=>'primary' ]],
+        [[ 'text'=>(trim((string)$item['video_file_id']) !== '' ? '🎬 تعویض ویدیو' : '🎬 افزودن ویدیو'), 'callback_data'=>'adminServiceTutorialUploadVideo_' . $type, 'style'=>'primary' ]],
+    ];
+    if(trim((string)$item['video_file_id']) !== ''){
+        $rows[] = [[ 'text'=>'🗑 حذف ویدیو', 'callback_data'=>'adminServiceTutorialDeleteVideo_' . $type, 'style'=>'danger' ]];
+    }
+    $rows[] = [[ 'text'=>'👁 پیش‌نمایش برای خودم', 'callback_data'=>'adminServiceTutorialPreview_' . $type, 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'🔙 برگشت', 'callback_data'=>'adminHelpMenu', 'style'=>'primary' ]];
+    return v2raystore_inlineKeyboardJson($rows);
+}
+
+function v2raystore_serviceTutorialUserKeys(){
+    global $buttonValues;
+    return json_encode(['inline_keyboard'=>[
+        [[ 'text'=>$buttonValues['back_to_main'] ?? 'بازگشت به منو', 'callback_data'=>'mainMenu' ]]
+    ]], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_sendServiceTutorial($type, $chatId, $ignoreEnabled = false){
+    $type = v2raystore_serviceTutorialNormalizeType($type);
+    $chatId = intval($chatId);
+    if($chatId <= 0) return false;
+    $item = v2raystore_getServiceTutorial($type);
+    if(empty($item['enabled']) && !$ignoreEnabled) return false;
+
+    $videoId = trim((string)$item['video_file_id']);
+    if($videoId !== ''){
+        // Telegram file_id را مستقیم reuse می‌کنیم؛ هیچ دانلود/آپلودی روی هاست انجام نمی‌شود.
+        if(($item['video_media_type'] ?? 'video') === 'document'){
+            @bot('sendDocument', [
+                'chat_id' => $chatId,
+                'document' => $videoId,
+            ]);
+        }else{
+            @bot('sendVideo', [
+                'chat_id' => $chatId,
+                'video' => $videoId,
+                'supports_streaming' => true,
+            ]);
+        }
+    }
+
+    $title = htmlspecialchars((string)$item['title'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $body = trim((string)$item['text']);
+    $msg = "📚 <b>{$title}</b>";
+    if($body !== '') $msg .= "\n\n" . htmlspecialchars($body, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $res = sendMessage($msg, v2raystore_serviceTutorialUserKeys(), 'HTML', $chatId);
+    return function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+}
+
 function v2raystore_configHelpButtonRows(){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')) return [];
-    return [
-        [
-            ['text'=>'📲 آموزش V2rayNG', 'callback_data'=>'appTutorial_v2rayng'],
-            ['text'=>'💻 آموزش V2rayN', 'callback_data'=>'appTutorial_v2rayn']
-        ],
-        [
-            ['text'=>'🌀 آموزش Streisand', 'callback_data'=>'appTutorial_streisand']
-        ],
-    ];
+    $rows = [];
+    $buttons = [];
+    $normal = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('normal') : ['enabled'=>true];
+    $sub = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('sub') : ['enabled'=>true];
+    if(!empty($normal['enabled'])) $buttons[] = ['text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'serviceTutorial_normal'];
+    if(!empty($sub['enabled'])) $buttons[] = ['text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'serviceTutorial_sub'];
+    if(!empty($buttons)) $rows[] = $buttons;
+    return $rows;
 }
 
 function v2raystore_configSentKeyboard($extraRows = []){
@@ -6199,6 +6337,14 @@ function v2raystore_helpUserMenuKeys($type){
     $rows = [];
 
     if($cfg['type'] === 'tutorial'){
+        // آموزش‌های اصلی سرویس از آموزش برنامه‌ها جدا هستند و متن/ویدیوی مستقل دارند.
+        $normalTutorial = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('normal') : ['enabled'=>true];
+        $subTutorial = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('sub') : ['enabled'=>true];
+        $serviceTutorialButtons = [];
+        if(!empty($normalTutorial['enabled'])) $serviceTutorialButtons[] = ['text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'serviceTutorial_normal', 'style'=>'primary'];
+        if(!empty($subTutorial['enabled'])) $serviceTutorialButtons[] = ['text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'serviceTutorial_sub', 'style'=>'primary'];
+        if(!empty($serviceTutorialButtons)) $rows[] = $serviceTutorialButtons;
+
         $softwareLinks = v2raystore_helpSoftwareLinksByApp();
         $tutorialsByApp = [];
         $otherTutorials = [];
@@ -6267,14 +6413,16 @@ function v2raystore_helpUserItemKeys($type){
 }
 
 function v2raystore_helpAdminHomeText(){
-    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nاز این بخش می‌توانید سوالات متداول و آموزش‌های اتصال را بدون تغییر فایل، از داخل ربات مدیریت کنید.\n\n• سوالات متداول در منوی کاربر نمایش داده می‌شود.\n• آموزش‌ها داخل بخش راهنمای اتصال/لینک برنامه‌ها نمایش داده می‌شود.";
+    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nآموزش کانفیگ عادی و لینک ساب از هم جدا هستند و برای هرکدام می‌توانید متن و ویدیوی مستقل ثبت کنید.\n\n🎬 ویدیوها روی هاست ذخیره نمی‌شوند؛ فقط file_id تلگرام ذخیره می‌شود.";
 }
 
 function v2raystore_helpAdminHomeKeys(){
     global $buttonValues;
     return v2raystore_inlineKeyboardJson([
+        [[ 'text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'adminServiceTutorial_normal', 'style'=>'primary' ]],
+        [[ 'text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'adminServiceTutorial_sub', 'style'=>'primary' ]],
         [[ 'text'=>'❓ مدیریت سوالات متداول', 'callback_data'=>'adminHelpList_faq', 'style'=>'primary' ]],
-        [[ 'text'=>'📚 مدیریت آموزش‌های اتصال', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
+        [[ 'text'=>'📱 آموزش‌های برنامه‌ها', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
         [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary' ]]
     ]);
 }
