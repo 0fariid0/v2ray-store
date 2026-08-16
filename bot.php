@@ -156,13 +156,19 @@ if(preg_match('/^agSendSet(\d+)_(\d+)_(default|both|config|sub)_(\d+)$/', $data 
 
 if(preg_match('/^serviceTutorial_(normal|sub)$/', $data ?? '', $match)){
     $type = $match[1];
-    $item = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial($type) : null;
-    if(!is_array($item) || empty($item['enabled'])){
-        alert('این آموزش فعلاً غیرفعال است.', true);
-        exit();
-    }
-    $ok = function_exists('v2raystore_sendServiceTutorial') ? v2raystore_sendServiceTutorial($type, $from_id) : false;
-    if(isset($callback_query->id) || isset($callbackId)) alert($ok ? 'آموزش ارسال شد.' : 'ارسال آموزش انجام نشد.', !$ok);
+    $keys = function_exists('v2raystore_appTutorialChooserKeys') ? v2raystore_appTutorialChooserKeys($type, 'mainMenu') : null;
+    $msg = function_exists('v2raystore_appTutorialChooserText') ? v2raystore_appTutorialChooserText($type) : 'برنامه موردنظر را انتخاب کنید.';
+    sendMessage($msg, $keys, 'HTML', $from_id);
+    if(isset($callback_query->id) || isset($callbackId)) alert('برنامه را انتخاب کنید.');
+    exit();
+}
+if(($data ?? '') === 'tutorialNoop'){
+    alert('فعلاً آموزشی برای این بخش ثبت نشده است.', true);
+    exit();
+}
+if(preg_match('/^serviceAppTutorial_(normal|sub)_(\d+)$/', $data ?? '', $match)){
+    $ok = function_exists('v2raystore_sendAppTutorial') ? v2raystore_sendAppTutorial($match[2], $match[1], $from_id) : false;
+    if(isset($callback_query->id) || isset($callbackId)) alert($ok ? 'آموزش ارسال شد.' : 'این آموزش فعلاً در دسترس نیست.', !$ok);
     exit();
 }
 
@@ -15404,6 +15410,51 @@ if(preg_match('/^help(Faq|Tut)Item_(\d+)$/', $data ?? '', $match)){
     exit();
 }
 
+if(preg_match('/^adminAppTutorial_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_appTutorialAdminText($match[1], $match[2]), v2raystore_appTutorialAdminKeys($match[1], $match[2]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminAppTutorialToggle_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $info = v2raystore_getAppTutorialPart($match[1], $match[2]);
+    if(!$info){ alert('برنامه پیدا نشد.', true); exit(); }
+    v2raystore_updateAppTutorialPart($match[1], $match[2], ['enabled'=>empty($info['part']['enabled'])]);
+    editText($message_id, v2raystore_appTutorialAdminText($match[1], $match[2]), v2raystore_appTutorialAdminKeys($match[1], $match[2]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminAppTutorialEditText_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $info = v2raystore_getAppTutorialPart($match[1], $match[2]);
+    if(!$info){ alert('برنامه پیدا نشد.', true); exit(); }
+    sendMessage("📝 متن جدید <b>" . v2raystore_appTutorialTypeLabel($match[2]) . "</b> برای <b>" . v2raystore_h($info['app']['title']) . "</b> را ارسال کنید.", $cancelKey, 'HTML');
+    setUser('adminAppTutorialEditText_' . intval($match[1]) . '_' . $match[2]);
+    exit();
+}
+if(preg_match('/^adminAppTutorialUploadVideo_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $info = v2raystore_getAppTutorialPart($match[1], $match[2]);
+    if(!$info){ alert('برنامه پیدا نشد.', true); exit(); }
+    sendMessage("🎬 ویدیوی <b>" . v2raystore_appTutorialTypeLabel($match[2]) . "</b> برای <b>" . v2raystore_h($info['app']['title']) . "</b> را بفرستید.\n\nمی‌توانید Video یا فایل ویدیویی ارسال کنید. فایل روی هاست ذخیره نمی‌شود و فقط file_id تلگرام نگهداری می‌شود.", $cancelKey, 'HTML');
+    setUser('adminAppTutorialUploadVideo_' . intval($match[1]) . '_' . $match[2]);
+    exit();
+}
+if(preg_match('/^adminAppTutorialDeleteVideo_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $keys = json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ بله، حذف شود', 'callback_data'=>'adminAppTutorialConfirmDeleteVideo_' . intval($match[1]) . '_' . $match[2]]],
+        [['text'=>'🔙 انصراف', 'callback_data'=>'adminAppTutorial_' . intval($match[1]) . '_' . $match[2]]]
+    ]], JSON_UNESCAPED_UNICODE);
+    editText($message_id, "🗑 <b>حذف ویدیوی آموزش</b>\n\nفقط file_id این ویدیو پاک می‌شود و متن آموزش باقی می‌ماند. مطمئن هستید؟", $keys, 'HTML');
+    exit();
+}
+if(preg_match('/^adminAppTutorialConfirmDeleteVideo_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    v2raystore_updateAppTutorialPart($match[1], $match[2], ['video_file_id'=>'','video_media_type'=>'video']);
+    editText($message_id, v2raystore_appTutorialAdminText($match[1], $match[2]), v2raystore_appTutorialAdminKeys($match[1], $match[2]), 'HTML');
+    alert('ویدیوی این آموزش حذف شد.');
+    exit();
+}
+if(preg_match('/^adminAppTutorialPreview_(\d+)_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $ok = v2raystore_sendAppTutorial($match[1], $match[2], $from_id, true);
+    alert($ok ? 'پیش‌نمایش ارسال شد.' : 'ارسال پیش‌نمایش انجام نشد.', !$ok);
+    exit();
+}
+
 if(preg_match('/^adminServiceTutorial_(normal|sub)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, v2raystore_serviceTutorialAdminText($match[1]), v2raystore_serviceTutorialAdminKeys($match[1]), 'HTML');
     exit();
@@ -15478,11 +15529,16 @@ if(preg_match('/^adminHelpConfirmDelete_(faq|tutorial)_(\d+)$/', $data ?? '', $m
 }
 if(preg_match('/^adminHelpAdd_(faq|tutorial)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $cfg = v2raystore_helpTypeConfig($match[1]);
-    sendMessage("➕ لطفاً عنوان مورد جدید برای <b>" . v2raystore_h($cfg['title']) . "</b> را ارسال کنید.", $cancelKey, 'HTML');
+    if($match[1] === 'tutorial'){
+        sendMessage("➕ نام برنامه جدید را ارسال کنید.\n\nمثلاً: <b>Hiddify</b> یا <b>NekoBox</b>\nبعد از ساخت برنامه، آموزش عادی و ساب را جداگانه تنظیم می‌کنید.", $cancelKey, 'HTML');
+    }else{
+        sendMessage("➕ لطفاً عنوان مورد جدید برای <b>" . v2raystore_h($cfg['title']) . "</b> را ارسال کنید.", $cancelKey, 'HTML');
+    }
     setUser('adminHelpAddTitle_' . $match[1]);
     setUser('', 'temp');
     exit();
 }
+
 if(preg_match('/^adminHelpEditTitle_(faq|tutorial)_(\d+)$/', $data ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $item = v2raystore_helpFindItem($match[1], $match[2]);
     if(!$item){ alert('مورد پیدا نشد.', true); exit(); }
@@ -15497,6 +15553,50 @@ if(preg_match('/^adminHelpEditText_(faq|tutorial)_(\d+)$/', $data ?? '', $match)
     setUser('adminHelpEditText_' . $match[1] . '_' . intval($match[2]));
     exit();
 }
+if(preg_match('/^adminAppTutorial(EditText|UploadVideo)_(\d+)_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $appId = intval($stMatch[2]);
+    $tutorialType = $stMatch[3];
+    setUser();
+    sendMessage($mainValues['waiting_message'], $removeKeyboard);
+    sendMessage(v2raystore_appTutorialAdminText($appId, $tutorialType), v2raystore_appTutorialAdminKeys($appId, $tutorialType), 'HTML');
+    exit();
+}
+if(preg_match('/^adminAppTutorialEditText_(\d+)_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($text ?? '') !== ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $body = trim((string)($text ?? ''));
+    if($body === ''){
+        sendMessage('متن آموزش نمی‌تواند خالی باشد. دوباره ارسال کنید.', $cancelKey, 'HTML');
+        exit();
+    }
+    v2raystore_updateAppTutorialPart($stMatch[1], $stMatch[2], ['text'=>$body]);
+    setUser();
+    sendMessage('✅ متن این برنامه ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_appTutorialAdminText($stMatch[1], $stMatch[2]), v2raystore_appTutorialAdminKeys($stMatch[1], $stMatch[2]), 'HTML');
+    exit();
+}
+if(preg_match('/^adminAppTutorialUploadVideo_(\d+)_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $videoId = '';
+    $mediaType = 'video';
+    if(isset($update->message->video->file_id)){
+        $videoId = trim((string)$update->message->video->file_id);
+        $mediaType = 'video';
+    }elseif(isset($update->message->document->file_id)){
+        $mime = strtolower(trim((string)($update->message->document->mime_type ?? '')));
+        if(strpos($mime, 'video/') === 0){
+            $videoId = trim((string)$update->message->document->file_id);
+            $mediaType = 'document';
+        }
+    }
+    if($videoId === ''){
+        sendMessage("⚠️ لطفاً یک ویدیو بفرستید. Video یا فایل ویدیویی قابل قبول است.\n\nهیچ فایلی روی هاست ذخیره نمی‌شود.", $cancelKey, 'HTML');
+        exit();
+    }
+    v2raystore_updateAppTutorialPart($stMatch[1], $stMatch[2], ['video_file_id'=>$videoId,'video_media_type'=>$mediaType]);
+    setUser();
+    sendMessage('✅ ویدیوی این برنامه ثبت شد؛ فقط file_id تلگرام ذخیره شد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_appTutorialAdminText($stMatch[1], $stMatch[2]), v2raystore_appTutorialAdminKeys($stMatch[1], $stMatch[2]), 'HTML');
+    exit();
+}
+
 if(preg_match('/^adminServiceTutorial(EditText|UploadVideo)_(normal|sub)$/', $userInfo['step'] ?? '', $stMatch) && ($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $type = $stMatch[2];
     setUser();
@@ -15543,7 +15643,19 @@ if(preg_match('/^adminServiceTutorialUploadVideo_(normal|sub)$/', $userInfo['ste
 if(preg_match('/^adminHelpAddTitle_(faq|tutorial)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $title = trim((string)$text);
     if($title === ''){
-        sendMessage('عنوان نمی‌تواند خالی باشد. دوباره ارسال کنید.');
+        sendMessage(($match[1] === 'tutorial' ? 'نام برنامه' : 'عنوان') . ' نمی‌تواند خالی باشد. دوباره ارسال کنید.');
+        exit();
+    }
+    if($match[1] === 'tutorial'){
+        $newId = function_exists('v2raystore_helpAddTutorialApp') ? v2raystore_helpAddTutorialApp($title) : 0;
+        setUser();
+        setUser('', 'temp');
+        if($newId <= 0){
+            sendMessage('❌ ساخت برنامه انجام نشد. دوباره تلاش کنید.', $removeKeyboard, 'HTML');
+            exit();
+        }
+        sendMessage('✅ برنامه اضافه شد. حالا آموزش عادی و ساب آن را جدا تنظیم کنید.', $removeKeyboard, 'HTML');
+        sendMessage(v2raystore_helpAdminItemText('tutorial', $newId), v2raystore_helpAdminItemKeys('tutorial', $newId), 'HTML');
         exit();
     }
     setUser(function_exists('v2raystore_helpLimitText') ? v2raystore_helpLimitText($title, 120) : $title, 'temp');
@@ -15551,6 +15663,7 @@ if(preg_match('/^adminHelpAddTitle_(faq|tutorial)$/', $userInfo['step'] ?? '', $
     sendMessage("📝 حالا متن کامل این مورد را ارسال کنید.\n\nعنوان: <b>" . v2raystore_h($title) . "</b>", $cancelKey, 'HTML');
     exit();
 }
+
 if(preg_match('/^adminHelpAddText_(faq|tutorial)$/', $userInfo['step'] ?? '', $match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $title = trim((string)($userInfo['temp'] ?? ''));
     $body = trim((string)$text);
@@ -15636,7 +15749,7 @@ if (($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || 
     elseif(preg_match('/^(addAgent|saveAgent|agent|setBuyersAccessCode|addJoinExemptUser|removeJoinExemptUser|addNewAdmin)/', $adminCancelStep)) $adminCancelSection = 'Users';
     elseif(preg_match('/^(message2All|forwardToAll|broadcast|xuiMsg|editDiagAdminText|addTicketCategory|answer_|reply|sendMsg_)/', $adminCancelStep)) $adminCancelSection = 'Messages';
     elseif(preg_match('/^(searchUsersConfig|messageToSpeceficUser|userReports|decPayment|setReport|setDailyChannelStatsTime)/', $adminCancelStep)){ $adminCancelSection = 'Reports'; if(strpos($adminCancelStep,'setReport')===0 || $adminCancelStep==='setDailyChannelStatsTime') $adminCancelSpecific='reports'; }
-    elseif(preg_match('/^(editStartWelcomeText|editPurchaseRulesText|editSwitch|editInvite|editRewardTime|setMainButton|addNewMainButton|adminHelp)/', $adminCancelStep)) $adminCancelSection = 'Settings';
+    elseif(preg_match('/^(editStartWelcomeText|editPurchaseRulesText|editSwitch|editInvite|editRewardTime|setMainButton|addNewMainButton|adminHelp|adminAppTutorial)/', $adminCancelStep)) $adminCancelSection = 'Settings';
 
     $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
     if($stmt){ $stmt->execute(); $stmt->close(); }

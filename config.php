@@ -4736,14 +4736,18 @@ function v2raystore_sendServiceTutorial($type, $chatId, $ignoreEnabled = false){
 
 function v2raystore_configHelpButtonRows(){
     if(function_exists('v2raystore_botFeatureEnabled') && !v2raystore_botFeatureEnabled('configTutorialButtonsState', 'on')) return [];
-    $rows = [];
+    $hasNormal = false;
+    $hasSub = false;
+    foreach(v2raystore_helpGetItems('tutorial', false) as $app){
+        $normal = v2raystore_helpNormalizeTutorialPart($app['normal'] ?? null, 'normal', $app['body'] ?? '');
+        $sub = v2raystore_helpNormalizeTutorialPart($app['sub'] ?? null, 'sub', '');
+        if(!empty($normal['enabled'])) $hasNormal = true;
+        if(!empty($sub['enabled'])) $hasSub = true;
+    }
     $buttons = [];
-    $normal = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('normal') : ['enabled'=>true];
-    $sub = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('sub') : ['enabled'=>true];
-    if(!empty($normal['enabled'])) $buttons[] = ['text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'serviceTutorial_normal'];
-    if(!empty($sub['enabled'])) $buttons[] = ['text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'serviceTutorial_sub'];
-    if(!empty($buttons)) $rows[] = $buttons;
-    return $rows;
+    if($hasNormal) $buttons[] = ['text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'serviceTutorial_normal'];
+    if($hasSub) $buttons[] = ['text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'serviceTutorial_sub'];
+    return !empty($buttons) ? [$buttons] : [];
 }
 
 function v2raystore_configSentKeyboard($extraRows = []){
@@ -6180,6 +6184,30 @@ https://apps.apple.com/us/app/streisand/id6450534064
     ];
 }
 
+function v2raystore_helpTutorialPartDefaults($tutorialType, $legacyBody = ''){
+    $tutorialType = v2raystore_serviceTutorialNormalizeType($tutorialType);
+    $legacyBody = trim((string)$legacyBody);
+    $global = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial($tutorialType) : [];
+    $fallbackText = $legacyBody !== '' ? $legacyBody : trim((string)($global['text'] ?? ''));
+    return [
+        'enabled' => true,
+        'text' => $fallbackText,
+        'video_file_id' => '',
+        'video_media_type' => 'video',
+    ];
+}
+
+function v2raystore_helpNormalizeTutorialPart($part, $tutorialType, $legacyBody = ''){
+    $defaults = v2raystore_helpTutorialPartDefaults($tutorialType, $legacyBody);
+    if(!is_array($part)) $part = [];
+    $out = array_merge($defaults, $part);
+    $out['enabled'] = !isset($part['enabled']) ? !empty($defaults['enabled']) : !empty($part['enabled']);
+    $out['text'] = v2raystore_helpLimitText(trim((string)($out['text'] ?? '')), 3900);
+    $out['video_file_id'] = trim((string)($out['video_file_id'] ?? ''));
+    $out['video_media_type'] = (($out['video_media_type'] ?? 'video') === 'document') ? 'document' : 'video';
+    return $out;
+}
+
 function v2raystore_helpSanitizeItems($items, $type = 'faq', $useDefaultWhenEmpty = true){
     if(!is_array($items)) $items = [];
     $out = [];
@@ -6194,7 +6222,8 @@ function v2raystore_helpSanitizeItems($items, $type = 'faq', $useDefaultWhenEmpt
         while(isset($used[$id])) $id++;
         $title = trim((string)($row['title'] ?? ''));
         $body = trim((string)($row['body'] ?? ''));
-        if($title === '' || $body === '') continue;
+        if($title === '') continue;
+        if($type !== 'tutorial' && $body === '') continue;
         $clean = [
             'id' => $id,
             'title' => v2raystore_helpLimitText($title, 120),
@@ -6204,11 +6233,16 @@ function v2raystore_helpSanitizeItems($items, $type = 'faq', $useDefaultWhenEmpt
         if($type === 'tutorial'){
             $detectedApp = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($row) : '';
             if($detectedApp !== '') $clean['app'] = $detectedApp;
+            // مهاجرت خودکار آموزش‌های قدیمی: متن قبلی برنامه به عنوان آموزش عادی حفظ می‌شود.
+            // برای آموزش ساب نیز تا زمان ویرایش اختصاصی، متن عمومی قبلی به عنوان مقدار اولیه استفاده می‌شود.
+            $clean['normal'] = v2raystore_helpNormalizeTutorialPart($row['normal'] ?? null, 'normal', $body);
+            $clean['sub'] = v2raystore_helpNormalizeTutorialPart($row['sub'] ?? null, 'sub', '');
+            if($clean['body'] === '') $clean['body'] = $clean['normal']['text']; // سازگاری با پیام‌ها/کدهای قدیمی
         }
         $out[] = $clean;
         $used[$id] = true;
     }
-    if(count($out) === 0 && $useDefaultWhenEmpty) $out = v2raystore_helpDefaultItems($type);
+    if(count($out) === 0 && $useDefaultWhenEmpty) $out = v2raystore_helpSanitizeItems(v2raystore_helpDefaultItems($type), $type, false);
     return $out;
 }
 
@@ -6256,7 +6290,10 @@ function v2raystore_helpUpdateItem($type, $id, $fields){
     foreach($items as &$row){
         if(intval($row['id']) === intval($id)){
             foreach((array)$fields as $k => $v){
-                if($k === 'title') $row['title'] = v2raystore_helpLimitText($v, 120);
+                if($k === 'title'){
+                    $row['title'] = v2raystore_helpLimitText($v, 120);
+                    if($type === 'tutorial') unset($row['app']); // نام جدید دوباره برای لینک دانلود/پلتفرم تشخیص داده شود
+                }
                 elseif($k === 'body') $row['body'] = v2raystore_helpLimitText($v, 3900);
                 elseif($k === 'enabled') $row['enabled'] = !empty($v);
             }
@@ -6277,8 +6314,155 @@ function v2raystore_helpDeleteItem($type, $id){
 
 function v2raystore_helpAddItem($type, $title, $body){
     $items = v2raystore_helpGetItems($type, true);
-    $items[] = ['id'=>v2raystore_helpNextItemId($items), 'title'=>$title, 'body'=>$body, 'enabled'=>true];
+    $id = v2raystore_helpNextItemId($items);
+    $row = ['id'=>$id, 'title'=>$title, 'body'=>$body, 'enabled'=>true];
+    if($type === 'tutorial'){
+        $row['normal'] = ['enabled'=>false,'text'=>'','video_file_id'=>'','video_media_type'=>'video'];
+        $row['sub'] = ['enabled'=>false,'text'=>'','video_file_id'=>'','video_media_type'=>'video'];
+    }
+    $items[] = $row;
     return v2raystore_helpSaveItems($type, $items);
+}
+
+function v2raystore_helpAddTutorialApp($title){
+    $items = v2raystore_helpGetItems('tutorial', true);
+    $id = v2raystore_helpNextItemId($items);
+    $items[] = [
+        'id'=>$id,
+        'title'=>v2raystore_helpLimitText(trim((string)$title), 120),
+        'body'=>'',
+        'enabled'=>true,
+        'normal'=>['enabled'=>false,'text'=>'','video_file_id'=>'','video_media_type'=>'video'],
+        'sub'=>['enabled'=>false,'text'=>'','video_file_id'=>'','video_media_type'=>'video'],
+    ];
+    return v2raystore_helpSaveItems('tutorial', $items) ? $id : 0;
+}
+
+function v2raystore_getAppTutorialPart($appId, $tutorialType){
+    $tutorialType = v2raystore_serviceTutorialNormalizeType($tutorialType);
+    $row = v2raystore_helpFindItem('tutorial', $appId);
+    if(!$row) return null;
+    $part = v2raystore_helpNormalizeTutorialPart($row[$tutorialType] ?? null, $tutorialType, $tutorialType === 'normal' ? ($row['body'] ?? '') : '');
+    return ['app'=>$row, 'part'=>$part, 'type'=>$tutorialType];
+}
+
+function v2raystore_updateAppTutorialPart($appId, $tutorialType, $changes){
+    $tutorialType = v2raystore_serviceTutorialNormalizeType($tutorialType);
+    $items = v2raystore_helpGetItems('tutorial', true);
+    $found = false;
+    foreach($items as &$row){
+        if(intval($row['id'] ?? 0) !== intval($appId)) continue;
+        $current = v2raystore_helpNormalizeTutorialPart($row[$tutorialType] ?? null, $tutorialType, $tutorialType === 'normal' ? ($row['body'] ?? '') : '');
+        foreach((array)$changes as $key=>$value){
+            if($key === 'enabled') $current['enabled'] = !empty($value);
+            elseif($key === 'text') $current['text'] = v2raystore_helpLimitText(trim((string)$value), 3900);
+            elseif($key === 'video_file_id') $current['video_file_id'] = trim((string)$value);
+            elseif($key === 'video_media_type') $current['video_media_type'] = ($value === 'document') ? 'document' : 'video';
+        }
+        $row[$tutorialType] = $current;
+        if($tutorialType === 'normal') $row['body'] = $current['text']; // سازگاری با نسخه‌های قدیمی
+        $found = true;
+        break;
+    }
+    unset($row);
+    return $found ? v2raystore_helpSaveItems('tutorial', $items) : false;
+}
+
+function v2raystore_appTutorialTypeLabel($tutorialType){
+    return v2raystore_serviceTutorialNormalizeType($tutorialType) === 'sub' ? 'آموزش لینک ساب' : 'آموزش کانفیگ عادی';
+}
+
+function v2raystore_appTutorialChooserText($tutorialType){
+    $label = v2raystore_appTutorialTypeLabel($tutorialType);
+    return "📚 <b>{$label}</b>\n\nبرنامه‌ای که استفاده می‌کنید را انتخاب کنید:";
+}
+
+function v2raystore_appTutorialChooserKeys($tutorialType, $backCallback = 'mainMenu'){
+    $tutorialType = v2raystore_serviceTutorialNormalizeType($tutorialType);
+    $rows = [];
+    foreach(v2raystore_helpGetItems('tutorial', false) as $app){
+        $part = v2raystore_helpNormalizeTutorialPart($app[$tutorialType] ?? null, $tutorialType, $tutorialType === 'normal' ? ($app['body'] ?? '') : '');
+        if(empty($part['enabled'])) continue;
+        $rows[] = [[
+            'text'=>'📱 ' . v2raystore_helpLimitText(trim((string)$app['title']), 42),
+            'callback_data'=>'serviceAppTutorial_' . $tutorialType . '_' . intval($app['id']),
+            'style'=>'primary'
+        ]];
+    }
+    if(count($rows) === 0){
+        $rows[] = [[ 'text'=>'➖ آموزشی برای این حالت ثبت نشده', 'callback_data'=>'tutorialNoop' ]];
+    }
+    $rows[] = [[ 'text'=>'🔙 برگشت', 'callback_data'=>$backCallback, 'style'=>'primary' ]];
+    return v2raystore_inlineKeyboardJson($rows);
+}
+
+function v2raystore_appTutorialUserBackKeys($tutorialType){
+    $tutorialType = v2raystore_serviceTutorialNormalizeType($tutorialType);
+    return v2raystore_inlineKeyboardJson([
+        [[ 'text'=>'🔙 انتخاب برنامه دیگر', 'callback_data'=>'serviceTutorial_' . $tutorialType, 'style'=>'primary' ]],
+        [[ 'text'=>'🏠 منوی اصلی', 'callback_data'=>'mainMenu', 'style'=>'primary' ]]
+    ]);
+}
+
+function v2raystore_sendAppTutorial($appId, $tutorialType, $chatId, $ignoreEnabled = false){
+    $data = v2raystore_getAppTutorialPart($appId, $tutorialType);
+    $chatId = intval($chatId);
+    if(!$data || $chatId <= 0) return false;
+    $app = $data['app'];
+    $part = $data['part'];
+    if((empty($app['enabled']) || empty($part['enabled'])) && !$ignoreEnabled) return false;
+
+    $videoId = trim((string)($part['video_file_id'] ?? ''));
+    if($videoId !== ''){
+        // فقط file_id تلگرام استفاده می‌شود؛ هیچ فایل ویدیویی روی هاست ذخیره نمی‌شود.
+        if(($part['video_media_type'] ?? 'video') === 'document'){
+            @bot('sendDocument', ['chat_id'=>$chatId, 'document'=>$videoId]);
+        }else{
+            @bot('sendVideo', ['chat_id'=>$chatId, 'video'=>$videoId, 'supports_streaming'=>true]);
+        }
+    }
+
+    $appTitle = v2raystore_h((string)($app['title'] ?? 'برنامه'));
+    $typeLabel = v2raystore_h(v2raystore_appTutorialTypeLabel($tutorialType));
+    $text = trim((string)($part['text'] ?? ''));
+    $msg = "📚 <b>{$typeLabel} - {$appTitle}</b>";
+    if($text !== '') $msg .= "\n\n" . v2raystore_h($text);
+    else $msg .= "\n\nمتنی برای این آموزش ثبت نشده است.";
+    $res = sendMessage($msg, v2raystore_appTutorialUserBackKeys($tutorialType), 'HTML', $chatId);
+    return function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+}
+
+function v2raystore_appTutorialAdminText($appId, $tutorialType){
+    $data = v2raystore_getAppTutorialPart($appId, $tutorialType);
+    if(!$data) return 'برنامه پیدا نشد.';
+    $app = $data['app'];
+    $part = $data['part'];
+    $state = !empty($part['enabled']) ? '✅ فعال' : '🚫 غیرفعال';
+    $video = trim((string)($part['video_file_id'] ?? '')) !== '' ? '✅ ثبت شده' : '➖ ثبت نشده';
+    $text = trim((string)($part['text'] ?? ''));
+    if($text === '') $text = 'متنی ثبت نشده است.';
+    return "📱 <b>" . v2raystore_h($app['title']) . "</b>\n" .
+           "📚 <b>" . v2raystore_h(v2raystore_appTutorialTypeLabel($tutorialType)) . "</b>\n\n" .
+           "وضعیت: {$state}\n🎬 ویدیو: {$video}\n\n📝 <b>متن فعلی:</b>\n" . v2raystore_h($text) .
+           "\n\n💡 ویدیو روی هاست ذخیره نمی‌شود و فقط file_id تلگرام نگهداری می‌شود.";
+}
+
+function v2raystore_appTutorialAdminKeys($appId, $tutorialType){
+    $tutorialType = v2raystore_serviceTutorialNormalizeType($tutorialType);
+    $data = v2raystore_getAppTutorialPart($appId, $tutorialType);
+    if(!$data) return v2raystore_inlineKeyboardJson([[[ 'text'=>'🔙 برگشت', 'callback_data'=>'adminHelpList_tutorial' ]]]);
+    $part = $data['part'];
+    $rows = [
+        [[ 'text'=>(!empty($part['enabled']) ? '🚫 غیرفعال کردن' : '✅ فعال کردن'), 'callback_data'=>'adminAppTutorialToggle_' . intval($appId) . '_' . $tutorialType, 'style'=>(!empty($part['enabled']) ? 'danger' : 'success') ]],
+        [[ 'text'=>'📝 ویرایش متن', 'callback_data'=>'adminAppTutorialEditText_' . intval($appId) . '_' . $tutorialType, 'style'=>'primary' ]],
+        [[ 'text'=>(trim((string)($part['video_file_id'] ?? '')) !== '' ? '🎬 تعویض ویدیو' : '🎬 افزودن ویدیو'), 'callback_data'=>'adminAppTutorialUploadVideo_' . intval($appId) . '_' . $tutorialType, 'style'=>'primary' ]],
+    ];
+    if(trim((string)($part['video_file_id'] ?? '')) !== ''){
+        $rows[] = [[ 'text'=>'🗑 حذف ویدیو', 'callback_data'=>'adminAppTutorialDeleteVideo_' . intval($appId) . '_' . $tutorialType, 'style'=>'danger' ]];
+    }
+    $rows[] = [[ 'text'=>'👁 پیش‌نمایش برای خودم', 'callback_data'=>'adminAppTutorialPreview_' . intval($appId) . '_' . $tutorialType, 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'🔙 برگشت به برنامه', 'callback_data'=>'adminHelpItem_tutorial_' . intval($appId), 'style'=>'primary' ]];
+    return v2raystore_inlineKeyboardJson($rows);
 }
 
 function v2raystore_helpUserMenuText($type){
@@ -6287,11 +6471,10 @@ function v2raystore_helpUserMenuText($type){
     $msg = $cfg['icon'] . " <b>" . v2raystore_h($cfg['title']) . "</b>\n\n";
     if(count($items) === 0){
         $msg .= "فعلاً موردی توسط مدیریت ثبت نشده است.";
+    }elseif($cfg['type'] === 'tutorial'){
+        $msg .= "برنامه موردنظرتان را انتخاب کنید، سپس آموزش کانفیگ عادی یا لینک ساب را بزنید.";
     }else{
         $msg .= "لطفاً یکی از موارد زیر را انتخاب کنید:";
-    }
-    if($cfg['type'] === 'tutorial'){
-        $msg .= "\n\n📌 لینک‌های دانلود برنامه‌ها هم پایین همین بخش نمایش داده می‌شوند.";
     }
     return $msg;
 }
@@ -6337,51 +6520,19 @@ function v2raystore_helpUserMenuKeys($type){
     $rows = [];
 
     if($cfg['type'] === 'tutorial'){
-        // آموزش‌های اصلی سرویس از آموزش برنامه‌ها جدا هستند و متن/ویدیوی مستقل دارند.
-        $normalTutorial = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('normal') : ['enabled'=>true];
-        $subTutorial = function_exists('v2raystore_getServiceTutorial') ? v2raystore_getServiceTutorial('sub') : ['enabled'=>true];
-        $serviceTutorialButtons = [];
-        if(!empty($normalTutorial['enabled'])) $serviceTutorialButtons[] = ['text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'serviceTutorial_normal', 'style'=>'primary'];
-        if(!empty($subTutorial['enabled'])) $serviceTutorialButtons[] = ['text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'serviceTutorial_sub', 'style'=>'primary'];
-        if(!empty($serviceTutorialButtons)) $rows[] = $serviceTutorialButtons;
-
         $softwareLinks = v2raystore_helpSoftwareLinksByApp();
-        $tutorialsByApp = [];
-        $otherTutorials = [];
+        foreach(v2raystore_helpGetItems('tutorial', false) as $app){
+            $normal = v2raystore_helpNormalizeTutorialPart($app['normal'] ?? null, 'normal', $app['body'] ?? '');
+            $sub = v2raystore_helpNormalizeTutorialPart($app['sub'] ?? null, 'sub', '');
+            $buttons = [];
+            if(!empty($normal['enabled'])) $buttons[] = ['text'=>'📚 عادی - ' . v2raystore_helpLimitText($app['title'], 32), 'callback_data'=>'serviceAppTutorial_normal_' . intval($app['id']), 'style'=>'primary'];
+            if(!empty($sub['enabled'])) $buttons[] = ['text'=>'🔗 ساب - ' . v2raystore_helpLimitText($app['title'], 32), 'callback_data'=>'serviceAppTutorial_sub_' . intval($app['id']), 'style'=>'primary'];
+            if(!empty($buttons)) $rows[] = $buttons;
 
-        foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
-            $app = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($row) : '';
-            if($app !== '' && !isset($tutorialsByApp[$app])) $tutorialsByApp[$app] = $row;
-            else $otherTutorials[] = $row;
-        }
-
-        // چیدمان ثابت و تمیز: هر برنامه فقط یک ردیف دارد؛ آموزش و دانلود روبه‌روی هم.
-        // این باعث می‌شود دکمه دانلود V2rayN دیگر جدا نیفتد و با V2rayNG اشتباه نشود.
-        foreach(['v2rayng', 'v2rayn', 'streisand'] as $app){
-            if(!isset($tutorialsByApp[$app])) continue;
-            $row = $tutorialsByApp[$app];
-            $buttons = [[
-                'text' => '📚 آموزش ' . $row['title'],
-                'callback_data' => $cfg['item_prefix'] . intval($row['id']),
-                'style' => 'primary'
-            ]];
-            if(isset($softwareLinks['by_app'][$app])){
-                $buttons[] = [
-                    'text' => '⬇️ دانلود ' . v2raystore_appTutorialTitle($app),
-                    'url' => $softwareLinks['by_app'][$app]['link']
-                ];
+            $appKey = function_exists('v2raystore_helpDetectTutorialApp') ? v2raystore_helpDetectTutorialApp($app) : '';
+            if($appKey !== '' && isset($softwareLinks['by_app'][$appKey])){
+                $rows[] = [[ 'text'=>'⬇️ دانلود ' . v2raystore_helpLimitText($app['title'], 38), 'url'=>$softwareLinks['by_app'][$appKey]['link'] ]];
             }
-            $rows[] = $buttons;
-        }
-
-        // اگر مدیر آموزش اضافه‌ای ساخته باشد، فقط خود آموزش نمایش داده می‌شود؛
-        // لینک‌های دانلود اضافه پایین منو پخش نمی‌شوند تا صفحه شلوغ و نامرتب نشود.
-        foreach($otherTutorials as $row){
-            $rows[] = [[
-                'text' => '📚 آموزش ' . $row['title'],
-                'callback_data' => $cfg['item_prefix'] . intval($row['id']),
-                'style' => 'primary'
-            ]];
         }
     }else{
         foreach(v2raystore_helpGetItems($cfg['type'], false) as $row){
@@ -6413,16 +6564,14 @@ function v2raystore_helpUserItemKeys($type){
 }
 
 function v2raystore_helpAdminHomeText(){
-    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nآموزش کانفیگ عادی و لینک ساب از هم جدا هستند و برای هرکدام می‌توانید متن و ویدیوی مستقل ثبت کنید.\n\n🎬 ویدیوها روی هاست ذخیره نمی‌شوند؛ فقط file_id تلگرام ذخیره می‌شود.";
+    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nدر بخش آموزش برنامه‌ها، برای هر برنامه می‌توانید آموزش <b>کانفیگ عادی</b> و <b>لینک ساب</b> را جداگانه تنظیم کنید.\n\nهر آموزش متن، ویدیو و وضعیت مستقل دارد. ویدیوها روی هاست ذخیره نمی‌شوند؛ فقط file_id تلگرام نگهداری می‌شود.";
 }
 
 function v2raystore_helpAdminHomeKeys(){
     global $buttonValues;
     return v2raystore_inlineKeyboardJson([
-        [[ 'text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'adminServiceTutorial_normal', 'style'=>'primary' ]],
-        [[ 'text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'adminServiceTutorial_sub', 'style'=>'primary' ]],
+        [[ 'text'=>'📱 مدیریت آموزش برنامه‌ها', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
         [[ 'text'=>'❓ مدیریت سوالات متداول', 'callback_data'=>'adminHelpList_faq', 'style'=>'primary' ]],
-        [[ 'text'=>'📱 آموزش‌های برنامه‌ها', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
         [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary' ]]
     ]);
 }
@@ -6433,9 +6582,15 @@ function v2raystore_helpAdminListText($type){
     $msg = $cfg['icon'] . " <b>مدیریت " . v2raystore_h($cfg['title']) . "</b>\n\n";
     if(count($items) === 0) return $msg . "موردی ثبت نشده است.";
     foreach($items as $i => $row){
-        $msg .= ($i + 1) . ". " . (!empty($row['enabled']) ? '✅' : '🚫') . " <b>" . v2raystore_h($row['title']) . "</b>\n";
+        $msg .= ($i + 1) . ". " . (!empty($row['enabled']) ? '✅' : '🚫') . " <b>" . v2raystore_h($row['title']) . "</b>";
+        if($cfg['type'] === 'tutorial'){
+            $normal = v2raystore_helpNormalizeTutorialPart($row['normal'] ?? null, 'normal', $row['body'] ?? '');
+            $sub = v2raystore_helpNormalizeTutorialPart($row['sub'] ?? null, 'sub', '');
+            $msg .= " | عادی:" . (!empty($normal['enabled']) ? '✅' : '🚫') . " ساب:" . (!empty($sub['enabled']) ? '✅' : '🚫');
+        }
+        $msg .= "\n";
     }
-    $msg .= "\nروی هر مورد بزنید تا ویرایش شود.";
+    $msg .= $cfg['type'] === 'tutorial' ? "\nروی هر برنامه بزنید تا آموزش عادی و ساب آن را جدا تنظیم کنید." : "\nروی هر مورد بزنید تا ویرایش شود.";
     return $msg;
 }
 
@@ -6444,12 +6599,12 @@ function v2raystore_helpAdminListKeys($type){
     $rows = [];
     foreach(v2raystore_helpGetItems($cfg['type'], true) as $row){
         $rows[] = [[
-            'text' => (!empty($row['enabled']) ? '✅ ' : '🚫 ') . $row['title'],
+            'text' => (!empty($row['enabled']) ? '✅ ' : '🚫 ') . v2raystore_helpLimitText($row['title'], 45),
             'callback_data' => 'adminHelpItem_' . $cfg['type'] . '_' . intval($row['id']),
             'style' => 'primary'
         ]];
     }
-    $rows[] = [[ 'text'=>'➕ افزودن مورد جدید', 'callback_data'=>'adminHelpAdd_' . $cfg['type'], 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>($cfg['type'] === 'tutorial' ? '➕ افزودن برنامه جدید' : '➕ افزودن مورد جدید'), 'callback_data'=>'adminHelpAdd_' . $cfg['type'], 'style'=>'primary' ]];
     $rows[] = [[ 'text'=>'🔙 برگشت', 'callback_data'=>'adminHelpMenu', 'style'=>'primary' ]];
     return v2raystore_inlineKeyboardJson($rows);
 }
@@ -6458,6 +6613,18 @@ function v2raystore_helpAdminItemText($type, $id){
     $cfg = v2raystore_helpTypeConfig($type);
     $item = v2raystore_helpFindItem($cfg['type'], $id);
     if(!$item) return "مورد پیدا نشد.";
+    if($cfg['type'] === 'tutorial'){
+        $normal = v2raystore_helpNormalizeTutorialPart($item['normal'] ?? null, 'normal', $item['body'] ?? '');
+        $sub = v2raystore_helpNormalizeTutorialPart($item['sub'] ?? null, 'sub', '');
+        $normalVideo = trim((string)$normal['video_file_id']) !== '' ? '🎬' : '➖';
+        $subVideo = trim((string)$sub['video_file_id']) !== '' ? '🎬' : '➖';
+        return "📱 <b>مدیریت آموزش برنامه</b>\n\n" .
+               "نام برنامه: <b>" . v2raystore_h($item['title']) . "</b>\n" .
+               "وضعیت برنامه: " . (!empty($item['enabled']) ? '✅ فعال' : '🚫 غیرفعال') . "\n\n" .
+               "📚 کانفیگ عادی: " . (!empty($normal['enabled']) ? '✅ فعال' : '🚫 غیرفعال') . " {$normalVideo}\n" .
+               "🔗 لینک ساب: " . (!empty($sub['enabled']) ? '✅ فعال' : '🚫 غیرفعال') . " {$subVideo}\n\n" .
+               "هر آموزش را جدا باز کنید تا متن و ویدیوی مخصوص همان برنامه را ثبت کنید.";
+    }
     $msg = $cfg['icon'] . " <b>ویرایش مورد</b>\n\n";
     $msg .= "عنوان: <b>" . v2raystore_h($item['title']) . "</b>\n";
     $msg .= "وضعیت: " . (!empty($item['enabled']) ? '✅ فعال' : '🚫 غیرفعال') . "\n\n";
@@ -6469,6 +6636,20 @@ function v2raystore_helpAdminItemKeys($type, $id){
     $cfg = v2raystore_helpTypeConfig($type);
     $item = v2raystore_helpFindItem($cfg['type'], $id);
     $enabled = $item ? !empty($item['enabled']) : false;
+    if($cfg['type'] === 'tutorial'){
+        return v2raystore_inlineKeyboardJson([
+            [
+                [ 'text'=>'📚 آموزش عادی', 'callback_data'=>'adminAppTutorial_' . intval($id) . '_normal', 'style'=>'primary' ],
+                [ 'text'=>'🔗 آموزش ساب', 'callback_data'=>'adminAppTutorial_' . intval($id) . '_sub', 'style'=>'primary' ]
+            ],
+            [
+                [ 'text'=>'✏️ نام برنامه', 'callback_data'=>'adminHelpEditTitle_tutorial_' . intval($id), 'style'=>'primary' ],
+                [ 'text'=>($enabled ? '🚫 غیرفعال کردن برنامه' : '✅ فعال کردن برنامه'), 'callback_data'=>'adminHelpToggle_tutorial_' . intval($id), 'style'=>($enabled ? 'danger' : 'success') ]
+            ],
+            [[ 'text'=>'🗑 حذف برنامه', 'callback_data'=>'adminHelpDelete_tutorial_' . intval($id), 'style'=>'danger' ]],
+            [[ 'text'=>'🔙 برگشت به لیست برنامه‌ها', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]]
+        ]);
+    }
     return v2raystore_inlineKeyboardJson([
         [
             [ 'text'=>'✏️ عنوان', 'callback_data'=>'adminHelpEditTitle_' . $cfg['type'] . '_' . intval($id), 'style'=>'primary' ],
