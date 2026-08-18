@@ -6715,6 +6715,17 @@ function v2raystore_userButtonVisible($key, $state = null){
     return !array_key_exists($key, $vis) || $vis[$key];
 }
 
+function v2raystore_manualConfigRegisterEnabled($state = null){
+    if($state === null) $state = v2raystore_getBotStatesArray();
+    return is_array($state) && (($state['manualConfigRegisterState'] ?? 'off') === 'on');
+}
+
+function v2raystore_myConfigSearchMinCount($state = null){
+    if($state === null) $state = v2raystore_getBotStatesArray();
+    $min = is_array($state) ? intval($state['myConfigSearchMinCount'] ?? 10) : 10;
+    return max(2, $min);
+}
+
 function v2raystore_setUserButtonVisible($key, $visible){
     global $botState;
     $defaults = v2raystore_defaultUserButtonVisibilityKeys();
@@ -11535,6 +11546,7 @@ function getBotSettingKeys(){
     $agentSellState = (($botState['agentSellState'] ?? ($botState['sellState'] ?? 'off'))=="on")?$buttonValues['on']:$buttonValues['off'];
     $robotState = $botState['botState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $searchState = $botState['searchState']=="on"?$buttonValues['on']:$buttonValues['off'];
+    $manualConfigRegister = (($botState['manualConfigRegisterState'] ?? 'off') == 'on') ? $buttonValues['on'] : $buttonValues['off'];
     $updateConnectionState = $botState['updateConnectionState']=="robot"?"از روی ربات":"از روی سایت";
     $rewaredTime = ($botState['rewaredTime']??0) . " ساعت";
     switch($botState['remark']){
@@ -11650,6 +11662,10 @@ function getBotSettingKeys(){
         [
             ['text'=>$searchState,'callback_data'=>"changeBotsearchState"],
             ['text'=>"مشخصات کانفیگ",'callback_data'=>"v2raystore"]
+        ],
+        [
+            ['text'=>$manualConfigRegister,'callback_data'=>"changeBotmanualConfigRegisterState"],
+            ['text'=>"ثبت کانفیگ توسط کاربر",'callback_data'=>"v2raystore"]
         ],
         [
             ['text'=>$renewConfigLink,'callback_data'=>"changeBotrenewConfigLinkState"],

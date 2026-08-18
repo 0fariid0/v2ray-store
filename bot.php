@@ -11728,13 +11728,22 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     $stmt->close();
 
     if($number_of_result <= 0){
-        $keyboard = [
-            [['text'=>'➕ ثبت کانفیگ با لینک', 'callback_data'=>'addMyConfigByLink']],
-            [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']]
-        ];
-        editText($message_id, "📦 هنوز کانفیگی داخل حساب شما ثبت نشده است.
+        $manualRegisterEnabled = function_exists('v2raystore_manualConfigRegisterEnabled')
+            ? v2raystore_manualConfigRegisterEnabled($botState ?? null)
+            : (($botState['manualConfigRegisterState'] ?? 'off') === 'on');
+        $keyboard = [];
+        if(!$isAgentConfigList && $manualRegisterEnabled){
+            $keyboard[] = [['text'=>'➕ ثبت کانفیگ با لینک', 'callback_data'=>'addMyConfigByLink']];
+        }
+        $keyboard[] = [['text'=>$buttonValues['back_to_main'], 'callback_data'=>'mainMenu']];
 
-اگر از قبل لینک کانفیگ یا لینک ساب دارید، می‌توانید آن را داخل ربات ثبت کنید تا در همین بخش نمایش داده شود.", json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE));
+        $emptyText = "📦 هنوز کانفیگی داخل حساب شما ثبت نشده است.";
+        if(!$isAgentConfigList && $manualRegisterEnabled){
+            $emptyText .= "
+
+اگر از قبل لینک کانفیگ یا لینک ساب دارید، می‌توانید آن را داخل ربات ثبت کنید تا در همین بخش نمایش داده شود.";
+        }
+        editText($message_id, $emptyText, json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE));
         exit;
     }
 
@@ -11783,12 +11792,23 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
     }
     if(!empty($buttons)) $keyboard[] = $buttons;
 
-    if($isAgentConfigList) $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchAgentConfig"]];
-    else {
-        $keyboard[] = [
-            ['text'=>'➕ ثبت کانفیگ با لینک','callback_data'=>"addMyConfigByLink"],
-            ['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchMyConfig"]
-        ];
+    if($isAgentConfigList){
+        $keyboard[] = [['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchAgentConfig"]];
+    }else{
+        $manualRegisterEnabled = function_exists('v2raystore_manualConfigRegisterEnabled')
+            ? v2raystore_manualConfigRegisterEnabled($botState ?? null)
+            : (($botState['manualConfigRegisterState'] ?? 'off') === 'on');
+        $searchMinCount = function_exists('v2raystore_myConfigSearchMinCount')
+            ? v2raystore_myConfigSearchMinCount($botState ?? null)
+            : 10;
+        $actionRow = [];
+        if($manualRegisterEnabled){
+            $actionRow[] = ['text'=>'➕ ثبت کانفیگ با لینک','callback_data'=>"addMyConfigByLink"];
+        }
+        if($number_of_result >= $searchMinCount){
+            $actionRow[] = ['text'=>$buttonValues['search_agent_config'],'callback_data'=>"searchMyConfig"];
+        }
+        if(!empty($actionRow)) $keyboard[] = $actionRow;
     }
     $keyboard[] = [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]];
 
@@ -11805,6 +11825,14 @@ if($data == 'mySubscriptions' || $data == "agentConfigsList" || preg_match('/^(c
 }
 
 if($data == "addMyConfigByLink"){
+    $manualRegisterEnabled = function_exists('v2raystore_manualConfigRegisterEnabled')
+        ? v2raystore_manualConfigRegisterEnabled($botState ?? null)
+        : (($botState['manualConfigRegisterState'] ?? 'off') === 'on');
+    $isAdminRequester = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
+    if(!$manualRegisterEnabled && !$isAdminRequester){
+        alert("ثبت کانفیگ توسط کاربر در حال حاضر غیرفعال است.", true);
+        exit();
+    }
     delMessage();
     setUser('addMyConfigByLink');
     sendMessage("🔗 لینک کانفیگ یا لینک ساب خودتان را ارسال کنید.
@@ -11816,6 +11844,16 @@ if($data == "addMyConfigByLink"){
 }
 
 if($userInfo['step'] == 'addMyConfigByLink' && $text != $buttonValues['cancel']){
+    $manualRegisterEnabled = function_exists('v2raystore_manualConfigRegisterEnabled')
+        ? v2raystore_manualConfigRegisterEnabled($botState ?? null)
+        : (($botState['manualConfigRegisterState'] ?? 'off') === 'on');
+    $isAdminRequester = ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true);
+    if(!$manualRegisterEnabled && !$isAdminRequester){
+        setUser();
+        sendMessage("⛔️ ثبت کانفیگ توسط کاربر در حال حاضر غیرفعال است.", $removeKeyboard, 'HTML');
+        sendMessage($mainValues['reached_main_menu'], getMainKeys());
+        exit();
+    }
     sendMessage($mainValues['please_wait_message'], $removeKeyboard);
     [$ok, $result] = farid_registerManualConfigForUser($from_id, $text);
     setUser();
