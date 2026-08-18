@@ -3270,7 +3270,7 @@ function v2raystore_getSwitchPairToKeys($fromServerId, $deleteMode = false, $mod
 function farid_normalizeBroadcastTarget($target){
     $target = trim((string)$target);
     // targetهای قدیمی حفظ شده‌اند و گروه‌های حرفه‌ای جدید هم اضافه شده‌اند.
-    $allowed = ['all', 'approved', 'buyers', 'access_code', 'no_config', 'no_purchase_30', 'left_channel', 'inactive_config'];
+    $allowed = ['all', 'approved', 'buyers', 'access_code', 'active_config', 'no_config', 'no_purchase_30', 'left_channel', 'inactive_config'];
     return in_array($target, $allowed, true) ? $target : 'all';
 }
 
@@ -3281,6 +3281,7 @@ function farid_getBroadcastTargetTitle($target){
         'approved' => 'کاربرانی که دسترسی فعال به ربات دارند',
         'buyers' => 'فقط کاربرانی که سابقه خرید دارند',
         'access_code' => 'فقط کاربرانی که با کد ورود آزاد شده‌اند',
+        'active_config' => 'کاربران دارای لینک/کانفیگ فعال در ربات',
         'no_config' => 'کاربران بدون کانفیگ فعال',
         'no_purchase_30' => 'کاربرانی که ۳۰ روز خرید نداشته‌اند',
         'left_channel' => 'کاربران خارج‌شده از کانال ولی عضو ربات',
@@ -3308,6 +3309,8 @@ function farid_getBroadcastTargetCondition($target, $userAlias = 'u'){
             return $buyerCondition;
         case 'access_code':
             return $accessCodeCondition;
+        case 'active_config':
+            return $activeConfigCondition;
         case 'no_config':
             return "NOT ($activeConfigCondition)";
         case 'no_purchase_30':
@@ -3343,16 +3346,23 @@ function farid_getBroadcastTargetKeyboard($mode = 'message'){
     if($mode === 'forward') $prefix = 'broadcastTargetForward_';
     elseif($mode === 'pin') $prefix = 'broadcastTargetPin_';
     else $prefix = 'broadcastTargetMessage_';
-    return json_encode(['inline_keyboard'=>[
+
+    $rows = [
         [['text'=>'🎯 انتخاب گروه مخاطب', 'callback_data'=>'v2raystore', 'style'=>'primary']],
         [['text'=>'🌍 همه کاربران', 'callback_data'=>$prefix.'all', 'style'=>'success']],
         [['text'=>'✅ دارای دسترسی', 'callback_data'=>$prefix.'approved', 'style'=>'primary'], ['text'=>'🛒 خریداران', 'callback_data'=>$prefix.'buyers', 'style'=>'primary']],
-        [['text'=>'🆓 بدون کانفیگ فعال', 'callback_data'=>$prefix.'no_config', 'style'=>'primary']],
-        [['text'=>'📆 ۳۰ روز بدون خرید', 'callback_data'=>$prefix.'no_purchase_30', 'style'=>'primary']],
-        [['text'=>'🚪 خارج‌شده از کانال', 'callback_data'=>$prefix.'left_channel', 'style'=>'warning']],
-        [['text'=>'⚠️ کانفیگ غیرفعال', 'callback_data'=>$prefix.'inactive_config', 'style'=>'warning']],
-        [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']],
-    ]], JSON_UNESCAPED_UNICODE);
+    ];
+    // فقط برای پیام و فوروارد همگانی: کاربران دارای حداقل یک کانفیگ فعال در ربات.
+    // حالت پین handler جداگانه دارد و عمداً بدون تغییر نگه داشته شده است.
+    if($mode === 'message' || $mode === 'forward'){
+        $rows[] = [['text'=>'🔗 دارای لینک فعال', 'callback_data'=>$prefix.'active_config', 'style'=>'success']];
+    }
+    $rows[] = [['text'=>'🆓 بدون کانفیگ فعال', 'callback_data'=>$prefix.'no_config', 'style'=>'primary']];
+    $rows[] = [['text'=>'📆 ۳۰ روز بدون خرید', 'callback_data'=>$prefix.'no_purchase_30', 'style'=>'primary']];
+    $rows[] = [['text'=>'🚪 خارج‌شده از کانال', 'callback_data'=>$prefix.'left_channel', 'style'=>'warning']];
+    $rows[] = [['text'=>'⚠️ کانفیگ غیرفعال', 'callback_data'=>$prefix.'inactive_config', 'style'=>'warning']];
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
 function farid_getBroadcastThrottleSettings(){
@@ -4611,7 +4621,7 @@ function v2raystore_serviceTutorialDefaults($type){
     if($type === 'sub'){
         return [
             'enabled' => true,
-            'title' => 'آموزش استفاده از لینک ساب',
+            'title' => 'آموزش اتصال لینک ساب',
             'text' => "1) لینک ساب را کامل کپی کنید.\n2) داخل برنامه، بخش Subscription / اشتراک را باز کنید و لینک را اضافه کنید.\n3) بعد از اضافه کردن، گزینه Update subscription / بروزرسانی ساب را بزنید.\n4) هر وقت اتصال مشکل داشت، اول ساب را یک بار بروزرسانی کنید.\n5) در V2rayN ویندوز بهتر است Core برنامه هم بروز باشد.",
             'video_file_id' => '',
             'video_media_type' => 'video',
@@ -4661,7 +4671,7 @@ function v2raystore_saveServiceTutorial($type, $changes){
 }
 
 function v2raystore_serviceTutorialLabel($type){
-    return v2raystore_serviceTutorialNormalizeType($type) === 'sub' ? 'آموزش لینک ساب' : 'آموزش کانفیگ عادی';
+    return v2raystore_serviceTutorialNormalizeType($type) === 'sub' ? 'آموزش اتصال لینک ساب' : 'آموزش کانفیگ عادی';
 }
 
 function v2raystore_serviceTutorialAdminText($type){
@@ -4746,7 +4756,7 @@ function v2raystore_configHelpButtonRows(){
     }
     $buttons = [];
     if($hasNormal) $buttons[] = ['text'=>'📚 آموزش کانفیگ عادی', 'callback_data'=>'serviceTutorial_normal'];
-    if($hasSub) $buttons[] = ['text'=>'🔗 آموزش لینک ساب', 'callback_data'=>'serviceTutorial_sub'];
+    if($hasSub) $buttons[] = ['text'=>'🔗 آموزش اتصال لینک ساب', 'callback_data'=>'serviceTutorial_sub'];
     return !empty($buttons) ? [$buttons] : [];
 }
 
@@ -6369,7 +6379,7 @@ function v2raystore_updateAppTutorialPart($appId, $tutorialType, $changes){
 }
 
 function v2raystore_appTutorialTypeLabel($tutorialType){
-    return v2raystore_serviceTutorialNormalizeType($tutorialType) === 'sub' ? 'آموزش لینک ساب' : 'آموزش کانفیگ عادی';
+    return v2raystore_serviceTutorialNormalizeType($tutorialType) === 'sub' ? 'آموزش اتصال لینک ساب' : 'آموزش کانفیگ عادی';
 }
 
 function v2raystore_appTutorialChooserText($tutorialType){
@@ -6472,7 +6482,7 @@ function v2raystore_helpUserMenuText($type){
     if(count($items) === 0){
         $msg .= "فعلاً موردی توسط مدیریت ثبت نشده است.";
     }elseif($cfg['type'] === 'tutorial'){
-        $msg .= "برنامه موردنظرتان را انتخاب کنید، سپس آموزش کانفیگ عادی یا لینک ساب را بزنید.";
+        $msg .= "برنامه موردنظرتان را انتخاب کنید، سپس آموزش کانفیگ عادی یا آموزش اتصال لینک ساب را بزنید.";
     }else{
         $msg .= "لطفاً یکی از موارد زیر را انتخاب کنید:";
     }
@@ -6564,7 +6574,7 @@ function v2raystore_helpUserItemKeys($type){
 }
 
 function v2raystore_helpAdminHomeText(){
-    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nدر بخش آموزش برنامه‌ها، برای هر برنامه می‌توانید آموزش <b>کانفیگ عادی</b> و <b>لینک ساب</b> را جداگانه تنظیم کنید.\n\nهر آموزش متن، ویدیو و وضعیت مستقل دارد. ویدیوها روی هاست ذخیره نمی‌شوند؛ فقط file_id تلگرام نگهداری می‌شود.";
+    return "📚 <b>مدیریت FAQ و آموزش‌ها</b>\n\nدر بخش آموزش برنامه‌ها، برای هر برنامه می‌توانید آموزش <b>کانفیگ عادی</b> و <b>اتصال لینک ساب</b> را جداگانه تنظیم کنید.\n\nهر آموزش متن، ویدیو و وضعیت مستقل دارد. ویدیوها روی هاست ذخیره نمی‌شوند؛ فقط file_id تلگرام نگهداری می‌شود.";
 }
 
 function v2raystore_helpAdminHomeKeys(){
@@ -6640,7 +6650,7 @@ function v2raystore_helpAdminItemKeys($type, $id){
         return v2raystore_inlineKeyboardJson([
             [
                 [ 'text'=>'📚 آموزش عادی', 'callback_data'=>'adminAppTutorial_' . intval($id) . '_normal', 'style'=>'primary' ],
-                [ 'text'=>'🔗 آموزش ساب', 'callback_data'=>'adminAppTutorial_' . intval($id) . '_sub', 'style'=>'primary' ]
+                [ 'text'=>'🔗 اتصال لینک ساب', 'callback_data'=>'adminAppTutorial_' . intval($id) . '_sub', 'style'=>'primary' ]
             ],
             [
                 [ 'text'=>'✏️ نام برنامه', 'callback_data'=>'adminHelpEditTitle_tutorial_' . intval($id), 'style'=>'primary' ],

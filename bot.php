@@ -4440,7 +4440,7 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
     exit();
 }
 
-if(preg_match('/^broadcastTargetMessage_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^broadcastTargetMessage_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
     $title = farid_getBroadcastTargetTitle($target);
 
@@ -5731,7 +5731,7 @@ if($userInfo['step'] == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['is
 
 
 
-if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($broadcastStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
 
@@ -5814,7 +5814,7 @@ if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)
     sendMessage("📤 فوروارد همگانی\n\nلطفاً مشخص کنید پیام فورواردی برای کدام گروه از کاربران ارسال شود.", farid_getBroadcastTargetKeyboard('forward'), 'HTML');
     exit();
 }
-if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
     $title = farid_getBroadcastTargetTitle($target);
 
@@ -5827,7 +5827,7 @@ if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|no_conf
 شمارش مخاطبان داخل صف انجام می‌شود تا کلیک روی دکمه باعث هنگ نشود.", $cancelKey, 'HTML');
     exit();
 }
-if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $target = farid_normalizeBroadcastTarget($forwardStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
 
