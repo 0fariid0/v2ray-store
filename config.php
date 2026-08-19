@@ -2368,6 +2368,194 @@ function v2raystore_savePlanMultiInboundIds($planId, $ids){
     return $ok;
 }
 
+
+function v2raystore_panelInboundIsEnabled($row){
+    if(is_object($row)){
+        if(!property_exists($row, 'enable')) return true;
+        $value = $row->enable;
+    }elseif(is_array($row)){
+        if(!array_key_exists('enable', $row)) return true;
+        $value = $row['enable'];
+    }else{
+        return false;
+    }
+    if(is_bool($value)) return $value;
+    if(is_numeric($value)) return intval($value) === 1;
+    $value = strtolower(trim((string)$value));
+    return !in_array($value, ['', '0', 'false', 'off', 'no', 'disabled'], true);
+}
+
+/**
+ * Prepare a Sanaei-New renewal so the client follows the CURRENT inbound set of
+ * the selected plan. Missing/disabled panel inbounds are excluded. New inbounds
+ * are attached before traffic/expiry renewal; removed inbounds are detached only
+ * after the renewal succeeds (see v2raystore_finalizeRenewPlanInboundSync).
+ */
+function v2raystore_prepareRenewPlanInboundSync($serverId, $plan, $order, $serverInfo = null){
+    global $connection;
+    $serverId = intval($serverId);
+    if(is_object($plan)) $plan = json_decode(json_encode($plan), true);
+    if(is_object($order)) $order = json_decode(json_encode($order), true);
+    if(!is_array($plan) || !is_array($order) || $serverId <= 0){
+        return ['ok'=>false, 'applicable'=>false, 'message'=>'اطلاعات Sync اینباند ناقص است.'];
+    }
+
+    if(!is_array($serverInfo)){
+        $stmt = @$connection->prepare("SELECT * FROM `server_config` WHERE `id`=? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $serverId);
+            $stmt->execute();
+            $serverInfo = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+        }
+    }
+    if(!is_array($serverInfo) || (($serverInfo['type'] ?? '') !== 'sanaei_new')){
+        return ['ok'=>true, 'applicable'=>false, 'changed'=>false];
+    }
+
+    $configuredIds = function_exists('v2raystore_planInboundIds') ? v2raystore_planInboundIds($plan, true) : [];
+    $configuredIds = array_values(array_unique(array_filter(array_map('intval', $configuredIds))));
+    if(empty($configuredIds)){
+        return ['ok'=>false, 'applicable'=>true, 'message'=>'برای این پلن هیچ Inboundای انتخاب نشده است.'];
+    }
+
+    // Resolve the plan against the live panel. Only existing + enabled + supported
+    // inbounds are allowed to remain attached after renewal.
+    $panel = getJson($serverId);
+    if(!$panel || empty($panel->success) || !isset($panel->obj) || !is_array($panel->obj)){
+        return ['ok'=>false, 'applicable'=>true, 'message'=>'خواندن وضعیت فعلی Inboundهای پنل ناموفق بود.'];
+    }
+    $liveRows = [];
+    foreach($panel->obj as $row){
+        if(!is_object($row)) continue;
+        $iid = intval($row->id ?? 0);
+        if($iid > 0) $liveRows[$iid] = $row;
+    }
+
+    $desiredIds = [];
+    foreach($configuredIds as $iid){
+        if(!isset($liveRows[$iid])) continue;
+        $proto = strtolower(trim((string)($liveRows[$iid]->protocol ?? '')));
+        if(function_exists('v2raystore_isSupportedInboundProtocol') && !v2raystore_isSupportedInboundProtocol($proto)) continue;
+        if(!v2raystore_panelInboundIsEnabled($liveRows[$iid])) continue;
+        $desiredIds[] = $iid;
+    }
+    $desiredIds = array_values(array_unique($desiredIds));
+    if(empty($desiredIds)){
+        return ['ok'=>false, 'applicable'=>true, 'message'=>'هیچ Inbound فعال و قابل استفاده‌ای از این پلن روی پنل باقی نمانده است.'];
+    }
+
+    $email = trim((string)($order['remark'] ?? ''));
+    $uuid = trim((string)($order['uuid'] ?? ''));
+    $oldInbound = intval($order['inbound_id'] ?? 0);
+    if($email === '' && function_exists('v2raystore_sanaeiNewFindClientEmail')){
+        $email = trim((string)v2raystore_sanaeiNewFindClientEmail($serverId, $uuid, $oldInbound, ''));
+    }
+    if($email === ''){
+        return ['ok'=>false, 'applicable'=>true, 'message'=>'شناسه Client برای Sync Inbound پیدا نشد.'];
+    }
+
+    $clientResp = v2raystore_sanaeiRequestJson($serverInfo, '/panel/api/clients/get/' . rawurlencode($email), 'GET');
+    if(!is_array($clientResp) || (isset($clientResp['success']) && empty($clientResp['success']))){
+        return ['ok'=>false, 'applicable'=>true, 'message'=>'خواندن Inboundهای فعلی Client از پنل ناموفق بود.'];
+    }
+    $obj = $clientResp['obj'] ?? $clientResp;
+    if(is_object($obj)) $obj = json_decode(json_encode($obj), true);
+    $currentIds = [];
+    if(is_array($obj) && isset($obj['inboundIds']) && is_array($obj['inboundIds'])){
+        $currentIds = $obj['inboundIds'];
+    }elseif(isset($clientResp['inboundIds']) && is_array($clientResp['inboundIds'])){
+        $currentIds = $clientResp['inboundIds'];
+    }
+
+    // Fallback for older/custom panel responses that do not expose inboundIds.
+    if(empty($currentIds)){
+        foreach($liveRows as $iid => $row){
+            $settings = function_exists('v2raystore_decodeMaybeJson') ? v2raystore_decodeMaybeJson($row->settings ?? '{}', true) : (json_decode((string)($row->settings ?? '{}'), true) ?: []);
+            $clients = is_array($settings) ? ($settings['clients'] ?? []) : [];
+            if(!is_array($clients)) continue;
+            foreach($clients as $client){
+                if(is_object($client)) $client = json_decode(json_encode($client), true);
+                if(!is_array($client)) continue;
+                if(trim((string)($client['email'] ?? '')) === $email){
+                    $currentIds[] = intval($iid);
+                    break;
+                }
+            }
+        }
+    }
+    $currentIds = array_values(array_unique(array_filter(array_map('intval', $currentIds))));
+
+    $toAttach = array_values(array_diff($desiredIds, $currentIds));
+    $toDetach = array_values(array_diff($currentIds, $desiredIds));
+
+    // Attach first. This is deliberate: if the attach fails, renewal stops before
+    // quota/expiry changes, and we never detach a working inbound first.
+    if(!empty($toAttach)){
+        $attachResp = v2raystore_sanaeiRequestJson(
+            $serverInfo,
+            '/panel/api/clients/' . rawurlencode($email) . '/attach',
+            'POST',
+            ['inboundIds'=>array_values($toAttach)]
+        );
+        if(!is_array($attachResp) || (isset($attachResp['success']) && empty($attachResp['success']))){
+            $msg = is_array($attachResp) ? trim((string)($attachResp['msg'] ?? $attachResp['message'] ?? '')) : '';
+            return ['ok'=>false, 'applicable'=>true, 'message'=>'اضافه‌کردن Inbound جدید به Client ناموفق بود' . ($msg !== '' ? ': ' . $msg : '.')];
+        }
+    }
+
+    return [
+        'ok'=>true,
+        'applicable'=>true,
+        'changed'=>(!empty($toAttach) || !empty($toDetach)),
+        'email'=>$email,
+        'desired_ids'=>$desiredIds,
+        'current_ids'=>$currentIds,
+        'attached_ids'=>$toAttach,
+        'detach_ids'=>$toDetach,
+        'primary_inbound_id'=>intval($desiredIds[0]),
+        'server_info'=>$serverInfo,
+    ];
+}
+
+
+function v2raystore_rollbackRenewPlanInboundSync($sync){
+    if(!is_array($sync) || empty($sync['applicable']) || empty($sync['ok'])) return true;
+    $attachedIds = isset($sync['attached_ids']) && is_array($sync['attached_ids']) ? array_values(array_unique(array_filter(array_map('intval', $sync['attached_ids'])))) : [];
+    if(empty($attachedIds)) return true;
+    $serverInfo = $sync['server_info'] ?? null;
+    $email = trim((string)($sync['email'] ?? ''));
+    if(!is_array($serverInfo) || $email === '') return false;
+    $resp = v2raystore_sanaeiRequestJson(
+        $serverInfo,
+        '/panel/api/clients/' . rawurlencode($email) . '/detach',
+        'POST',
+        ['inboundIds'=>$attachedIds]
+    );
+    return is_array($resp) && (!isset($resp['success']) || !empty($resp['success']));
+}
+
+function v2raystore_finalizeRenewPlanInboundSync($sync){
+    if(!is_array($sync) || empty($sync['applicable']) || empty($sync['ok'])) return ['ok'=>true, 'changed'=>false];
+    $detachIds = isset($sync['detach_ids']) && is_array($sync['detach_ids']) ? array_values(array_unique(array_filter(array_map('intval', $sync['detach_ids'])))) : [];
+    if(empty($detachIds)) return ['ok'=>true, 'changed'=>!empty($sync['attached_ids']), 'detached_ids'=>[]];
+    $serverInfo = $sync['server_info'] ?? null;
+    $email = trim((string)($sync['email'] ?? ''));
+    if(!is_array($serverInfo) || $email === '') return ['ok'=>false, 'changed'=>true, 'message'=>'اطلاعات لازم برای حذف Inboundهای قدیمی کامل نیست.'];
+
+    $resp = v2raystore_sanaeiRequestJson(
+        $serverInfo,
+        '/panel/api/clients/' . rawurlencode($email) . '/detach',
+        'POST',
+        ['inboundIds'=>$detachIds]
+    );
+    if(!is_array($resp) || (isset($resp['success']) && empty($resp['success']))){
+        $msg = is_array($resp) ? trim((string)($resp['msg'] ?? $resp['message'] ?? '')) : '';
+        return ['ok'=>false, 'changed'=>true, 'message'=>'حذف Inboundهای قدیمی Client ناموفق بود' . ($msg !== '' ? ': ' . $msg : '.'), 'detached_ids'=>[]];
+    }
+    return ['ok'=>true, 'changed'=>true, 'detached_ids'=>$detachIds];
+}
+
 function v2raystore_getPlanRow($planId){
     global $connection;
     $planId = intval($planId);
@@ -21074,6 +21262,19 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     if(!$serverInfo) return $fail('تنظیمات سرور پیدا نشد.');
     $serverType = $serverInfo['type'] ?? '';
 
+    // On Sanaei New, renewal follows the CURRENT inbound set of the selected plan.
+    // New active inbounds are attached before renewal so they receive the renewed quota/time.
+    $renewInboundSync = ['ok'=>true, 'applicable'=>false, 'changed'=>false];
+    if($serverType === 'sanaei_new' && function_exists('v2raystore_prepareRenewPlanInboundSync')){
+        $renewInboundSync = v2raystore_prepareRenewPlanInboundSync($server_id, $plan, $order, $serverInfo);
+        if(empty($renewInboundSync['ok'])){
+            return $fail('Sync Inboundهای پلن قبل از تمدید انجام نشد: ' . ($renewInboundSync['message'] ?? 'خطای نامشخص'));
+        }
+        if(!empty($renewInboundSync['primary_inbound_id'])){
+            $inbound_id = intval($renewInboundSync['primary_inbound_id']);
+        }
+    }
+
     // Snapshot must be stored before changing panel/database so admin can cancel an automatic renewal safely.
     v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order);
 
@@ -21115,16 +21316,70 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
         $response = ($inbound_id > 0) ? editClientTraffic($server_id, $inbound_id, $uuid, $volume, $appliedDays, $editType) : editInboundTraffic($server_id, $uuid, $volume, $appliedDays, $editType);
     }
 
-    if(is_null($response)) return $fail('اتصال به سرور برقرار نشد.');
+    if(is_null($response)){
+        if(function_exists('v2raystore_rollbackRenewPlanInboundSync')) v2raystore_rollbackRenewPlanInboundSync($renewInboundSync);
+        return $fail('اتصال به سرور برقرار نشد.');
+    }
     if(is_object($response) && isset($response->success) && empty($response->success)){
+        if(function_exists('v2raystore_rollbackRenewPlanInboundSync')) v2raystore_rollbackRenewPlanInboundSync($renewInboundSync);
         $err = $response->msg ?? 'نامشخص';
         if(function_exists('v2raystore_translateTechnicalError')) $err = v2raystore_translateTechnicalError($err);
         return $fail('خطای تمدید روی سرور: ' . $err);
     }
 
-    $stmt = $connection->prepare("UPDATE `orders_list` SET `fileid` = ?, `expire_date` = ?, `notif` = 0 WHERE `id` = ?");
+    // Renewal is successful now; detach inbounds that were removed from the plan
+    // or disabled on the panel. A detach failure must not make a successfully
+    // renewed payment retry and double-renew, so it is reported as a warning.
+    $renewSyncWarning = '';
+    if($serverType === 'sanaei_new' && function_exists('v2raystore_finalizeRenewPlanInboundSync')){
+        $finalSync = v2raystore_finalizeRenewPlanInboundSync($renewInboundSync);
+        if(empty($finalSync['ok'])){
+            @usleep(200000);
+            $finalSync = v2raystore_finalizeRenewPlanInboundSync($renewInboundSync);
+        }
+        if(empty($finalSync['ok'])){
+            $renewSyncWarning = (string)($finalSync['message'] ?? 'حذف Inboundهای قدیمی کامل نشد.');
+            if(function_exists('v2raystore_reportEvent')){
+                v2raystore_reportEvent('⚠️ هشدار Sync Inbound بعد از تمدید', "🆔 کاربر: <code>{$uid}</code>\n🔮 سرویس: <code>" . htmlspecialchars($remark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>\n📝 " . htmlspecialchars($renewSyncWarning, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'), null, 'renew_inbound_sync_warning');
+            }
+        }
+    }
+
+    // Refresh the stored direct-config links from the panel after attach/detach so
+    // future views of this order match the actual inbounds of the renewed plan.
+    $renewStoredLink = (string)($order['link'] ?? '');
+    if($serverType === 'sanaei_new' && !empty($renewInboundSync['applicable']) && function_exists('v2raystore_sanaeiNewClientLinksFromPanel')){
+        $freshLinks = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uuid, $inbound_id);
+        if((!is_array($freshLinks) || empty($freshLinks)) && function_exists('v2raystore_buildPlanInboundConnectionLinks')){
+            $freshLinks = v2raystore_buildPlanInboundConnectionLinks(
+                $server_id,
+                $uuid,
+                (string)($plan['protocol'] ?? ($order['protocol'] ?? 'vless')),
+                $remark,
+                0,
+                (string)($plan['type'] ?? 'tcp'),
+                $inbound_id,
+                !empty($order['rahgozar']),
+                $plan['custom_path'] ?? false,
+                $plan['custom_port'] ?? 0,
+                $plan['custom_sni'] ?? null,
+                $plan['custom_domain'] ?? null,
+                $renewPlanId
+            );
+        }
+        if(is_array($freshLinks) && !empty($freshLinks)){
+            $renewStoredLink = json_encode(array_values(array_unique(array_filter(array_map('strval', $freshLinks)))), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }elseif(!empty($renewInboundSync['changed'])){
+            // Never keep stale links that point to inbounds removed by this renewal.
+            $renewStoredLink = '[]';
+        }
+    }
+    $renewProtocol = trim((string)($plan['protocol'] ?? ($order['protocol'] ?? '')));
+    if($renewProtocol === '') $renewProtocol = (string)($order['protocol'] ?? '');
+
+    $stmt = $connection->prepare("UPDATE `orders_list` SET `fileid` = ?, `inbound_id` = ?, `protocol` = ?, `expire_date` = ?, `link` = ?, `notif` = 0 WHERE `id` = ?");
     if($stmt){
-        $stmt->bind_param('iii', $renewPlanId, $newExpire, $orderId);
+        $stmt->bind_param('iisisi', $renewPlanId, $inbound_id, $renewProtocol, $newExpire, $renewStoredLink, $orderId);
         $stmt->execute();
         $stmt->close();
     }
@@ -21182,6 +21437,8 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
         'renew_volume'=>$finalVolumeText,
         'renew_previous_volume'=>$resetMode ? $renewPreviousVolumeText : '',
         'renew_previous_days'=>$resetMode ? $renewPreviousDaysText : '',
+        'renew_inbound_sync_changed'=>!empty($renewInboundSync['changed']),
+        'renew_inbound_sync_warning'=>$renewSyncWarning,
         'type'=>'RENEW_ACCOUNT',
         'pay_hash'=>$hashId,
         'pay_state_before'=>$previousState
