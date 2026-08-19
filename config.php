@@ -12244,6 +12244,7 @@ function v2raystore_buildRenewedConfigUserMessage($template, $remark, $volume, $
     if(!$hasVolume) $missing[] = "🔋 حجم باقی‌مانده: <b>" . htmlspecialchars($volumeText, ENT_QUOTES, 'UTF-8') . " گیگ</b>";
     if(!$hasDays) $missing[] = "⏰ روز باقی‌مانده: <b>" . htmlspecialchars($daysText, ENT_QUOTES, 'UTF-8') . " روز</b>";
     if(!empty($missing)) $message = rtrim($message) . "\n" . implode("\n", $missing);
+    $message = str_replace(['نامحدود گیگ', 'نامحدود GB'], 'نامحدود', $message);
     return $message;
 }
 }
@@ -19251,7 +19252,7 @@ function v2raystore_getOrderRemainingSummary($order){
     $remark = trim((string)($order['remark'] ?? ''));
     if($serverId <= 0) return null;
 
-    $stmt = $GLOBALS['connection']->prepare("SELECT `type` FROM `server_config` WHERE `id` = ? LIMIT 1");
+    $stmt = $GLOBALS['connection']->prepare("SELECT * FROM `server_config` WHERE `id` = ? LIMIT 1");
     if(!$stmt) return null;
     $stmt->bind_param('i', $serverId);
     $stmt->execute();
@@ -19274,6 +19275,49 @@ function v2raystore_getOrderRemainingSummary($order){
             $expireSeconds = intval($info->expire ?? $expireSeconds);
         }
     }else{
+        // 3x-ui جدید برای یک Client چند-Inbound، آمار تجمیعی Client را از API مستقل
+        // برمی‌گرداند. clientStats هر Inbound ممکن است لحظه‌ای total=0 داشته باشد و
+        // نباید چنین مقداری به اشتباه «نامحدود» تفسیر شود.
+        if($serverType === 'sanaei_new' && function_exists('v2raystore_sanaeiRequestJson')){
+            $email = $remark;
+            if($email === '' && function_exists('v2raystore_sanaeiNewFindClientEmail')){
+                $email = trim((string)v2raystore_sanaeiNewFindClientEmail($serverId, $uuid, $inboundId, ''));
+            }
+            if($email !== ''){
+                $clientResp = v2raystore_sanaeiRequestJson($serverConfig, '/panel/api/clients/get/' . rawurlencode($email), 'GET');
+                if(is_array($clientResp) && !empty($clientResp['success'])){
+                    $obj = $clientResp['obj'] ?? [];
+                    if(is_string($obj)){
+                        $tmpObj = json_decode($obj, true);
+                        if(json_last_error() === JSON_ERROR_NONE) $obj = $tmpObj;
+                    }
+                    if(is_object($obj)) $obj = json_decode(json_encode($obj), true);
+                    if(is_array($obj)){
+                        $client = $obj['client'] ?? [];
+                        if(is_object($client)) $client = json_decode(json_encode($client), true);
+                        if(is_array($client)){
+                            $total = intval($client['totalGB'] ?? ($client['total_gb'] ?? 0));
+                            $used = intval($obj['usedTraffic'] ?? ($obj['used_traffic'] ?? 0));
+                            $remainingBytes = $total > 0 ? max(0, $total - max(0, $used)) : null;
+                            $enabled = (bool)($client['enable'] ?? true);
+                            $exp = intval($client['expiryTime'] ?? ($client['expiry_time'] ?? 0));
+                            if(function_exists('v2raystore_panelExpiryToSeconds')) $expireSeconds = v2raystore_panelExpiryToSeconds($exp) ?: $expireSeconds;
+
+                            $remainingGb = ($remainingBytes === null) ? null : round($remainingBytes / 1073741824, 2);
+                            return [
+                                'remaining_gb' => $remainingGb,
+                                'remaining_gb_text' => ($remainingGb === null ? 'نامحدود' : v2raystore_formatGbNumberForUser($remainingGb)),
+                                'remaining_days' => v2raystore_formatRemainingDaysNumber($expireSeconds),
+                                'remaining_days_text' => v2raystore_formatRemainingDaysText($expireSeconds),
+                                'expire_date' => $expireSeconds,
+                                'enabled' => $enabled,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
         $json = getJson($serverId);
         $rows = function_exists('v2raystore_panelListFromGetJson') ? v2raystore_panelListFromGetJson($json) : (($json && isset($json->obj) && is_array($json->obj)) ? $json->obj : []);
         foreach($rows as $row){
@@ -19290,7 +19334,11 @@ function v2raystore_getOrderRemainingSummary($order){
                 if($inboundId > 0){
                     $stat = function_exists('v2raystore_panelFindClientStat') ? v2raystore_panelFindClientStat($stats, $email) : null;
                     if($stat){
-                        $total = intval(v2raystore_arrayValue($stat, 'total', 0));
+                        // اول totalGB خود Client را ترجیح بده؛ clientStats.total در بعضی
+                        // نسخه‌ها/لحظه‌های Sync ممکن است صفر باشد، در حالی که Client محدود است.
+                        $clientTotal = intval(v2raystore_arrayValue($client, 'totalGB', 0));
+                        $statTotal = intval(v2raystore_arrayValue($stat, 'total', 0));
+                        $total = $clientTotal > 0 ? $clientTotal : $statTotal;
                         $up = intval(v2raystore_arrayValue($stat, 'up', 0));
                         $down = intval(v2raystore_arrayValue($stat, 'down', 0));
                         $remainingBytes = $total > 0 ? max(0, $total - $up - $down) : null;
@@ -20730,6 +20778,86 @@ if(!function_exists('v2raystore_sendQrLinkMessage')){
     }
 }
 
+if(!function_exists('v2raystore_sendRenewedServiceLinksToUser')){
+function v2raystore_sendRenewedServiceLinksToUser($uid, $order, $volume, $days){
+    global $buttonValues;
+    if(!is_array($order)) return false;
+
+    $uid = intval($uid);
+    if($uid <= 0) return false;
+    $remark = trim((string)($order['remark'] ?? ''));
+    $serverId = intval($order['server_id'] ?? 0);
+    if($serverId <= 0) return false;
+
+    $opts = function_exists('v2raystore_getAgentDeliveryLinkOptionsForOrder')
+        ? v2raystore_getAgentDeliveryLinkOptionsForOrder($order)
+        : (function_exists('v2raystore_normalizeDeliveryLinkOptions') ? v2raystore_normalizeDeliveryLinkOptions(null) : ['config'=>true,'sub'=>false]);
+    if(function_exists('v2raystore_normalizeDeliveryLinkOptions')) $opts = v2raystore_normalizeDeliveryLinkOptions($opts);
+
+    $links = function_exists('v2raystore_normalizeConfigLinksArray')
+        ? v2raystore_normalizeConfigLinksArray($order['link'] ?? '')
+        : (array)($order['link'] ?? []);
+    $subLink = (!empty($opts['sub']) && function_exists('v2raystore_orderCurrentSubLink'))
+        ? trim((string)v2raystore_orderCurrentSubLink($order))
+        : '';
+
+    // اگر حالت ارسال فقط ساب باشد، لینک مستقیم عمداً ارسال نمی‌شود.
+    if(empty($opts['config'])) $links = [];
+    if(empty($opts['sub'])) $subLink = '';
+    if(empty($links) && $subLink === '') return false;
+
+    $keyboard = function_exists('v2raystore_configSentKeyboard')
+        ? v2raystore_configSentKeyboard()
+        : json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_to_main'] ?? 'بازگشت به منوی اصلی','callback_data'=>'mainMenu']]]], JSON_UNESCAPED_UNICODE);
+
+    $fmt = function($v){
+        if(is_numeric($v)) return rtrim(rtrim(number_format(floatval($v), 2, '.', ''), '0'), '.');
+        return trim((string)$v);
+    };
+    $safeRemark = htmlspecialchars($remark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $safeVolume = htmlspecialchars($fmt($volume), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $safeDays = htmlspecialchars($fmt($days), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $volumeDisplay = ($safeVolume === 'نامحدود') ? 'نامحدود' : ($safeVolume . ' گیگ');
+    $daysDisplay = ($safeDays === 'نامحدود') ? 'نامحدود' : ($safeDays . ' روز');
+    $heading = '♻️ <b>لینک اتصال سرویس بعد از تمدید</b>';
+    $base = $heading . "\n";
+    if($safeRemark !== '') $base .= "🔮 نام سرویس: <b>{$safeRemark}</b>\n";
+    $base .= "🔋 حجم باقی‌مانده: <b>{$volumeDisplay}</b>\n";
+    $base .= "⏰ روز باقی‌مانده: <b>{$daysDisplay}</b>";
+
+    $sent = false;
+    if(!empty($opts['config']) && !empty($links)){
+        foreach($links as $link){
+            $link = trim((string)$link);
+            if($link === '') continue;
+            $msg = $base . "\n\n💝 config : <code>" . htmlspecialchars($link, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>";
+            $ok = function_exists('v2raystore_sendQrLinkMessage')
+                ? v2raystore_sendQrLinkMessage($uid, $link, $msg, $keyboard, 'HTML')
+                : false;
+            if(!$ok){
+                $res = sendMessage($msg, $keyboard, 'HTML', $uid);
+                $ok = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+            }
+            if($ok) $sent = true;
+        }
+    }
+
+    // اگر ساب برای این سرور/کاربر فعال است، QR خود لینک ساب هم جدا ارسال شود.
+    if($subLink !== ''){
+        $msg = $base . "\n\n🌐 subscription : <code>" . htmlspecialchars($subLink, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>";
+        $ok = function_exists('v2raystore_sendQrLinkMessage')
+            ? v2raystore_sendQrLinkMessage($uid, $subLink, $msg, $keyboard, 'HTML')
+            : false;
+        if(!$ok){
+            $res = sendMessage($msg, $keyboard, 'HTML', $uid);
+            $ok = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
+        }
+        if($ok) $sent = true;
+    }
+    return $sent;
+}
+}
+
 function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $links, $subLink, $serverType, $linkOptions = null){
     global $botUrl, $buttonValues, $botState, $agentBought, $payInfo;
     if($linkOptions === null && function_exists('v2raystore_getRuntimeDeliveryLinkOptions')){
@@ -21283,16 +21411,17 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     $appliedDays = $days;
     $newExpire = $now + ($days * 86400);
 
+    // وضعیت واقعی قبل از تمدید را یک بار می‌خوانیم. در حالت ریست برای گزارش استفاده می‌شود
+    // و در حالت افزایشی fallback امن حجم است اگر آمار لحظه‌ای پنل موقتاً total=0 برگرداند.
+    $preRenewRemain = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($order) : null;
+
     // فقط برای حالت تمدید ریست: مقدار حجم/روز قبل از تمدید را قبل از تغییر پنل ذخیره کن تا در گزارش گروه بیاید.
     $renewPreviousVolumeText = '';
     $renewPreviousDaysText = '';
-    if($resetMode && function_exists('v2raystore_getOrderRemainingSummary')){
-        $previousRemain = v2raystore_getOrderRemainingSummary($order);
-        if(is_array($previousRemain)){
-            $prevVolume = trim((string)($previousRemain['remaining_gb_text'] ?? ''));
-            if($prevVolume !== '') $renewPreviousVolumeText = ($prevVolume === 'نامحدود') ? 'نامحدود' : ($prevVolume . ' گیگ');
-            $renewPreviousDaysText = trim((string)($previousRemain['remaining_days_text'] ?? ''));
-        }
+    if($resetMode && is_array($preRenewRemain)){
+        $prevVolume = trim((string)($preRenewRemain['remaining_gb_text'] ?? ''));
+        if($prevVolume !== '') $renewPreviousVolumeText = ($prevVolume === 'نامحدود') ? 'نامحدود' : ($prevVolume . ' گیگ');
+        $renewPreviousDaysText = trim((string)($preRenewRemain['remaining_days_text'] ?? ''));
     }
     if($renewPreviousVolumeText === ''){
         $oldAmountBytes = max(0, intval($order['amount'] ?? 0));
@@ -21400,16 +21529,41 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     $daysText = $resetMode ? $days : $appliedDays;
     $renewedOrderForLive = $order;
     $renewedOrderForLive['fileid'] = $renewPlanId;
+    $renewedOrderForLive['inbound_id'] = $inbound_id;
+    $renewedOrderForLive['protocol'] = $renewProtocol;
     $renewedOrderForLive['expire_date'] = $newExpire;
+    $renewedOrderForLive['link'] = $renewStoredLink;
     $liveRemain = $resetMode ? null : (function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($renewedOrderForLive) : null);
     // در حالت ریست، گزارش باید دقیقاً مقدار پلنی را نشان دهد که تمدید شده، نه باقی‌مانده لحظه‌ای پنل.
     // چون بعضی پنل‌ها resetTraffic را با چند ثانیه تأخیر در clientStats نشان می‌دهند.
     $finalVolumeText = $resetMode ? $volumeText : ((is_array($liveRemain) && isset($liveRemain['remaining_gb_text']) && $liveRemain['remaining_gb_text'] !== '') ? $liveRemain['remaining_gb_text'] : $volumeText);
+    // اگر پنل بلافاصله بعد از تمدید افزایشی به‌اشتباه total=0 گزارش داد، حجم محدود را
+    // «نامحدود» نشان نده. مقدار قطعی افزوده‌شده را با باقی‌مانده قبل از تمدید جمع می‌کنیم.
+    if(!$resetMode && $finalVolumeText === 'نامحدود' && floatval($volume) > 0){
+        $prevGb = (is_array($preRenewRemain) && array_key_exists('remaining_gb', $preRenewRemain)) ? $preRenewRemain['remaining_gb'] : null;
+        $fallbackGb = ($prevGb !== null && is_numeric($prevGb)) ? (floatval($prevGb) + floatval($volume)) : floatval($volume);
+        $finalVolumeText = v2raystore_formatGbNumberForUser($fallbackGb);
+    }
     $finalDaysText = $resetMode ? strval(intval($days)) : ((is_array($liveRemain) && isset($liveRemain['remaining_days']) && $liveRemain['remaining_days'] !== '') ? $liveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($newExpire));
     $renewedUserMessage = function_exists('v2raystore_buildRenewedConfigUserMessage')
         ? v2raystore_buildRenewedConfigUserMessage($mainValues['renewed_config_to_user'] ?? '✅ سرویس REMARK با موفقیت تمدید شد.', $remark, $finalVolumeText, $finalDaysText)
         : str_replace(['REMARK','VOLUME','DAYS'], [$remark, $finalVolumeText, $finalDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.');
     sendMessage($renewedUserMessage, null, 'HTML', $uid);
+
+    // بعد از تمدید، لینک اتصال به‌روز همان سرویس را دوباره همراه QR ارسال کن.
+    // این مرحله جدا از خود تمدید است؛ خطای تلگرام نباید باعث تمدید دوباره یا برگشت پرداخت شود.
+    if(function_exists('v2raystore_sendRenewedServiceLinksToUser')){
+        $renewDeliveryOk = v2raystore_sendRenewedServiceLinksToUser($uid, $renewedOrderForLive, $finalVolumeText, $finalDaysText);
+        if(!$renewDeliveryOk){
+            @usleep(250000);
+            $renewDeliveryOk = v2raystore_sendRenewedServiceLinksToUser($uid, $renewedOrderForLive, $finalVolumeText, $finalDaysText);
+        }
+        if(!$renewDeliveryOk && function_exists('v2raystore_reportEvent')){
+            v2raystore_reportEvent('⚠️ خطای ارسال لینک بعد از تمدید', "🆔 کاربر: <code>{$uid}</code>
+🔮 سرویس: <code>" . htmlspecialchars($remark, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . "</code>
+📝 تمدید انجام شده اما ارسال لینک/QR از تلگرام ناموفق بوده است.", null, 'renew_delivery_failed');
+        }
+    }
 
     // جایزه تمدید باید بعد از موفقیت کامل تمدید و در یک پیام جدا اعمال شود.
     if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
@@ -21543,11 +21697,45 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         $legacyOrderForLive = ['server_id'=>$server_id, 'inbound_id'=>$renewInbound, 'uuid'=>$uuid, 'remark'=>$remark, 'expire_date'=>$legacyExpire];
         $legacyLiveRemain = function_exists('v2raystore_getOrderRemainingSummary') ? v2raystore_getOrderRemainingSummary($legacyOrderForLive) : null;
         $legacyVolumeText = (is_array($legacyLiveRemain) && isset($legacyLiveRemain['remaining_gb_text']) && $legacyLiveRemain['remaining_gb_text'] !== '') ? $legacyLiveRemain['remaining_gb_text'] : rtrim(rtrim(number_format(floatval($volume), 2, '.', ''), '0'), '.');
+        if($legacyVolumeText === 'نامحدود' && floatval($volume) > 0) $legacyVolumeText = v2raystore_formatGbNumberForUser(floatval($volume));
         $legacyDaysText = (is_array($legacyLiveRemain) && isset($legacyLiveRemain['remaining_days']) && $legacyLiveRemain['remaining_days'] !== '') ? $legacyLiveRemain['remaining_days'] : v2raystore_formatRemainingDaysNumber($legacyExpire);
         $legacyRenewedUserMessage = function_exists('v2raystore_buildRenewedConfigUserMessage')
             ? v2raystore_buildRenewedConfigUserMessage($mainValues['renewed_config_to_user'] ?? '✅ سرویس REMARK با موفقیت تمدید شد.', $remark, $legacyVolumeText, $legacyDaysText)
             : str_replace(['REMARK','VOLUME','DAYS'], [$remark, $legacyVolumeText, $legacyDaysText], $mainValues['renewed_config_to_user'] ?? 'سرویس شما تمدید شد.');
         sendMessage($legacyRenewedUserMessage, null, 'HTML', $uid);
+
+        // برای مسیر تمدید قدیمی هم اگر این سرویس در orders_list ثبت شده باشد، لینک/QR را دوباره بفرست.
+        if(function_exists('v2raystore_sendRenewedServiceLinksToUser')){
+            $legacyStoredOrder = null;
+            $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `userid`=? AND `server_id`=? AND `remark`=? ORDER BY `id` DESC LIMIT 1");
+            if($stmt){
+                $stmt->bind_param('iis', $uid, $server_id, $remark);
+                $stmt->execute();
+                $legacyStoredOrder = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
+            }
+            if(is_array($legacyStoredOrder)){
+                $legacyStoredOrder['inbound_id'] = $renewInbound > 0 ? $renewInbound : intval($legacyStoredOrder['inbound_id'] ?? 0);
+                $legacyStoredOrder['expire_date'] = $legacyExpire;
+                $legacyServerType = '';
+                $legacySrvStmt = $connection->prepare("SELECT `type` FROM `server_config` WHERE `id`=? LIMIT 1");
+                if($legacySrvStmt){
+                    $legacySrvStmt->bind_param('i', $server_id);
+                    $legacySrvStmt->execute();
+                    $legacySrvRow = $legacySrvStmt->get_result()->fetch_assoc();
+                    $legacySrvStmt->close();
+                    $legacyServerType = (string)($legacySrvRow['type'] ?? '');
+                }
+                if($legacyServerType === 'sanaei_new' && function_exists('v2raystore_sanaeiNewClientLinksFromPanel')){
+                    $legacyFreshLinks = v2raystore_sanaeiNewClientLinksFromPanel($server_id, $remark, $uuid, intval($legacyStoredOrder['inbound_id'] ?? 0));
+                    if(is_array($legacyFreshLinks) && !empty($legacyFreshLinks)){
+                        $legacyStoredOrder['link'] = json_encode(array_values(array_unique(array_filter(array_map('strval', $legacyFreshLinks)))), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                    }
+                }
+                v2raystore_sendRenewedServiceLinksToUser($uid, $legacyStoredOrder, $legacyVolumeText, $legacyDaysText);
+            }
+        }
+
         if($price > 0 && function_exists('v2raystore_rewardMaybeAward')){
             $legacyRewardOrder = ['id'=>0, 'userid'=>$uid, 'server_id'=>$server_id, 'inbound_id'=>$renewInbound, 'uuid'=>$uuid, 'remark'=>$remark, 'status'=>1];
             try{ v2raystore_rewardMaybeAward('renew', $hashId, 0, $uid, $price, $legacyRewardOrder, $volume); }
