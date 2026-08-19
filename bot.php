@@ -3057,59 +3057,31 @@ if(preg_match('/^approvePayment(.*)/',$data,$match) && ($from_id == $admin || $u
     }
     $userId = intval($result['user_id'] ?? 0);
     $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
-    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success', $copyText));
+    if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '✅ تأیید شد', 'success', $userId, $copyText);
+    elseif(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $userId, 'success', $copyText));
     else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
     exit();
 }
 
 if(preg_match('/^decPayment(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
-    $decUserId = 0;
-    if($stmt){
-        $stmt->bind_param("s", $match[1]);
-        $stmt->execute();
-        $decPayInfo = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
-        $decUserId = intval($decPayInfo['user_id'] ?? 0);
-        if(($decPayInfo['state'] ?? '') != 'sent'){
-            alert('این درخواست قبلاً تأیید/رد شده یا قابل رد کردن نیست.', true);
-            if(($decPayInfo['state'] ?? '') == 'approved' && function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', $decUserId, 'success'));
-            exit();
-        }
-    }
-    $keys = function_exists('v2raystore_orderStatusKeyboard') ? v2raystore_orderStatusKeyboard('❌ رد شد', $decUserId, 'danger') : json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE);
-    file_put_contents("temp" . $from_id . ".txt", $keys);
-    sendMessage("لطفاً دلیل عدم تأیید افزایش موجودی را وارد کنید",$cancelKey);
-    setUser("decPayment" . $message_id . "_" . $match[1]);
-}
-if(preg_match('/^decPayment(\d+)_(.*)/',$userInfo['step'],$match) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ?");
-    $stmt->bind_param("s", $match[2]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $price = $payInfo['price'];
-    $userId = $payInfo['user_id'];
-    
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined' WHERE `hash_id` = ? AND `state` = 'sent'");
-    $stmt->bind_param("s", $match[2]);
-    $stmt->execute();
-    $changed = $stmt->affected_rows;
-    $stmt->close();
-    if($changed <= 0){
-        setUser();
-        sendMessage('❌ این درخواست دیگر در وضعیت قابل رد کردن نیست؛ احتمالاً قبلاً تأیید/رد شده است.', $removeKeyboard);
+    $hashId = trim($match[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('پرداخت پیدا نشد.', true); exit(); }
+    $uid = intval($pay['user_id'] ?? 0);
+    $state = (string)($pay['state'] ?? '');
+    if(in_array($state, ['declined','auto_cancelled','cancelled_by_user'], true)){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '❌ رد شد', 'danger', $uid);
+        alert('این درخواست قبلاً رد شده است.', true);
         exit();
     }
-    
-    sendMessage("💔 افزایش موجودی شما به مبلغ "  . number_format($price) . " به دلیل زیر رد شد\n\n$text",null,null,$userId);
-
-
-    editKeys(file_get_contents("temp" . $from_id . ".txt"), $match[1]);
-    setUser();
-    sendMessage('پیامت رو براش ارسال کردم ... 🤝',$removeKeyboard);
-    unlink("temp" . $from_id . ".txt");
+    if($state === 'approved' || $state === 'paid_with_wallet'){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '✅ تأیید شد', 'success', $uid);
+        alert('این درخواست قبلاً تأیید شده و قابل رد کردن نیست.', true);
+        exit();
+    }
+    setUser('manualReceiptDecline|' . $hashId . '|' . intval($message_id) . '|' . $uid);
+    sendMessage("📝 دلیل رد افزایش موجودی رو بنویس تا برای مشتری ارسال کنم.", $cancelKey, 'HTML');
+    exit();
 }
 if($data=="increaseUserWallet" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
@@ -7883,7 +7855,9 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
     }
     $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
     $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
-    if(function_exists('v2raystore_orderStatusKeyboard')){
+    if(function_exists('v2raystore_finalizeManualPayMessage')){
+        v2raystore_finalizeManualPayMessage(trim($match[1]), $approvedText, 'success', intval($result['user_id'] ?? 0), $copyText);
+    }elseif(function_exists('v2raystore_orderStatusKeyboard')){
         editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
     }else{
         editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE));
@@ -8242,14 +8216,17 @@ if(preg_match('/^declineOrder\|(.+)\|(\d+)\|(\d+)$/',$userInfo['step'] ?? '', $m
         exit();
     }
 
-    if(function_exists('v2raystore_orderStatusKeyboard')){
+    if(function_exists('v2raystore_finalizeManualPayMessage')){
+        v2raystore_finalizeManualPayMessage($hashId, '❌ رد شد', 'danger', $uid, '', intval($from_id), $targetMsgId);
+    }elseif(function_exists('v2raystore_orderStatusKeyboard')){
         editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', $uid, 'danger'), $targetMsgId);
     }else{
         editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌ رد شد','callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE), $targetMsgId);
     }
-    sendMessage('پیامت رو براش ارسال کردم ... 🤝',$removeKeyboard);
+    if(function_exists('v2raystore_notifyDeclinedPay')) v2raystore_notifyDeclinedPay($declineResult['pay'] ?? [], $text);
+    else sendMessage($text, null, null, $uid);
+    sendMessage('✅ درخواست رد شد و دلیل برای کاربر ارسال شد.',$removeKeyboard);
     sendMessage($mainValues['reached_main_menu'],getMainKeys());
-    sendMessage($text, null, null, $uid);
     exit();
 }
 if(preg_match('/decline/',$data) and ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -13123,24 +13100,69 @@ if(preg_match('/approveRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $u
     }
     $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : ($buttonValues['approved'] ?? '✅ تأیید شد');
     $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
-    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage(trim($match[1]), $approvedText, 'success', intval($result['user_id'] ?? 0), $copyText);
+    elseif(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
     else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$approvedText,'callback_data'=>'v2raystore']]]], JSON_UNESCAPED_UNICODE));
     sendMessage("✅سرویس " . ($result['renew_remark'] ?? '') . " با موفقیت تمدید شد", null, null, intval($result['user_id'] ?? 0));
     exit;
 }
 if(preg_match('/decRenewAcc(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $hashId = trim($match[1]);
-    $declineResult = function_exists('v2raystore_declinePayByHash') ? v2raystore_declinePayByHash($hashId, 'رد شده توسط ادمین') : ['ok'=>false, 'message'=>'تابع رد سفارش در دسترس نیست.'];
-    if(!$declineResult['ok']){
-        alert($declineResult['message'], true);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('پرداخت پیدا نشد.', true); exit(); }
+    $uid = intval($pay['user_id'] ?? 0);
+    if(in_array(($pay['state'] ?? ''), ['declined','auto_cancelled','cancelled_by_user'], true)){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '❌ رد شد', 'danger', $uid);
+        alert('این درخواست قبلاً رد شده است.', true);
         exit();
     }
-    $uid = intval($declineResult['user_id'] ?? 0);
-    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', $uid, 'danger'));
-    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'❌','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
-    if($uid > 0) sendMessage("😖|تمدید سرویس شما لغو شد", null, null, $uid);
-    exit;
+    if(($pay['state'] ?? '') === 'approved' && function_exists('v2raystore_payHasLinkedApprovedOrder') && v2raystore_payHasLinkedApprovedOrder($pay)){
+        alert('این تمدید قبلاً تأیید شده و قابل رد کردن نیست.', true);
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '✅ تأیید شد', 'success', $uid);
+        exit();
+    }
+    setUser('manualReceiptDecline|' . $hashId . '|' . intval($message_id) . '|' . $uid);
+    sendMessage("📝 دلیل رد تمدید رو بنویس تا برای مشتری ارسال کنم.", $cancelKey, 'HTML');
+    exit();
 }
+
+if(preg_match('/^manualReceiptDecline\|([^|]+)\|(\d+)\|(\d+)$/', $userInfo['step'] ?? '', $match) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+    $hashId = trim($match[1]);
+    $targetMsgId = intval($match[2]);
+    $uid = intval($match[3]);
+    $reason = trim((string)$text);
+    if($reason === ''){
+        sendMessage('❌ دلیل نمی‌تونه خالی باشه. دلیل رد رو بنویس.', $cancelKey, 'HTML');
+        exit();
+    }
+    $declineResult = function_exists('v2raystore_declinePayByHash') ? v2raystore_declinePayByHash($hashId, $reason) : ['ok'=>false, 'message'=>'تابع رد سفارش در دسترس نیست.'];
+    if(empty($declineResult['ok'])){
+        setUser();
+        sendMessage('❌ ' . ($declineResult['message'] ?? 'رد درخواست ناموفق بود.'), $removeKeyboard, 'HTML');
+        exit();
+    }
+    $uid = intval($declineResult['user_id'] ?? $uid);
+    if(function_exists('v2raystore_finalizeManualPayMessage')){
+        v2raystore_finalizeManualPayMessage($hashId, '❌ رد شد', 'danger', $uid, '', intval($from_id), $targetMsgId);
+    }elseif(function_exists('v2raystore_orderStatusKeyboard')){
+        editKeys(v2raystore_orderStatusKeyboard('❌ رد شد', $uid, 'danger'), $targetMsgId);
+    }
+    if(function_exists('v2raystore_notifyDeclinedPay')) v2raystore_notifyDeclinedPay($declineResult['pay'] ?? [], $reason);
+    elseif($uid > 0) sendMessage("❌ درخواست شما تأیید نشد.
+
+📝 دلیل:
+" . $reason, null, null, $uid);
+    setUser();
+    sendMessage('✅ درخواست رد شد و دلیل برای مشتری ارسال شد.', $removeKeyboard, 'HTML');
+    exit();
+}
+
+if(preg_match('/^manualReceiptDecline\|([^|]+)\|(\d+)\|(\d+)$/', $userInfo['step'] ?? '') && ($text ?? '') == ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    setUser();
+    sendMessage('↩️ رد رسید لغو شد؛ درخواست همچنان در انتظار بررسی است.', $removeKeyboard, 'HTML');
+    exit();
+}
+
 if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? LIMIT 1");
     $stmt->bind_param("s", $match[1]);
@@ -14015,7 +14037,8 @@ if(preg_match('/approveIncreaseDay(.*)/',$data,$match) && ($from_id == $admin ||
     }
     $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : '✅ تأیید شد';
     $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
-    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, $approvedText, 'success', intval($result['user_id'] ?? 0), $copyText);
+    elseif(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
     else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
     exit();
 }
@@ -14324,97 +14347,51 @@ if(preg_match('/approveIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin
     }
     $approvedText = function_exists('v2raystore_approvalStatusTextFromResult') ? v2raystore_approvalStatusTextFromResult($result, false) : '✅ تأیید شد';
     $copyText = function_exists('v2raystore_approvalCopyTextFromResult') ? v2raystore_approvalCopyTextFromResult($result) : '';
-    if(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
+    if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, $approvedText, 'success', intval($result['user_id'] ?? 0), $copyText);
+    elseif(function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard($approvedText, intval($result['user_id'] ?? 0), 'success', $copyText));
     else editKeys(json_encode(['inline_keyboard'=>[[['text'=>'✅ تأیید شد','callback_data'=>'dontsendanymore']]]], JSON_UNESCAPED_UNICODE));
     exit();
 }
 
 if(preg_match('/decIncreaseVolume(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result();
-    $stmt->close();
-    
-    $payParam = $payInfo->fetch_assoc();
-    $payType = $payParam['type'];
-
-
-    preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType, $increaseInfo);
-    $orderId = $increaseInfo[1];
-    
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $orderId);
-    $stmt->execute();
-    $orderInfo = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $server_id = $orderInfo['server_id'];
-    $inbound_id = $orderInfo['inbound_id'];
-    $remark = $orderInfo['remark'];
-    
-    $planid = $increaseInfo[2];
-
-
-    $uid = $payParam['user_id'];
-    $stmt = $connection->prepare("SELECT * FROM `increase_plan` WHERE `id` = ?");
-    $stmt->bind_param("i",$planid);
-    $stmt->execute();
-    $res = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $price = $res['price'];
-    $volume = $res['volume'];
-
-    $acctxt = '';
-    editKeys(json_encode(['inline_keyboard'=>[
-		    [['text'=>"لغو شد ❌",'callback_data'=>"v2raystore"]]
-		    ]]));
-    
-    sendMessage("افزایش حجم $volume گیگ اشتراک $remark لغو شد",null,null,$uid);
+    $hashId = trim($match[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('پرداخت پیدا نشد.', true); exit(); }
+    $uid = intval($pay['user_id'] ?? 0);
+    if(in_array(($pay['state'] ?? ''), ['declined','auto_cancelled','cancelled_by_user'], true)){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '❌ رد شد', 'danger', $uid);
+        alert('این درخواست قبلاً رد شده است.', true);
+        exit();
+    }
+    if(($pay['state'] ?? '') === 'approved' || ($pay['state'] ?? '') === 'paid_with_wallet'){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '✅ تأیید شد', 'success', $uid);
+        alert('این درخواست قبلاً تأیید شده و قابل رد کردن نیست.', true);
+        exit();
+    }
+    setUser('manualReceiptDecline|' . $hashId . '|' . intval($message_id) . '|' . $uid);
+    sendMessage("📝 دلیل رد درخواست افزایش حجم رو بنویس تا برای مشتری ارسال کنم.", $cancelKey, 'HTML');
+    exit();
 }
 if(preg_match('/decIncreaseDay(.*)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'sent')");
-    $stmt->bind_param("s", $match[1]);
-    $stmt->execute();
-    $payInfo = $stmt->get_result();
-    $stmt->close();
-    
-    $payParam = $payInfo->fetch_assoc();
-    $payType = $payParam['type'];
-
-
-    preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType, $increaseInfo);
-    $orderId = $increaseInfo[1];
-    
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
-    $stmt->bind_param("i", $orderId);
-    $stmt->execute();
-    $orderInfo = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $server_id = $orderInfo['server_id'];
-    $inbound_id = $orderInfo['inbound_id'];
-    $remark = $orderInfo['remark'];
-    
-    $planid = $increaseInfo[2];
-
-
-    $uid = $payParam['user_id'];
-    $stmt = $connection->prepare("SELECT * FROM `increase_day` WHERE `id` = ?");
-    $stmt->bind_param("i",$planid);
-    $stmt->execute();
-    $res = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $price = $res['price'];
-    $volume = $res['volume'];
-
-    $acctxt = '';
-    editKeys(json_encode(['inline_keyboard'=>[
-		    [['text'=>"لغو شد ❌",'callback_data'=>"v2raystore"]]
-		    ]]));
-    
-    sendMessage("افزایش زمان $volume روز اشتراک $remark لغو شد",null,null,$uid);
+    $hashId = trim($match[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('پرداخت پیدا نشد.', true); exit(); }
+    $uid = intval($pay['user_id'] ?? 0);
+    if(in_array(($pay['state'] ?? ''), ['declined','auto_cancelled','cancelled_by_user'], true)){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '❌ رد شد', 'danger', $uid);
+        alert('این درخواست قبلاً رد شده است.', true);
+        exit();
+    }
+    if(($pay['state'] ?? '') === 'approved' || ($pay['state'] ?? '') === 'paid_with_wallet'){
+        if(function_exists('v2raystore_finalizeManualPayMessage')) v2raystore_finalizeManualPayMessage($hashId, '✅ تأیید شد', 'success', $uid);
+        alert('این درخواست قبلاً تأیید شده و قابل رد کردن نیست.', true);
+        exit();
+    }
+    setUser('manualReceiptDecline|' . $hashId . '|' . intval($message_id) . '|' . $uid);
+    sendMessage("📝 دلیل رد درخواست افزایش زمان رو بنویس تا برای مشتری ارسال کنم.", $cancelKey, 'HTML');
+    exit();
 }
+
 if(preg_match('/payIncraseWithWallet(.*)/', $data,$match)){
     if(function_exists('v2raystore_approveIncreaseVolumePayByHash')){
         $hashId = trim($match[1]);

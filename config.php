@@ -20014,18 +20014,85 @@ function v2raystore_markPayReceiptSent($hashId, $receiptFileId = null){
     return $ok;
 }
 
+function v2raystore_ensureAdminPayMessagesTable(){
+    global $connection;
+    static $ready = null;
+    if($ready !== null) return $ready;
+    $sql = "CREATE TABLE IF NOT EXISTS `pay_admin_messages` (
+        `hash_id` varchar(128) NOT NULL,
+        `chat_id` bigint(30) NOT NULL,
+        `message_id` bigint(30) NOT NULL,
+        `created_at` int(11) NOT NULL DEFAULT 0,
+        PRIMARY KEY (`hash_id`,`chat_id`,`message_id`),
+        KEY `idx_pay_admin_hash` (`hash_id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    $ready = (bool)@$connection->query($sql);
+    return $ready;
+}
+
 function v2raystore_storeAdminPayMessage($hashId, $chatId, $messageId){
     global $connection;
     $hashId = trim((string)$hashId);
     $chatId = intval($chatId);
     $messageId = intval($messageId);
     if($hashId === '' || $chatId == 0 || $messageId <= 0) return false;
-    $stmt = $connection->prepare("UPDATE `pays` SET `admin_chat_id` = ?, `admin_message_id` = ? WHERE `hash_id` = ?");
+
+    // تمام کپی‌های رسید برای ادمین‌های مختلف ثبت می‌شوند تا بعد از تأیید/رد دستی
+    // دکمه‌های همه کپی‌ها مثل تأیید خودکار به وضعیت نهایی تبدیل شوند.
+    if(v2raystore_ensureAdminPayMessagesTable()){
+        $now = time();
+        $stmt = $connection->prepare("INSERT INTO `pay_admin_messages` (`hash_id`,`chat_id`,`message_id`,`created_at`) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE `created_at`=VALUES(`created_at`)");
+        if($stmt){
+            $stmt->bind_param('siii', $hashId, $chatId, $messageId, $now);
+            $stmt->execute();
+            $stmt->close();
+        }
+    }
+
+    // ستون‌های قدیمی برای سازگاری نگه داشته می‌شوند و فقط اولین پیام را نگه می‌دارند.
+    $stmt = $connection->prepare("UPDATE `pays` SET `admin_chat_id` = ?, `admin_message_id` = ? WHERE `hash_id` = ? AND (COALESCE(`admin_chat_id`,0)=0 OR COALESCE(`admin_message_id`,0)=0)");
     if(!$stmt) return false;
     $stmt->bind_param('iis', $chatId, $messageId, $hashId);
     $ok = $stmt->execute();
     $stmt->close();
     return $ok;
+}
+
+function v2raystore_getAdminPayMessages($hashId){
+    global $connection, $admin;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return [];
+    $items = [];
+
+    if(v2raystore_ensureAdminPayMessagesTable()){
+        $stmt = $connection->prepare("SELECT `chat_id`,`message_id` FROM `pay_admin_messages` WHERE `hash_id` = ? ORDER BY `created_at` ASC");
+        if($stmt){
+            $stmt->bind_param('s', $hashId);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while($row = $res->fetch_assoc()){
+                $chat = intval($row['chat_id'] ?? 0);
+                $msg = intval($row['message_id'] ?? 0);
+                if($chat != 0 && $msg > 0) $items[$chat . ':' . $msg] = [$chat, $msg];
+            }
+            $stmt->close();
+        }
+    }
+
+    $stmt = $connection->prepare("SELECT `admin_chat_id`, `admin_message_id` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('s', $hashId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if($row){
+            $chat = intval($row['admin_chat_id'] ?? 0);
+            if($chat == 0) $chat = intval($admin);
+            $msg = intval($row['admin_message_id'] ?? 0);
+            if($chat != 0 && $msg > 0) $items[$chat . ':' . $msg] = [$chat, $msg];
+        }
+    }
+    return array_values($items);
 }
 
 function v2raystore_getAdminPayMessage($hashId){
@@ -20039,6 +20106,8 @@ function v2raystore_getAdminPayMessage($hashId){
     $row = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if(!$row) return [0, 0, 0];
+    $messages = v2raystore_getAdminPayMessages($hashId);
+    if(count($messages) > 0) return [intval($messages[0][0]), intval($messages[0][1]), intval($row['user_id'] ?? 0)];
     $chat = intval($row['admin_chat_id'] ?? 0);
     if($chat == 0) $chat = intval($admin);
     return [intval($chat), intval($row['admin_message_id'] ?? 0), intval($row['user_id'] ?? 0)];
@@ -20105,28 +20174,65 @@ function v2raystore_approvalConfigNamesLineFromResult($result){
 }
 
 function v2raystore_updateAdminPayMessageStatus($hashId, $statusText, $style = 'success', $userId = 0, $copyText = ''){
-    [$chat, $msg, $storedUser] = v2raystore_getAdminPayMessage($hashId);
-    if($userId <= 0) $userId = $storedUser;
-    if($chat == 0 || $msg <= 0) return false;
-    $keys = v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText);
-    $keys = v2raystore_styleReplyMarkup($keys);
-    $res = bot('editMessageReplyMarkup',[
-        'chat_id' => $chat,
-        'message_id' => $msg,
-        'reply_markup' => $keys
-    ]);
-    if(is_object($res) && isset($res->ok) && $res->ok) return true;
-    $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
-    if(function_exists('v2raystore_isUserPrivacyButtonError') && v2raystore_isUserPrivacyButtonError($desc)){
-        $removed = false;
-        $safeKeys = v2raystore_stripPrivateUserButtons($keys, $removed);
-        if($removed){
-            bot('editMessageReplyMarkup',[
-                'chat_id' => $chat,
-                'message_id' => $msg,
-                'reply_markup' => $safeKeys
-            ]);
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return false;
+    if($userId <= 0){
+        $stmt = $connection->prepare("SELECT `user_id` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('s', $hashId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $userId = intval($row['user_id'] ?? 0);
         }
+    }
+    $messages = v2raystore_getAdminPayMessages($hashId);
+    if(count($messages) == 0) return false;
+    $keys = v2raystore_styleReplyMarkup(v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText));
+    $any = false;
+    foreach($messages as $item){
+        $chat = intval($item[0] ?? 0);
+        $msg = intval($item[1] ?? 0);
+        if($chat == 0 || $msg <= 0) continue;
+        $res = bot('editMessageReplyMarkup',[
+            'chat_id' => $chat,
+            'message_id' => $msg,
+            'reply_markup' => $keys
+        ]);
+        if(is_object($res) && isset($res->ok) && $res->ok){
+            $any = true;
+            continue;
+        }
+        $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
+        if(function_exists('v2raystore_isUserPrivacyButtonError') && v2raystore_isUserPrivacyButtonError($desc)){
+            $removed = false;
+            $safeKeys = v2raystore_stripPrivateUserButtons($keys, $removed);
+            if($removed){
+                $res2 = bot('editMessageReplyMarkup',[
+                    'chat_id' => $chat,
+                    'message_id' => $msg,
+                    'reply_markup' => $safeKeys
+                ]);
+                if(is_object($res2) && isset($res2->ok) && $res2->ok) $any = true;
+            }
+        }
+    }
+    return $any;
+}
+
+function v2raystore_finalizeManualPayMessage($hashId, $statusText, $style = 'success', $userId = 0, $copyText = '', $currentChatId = 0, $currentMessageId = 0){
+    global $from_id, $message_id;
+    $currentChatId = intval($currentChatId ?: ($from_id ?? 0));
+    $currentMessageId = intval($currentMessageId ?: ($message_id ?? 0));
+    $keys = v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText);
+    v2raystore_updateAdminPayMessageStatus($hashId, $statusText, $style, $userId, $copyText);
+    if($currentChatId != 0 && $currentMessageId > 0){
+        bot('editMessageReplyMarkup',[
+            'chat_id'=>$currentChatId,
+            'message_id'=>$currentMessageId,
+            'reply_markup'=>v2raystore_styleReplyMarkup($keys)
+        ]);
     }
     return true;
 }
@@ -20607,9 +20713,13 @@ function v2raystore_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard =
 
         if($ok){
             $sent++;
-            if($firstMsg <= 0 && is_object($res) && isset($res->result->message_id)){
-                $firstChat = $chatId;
-                $firstMsg = intval($res->result->message_id);
+            if(is_object($res) && isset($res->result->message_id)){
+                $sentMsgId = intval($res->result->message_id);
+                if($hashId !== '' && $sentMsgId > 0) v2raystore_storeAdminPayMessage($hashId, $chatId, $sentMsgId);
+                if($firstMsg <= 0 && $sentMsgId > 0){
+                    $firstChat = $chatId;
+                    $firstMsg = $sentMsgId;
+                }
             }
         }else{
             $errors[] = $chatId . ': ' . implode(' | ', $descList);
@@ -21118,6 +21228,63 @@ function v2raystore_declinePayByHash($hashId, $reason = ''){
     $stmt->close();
     if($changed <= 0) return ['ok'=>false, 'message'=>'این سفارش دیگر در وضعیت قابل رد کردن نیست.'];
     return ['ok'=>true, 'message'=>'سفارش رد شد.', 'user_id'=>intval($pay['user_id'] ?? 0), 'pay'=>$pay];
+}
+
+function v2raystore_declinedPayUserText($pay, $reason = ''){
+    global $connection;
+    if(!is_array($pay)) return '';
+    $type = (string)($pay['type'] ?? '');
+    $reason = trim((string)$reason);
+    if($reason === '') $reason = 'دلیلی ثبت نشده است.';
+    $title = 'پرداخت / سفارش شما تأیید نشد.';
+    if($type === 'INCREASE_WALLET') $title = 'درخواست افزایش موجودی شما تأیید نشد.';
+    elseif($type === 'RENEW_ACCOUNT' || $type === 'RENEW_SCONFIG') $title = 'درخواست تمدید سرویس شما تأیید نشد.';
+    elseif(preg_match('/^INCREASE_DAY_/', $type)) $title = 'درخواست افزایش زمان سرویس شما تأیید نشد.';
+    elseif(preg_match('/^INCREASE_VOLUME_/', $type)) $title = 'درخواست افزایش حجم سرویس شما تأیید نشد.';
+    elseif($type === 'BUY_SUB') $title = 'رسید خرید سرویس شما تأیید نشد.';
+
+    $orderId = 0;
+    if($type === 'RENEW_ACCOUNT' || $type === 'RENEW_SCONFIG'){
+        $desc = json_decode((string)($pay['description'] ?? ''), true);
+        if(is_array($desc) && intval($desc['order_id'] ?? 0) > 0) $orderId = intval($desc['order_id']);
+        if($orderId <= 0) $orderId = intval($pay['plan_id'] ?? 0);
+    }elseif(preg_match('/^INCREASE_(?:DAY|VOLUME)_(\d+)_/', $type, $m)){
+        $orderId = intval($m[1]);
+    }
+
+    $remark = '';
+    if($orderId > 0){
+        $stmt = $connection->prepare("SELECT `remark` FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $orderId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $remark = trim((string)($row['remark'] ?? ''));
+        }
+    }
+    if($remark === '' && $type === 'BUY_SUB'){
+        $desc = trim((string)($pay['description'] ?? ''));
+        if($desc !== '' && $desc[0] !== '{' && $desc[0] !== '[') $remark = $desc;
+    }
+
+    $lines = ["❌ <b>" . v2raystore_h($title) . "</b>"];
+    if($remark !== '') $lines[] = "🔮 سرویس: <code>" . v2raystore_h($remark) . "</code>";
+    $price = intval($pay['price'] ?? 0);
+    if($price > 0) $lines[] = "💰 مبلغ: <b>" . number_format($price) . " تومان</b>";
+    $lines[] = "📝 <b>دلیل:</b>\n" . v2raystore_h($reason);
+    $lines[] = "\nاگر فکر می‌کنید مشکلی وجود دارد، با پشتیبانی در ارتباط باشید.";
+    return implode("\n", $lines);
+}
+
+function v2raystore_notifyDeclinedPay($pay, $reason = ''){
+    if(!is_array($pay)) return false;
+    $uid = intval($pay['user_id'] ?? 0);
+    if($uid <= 0) return false;
+    $text = v2raystore_declinedPayUserText($pay, $reason);
+    if($text === '') return false;
+    $res = sendMessage($text, null, 'HTML', $uid);
+    return is_object($res) ? (!isset($res->ok) || !empty($res->ok)) : (bool)$res;
 }
 
 function v2raystore_restorePayApprovalStateTo($hashId, $state){
