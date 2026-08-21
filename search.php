@@ -4,13 +4,11 @@ if(!file_exists("baseInfo.php") || !file_exists("config.php")){
     exit();
 }
 
-require "baseInfo.php";
-require "config.php";
-include "jdf.php";
+require __DIR__ . "/config.php";
 
 
-if(isset($_REQUEST['id'])){
-    $config_link = $_REQUEST['id'];
+if(isset($_GET['id'])){
+    $config_link = (string)$_GET['id'];
 
     if(preg_match('/^vmess:\/\/(.*)/',$config_link,$match)){
         $jsonDecode = json_decode(base64_decode($match[1]),true);

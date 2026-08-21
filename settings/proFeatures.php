@@ -13,7 +13,7 @@ if(!function_exists('v2raystore_pro_setting')){
 function v2raystore_pro_setting($key, $default = ''){
     global $connection;
     if(function_exists('farid_getSettingValue')){
-        $v = farid_getSettingValue($key, null);
+        $v = farid_getSettingValue($key);
         return ($v === null || $v === '') ? $default : $v;
     }
     $stmt = @$connection->prepare("SELECT `value` FROM `setting` WHERE `type`=? LIMIT 1");
@@ -539,9 +539,12 @@ function v2raystore_pro_fetch_last_online_status($server, $email, $order = null)
     if(empty($identifiers)) return v2raystore_pro_unsupported_last_online_status();
 
     $onlineRequests = [
-        ['/panel/api/inbounds/onlines', 'GET', null],
+        // 3x-ui 3.6.x canonical endpoints.
+        ['/panel/api/clients/onlines', 'POST', null],
+        ['/panel/api/clients/onlinesByGuid', 'POST', null],
+        // Older forks kept these under inbounds.
         ['/panel/api/inbounds/onlines', 'POST', null],
-        ['/panel/api/inbounds/onlines', 'POST', ['emails' => $identifiers]],
+        ['/panel/api/inbounds/onlines', 'GET', null],
     ];
     foreach($onlineRequests as $req){
         $decoded = v2raystore_pro_sanaei_request_cached($server, $req[0], $req[1], $req[2]);
@@ -554,6 +557,15 @@ function v2raystore_pro_fetch_last_online_status($server, $email, $order = null)
         ['email' => $identifiers[0]],
         $identifiers,
     ];
+    foreach($payloads as $payload){
+        $decoded = v2raystore_pro_sanaei_request_cached($server, '/panel/api/clients/lastOnline', 'POST', $payload);
+        if(is_array($decoded)){
+            $st = v2raystore_pro_parse_last_online_response_multi($decoded, $identifiers);
+            if(v2raystore_pro_status_is_real($st)) return $st;
+        }
+    }
+
+    // Compatibility fallback for older panel forks.
     foreach($payloads as $payload){
         $decoded = v2raystore_pro_sanaei_request_cached($server, '/panel/api/inbounds/lastOnline', 'POST', $payload);
         if(is_array($decoded)){

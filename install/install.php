@@ -1,15 +1,11 @@
 <?php
-if(isset($_REQUEST['updateBot'])){
-	require "update.php";
-	require "../baseInfo.php";
-	
-	$connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
-	
-	if($connection->connect_error){
-	    form("خطای دیتابیس: " . $connection->connect_error);
-	    exit();
-	}
-    
-    updateBot();
+// Kept as a compatibility CLI entrypoint. Database migrations must never be
+// triggerable through the public web server.
+if(PHP_SAPI !== 'cli'){
+    http_response_code(403);
+    exit('CLI only');
 }
+require __DIR__ . '/update.php';
+updateBot();
+echo "Database migrations completed.\n";
 ?>

@@ -5,17 +5,17 @@
 set -o pipefail
 
 BRAND_NAME="V2Ray Store"
+SCRIPT_VERSION="13.0.0"
 BOT_SLUG="v2ray-store"
 PANEL_SLUG="v2ray-store-panel"
-BOT_DIR="/var/www/html/${BOT_SLUG}"
-PANEL_DIR="/var/www/html/${PANEL_SLUG}"
+BOT_DIR="${V2RAYSTORE_BOT_DIR:-/var/www/html/${BOT_SLUG}}"
+PANEL_DIR="${V2RAYSTORE_PANEL_DIR:-/var/www/html/${PANEL_SLUG}}"
 BASE_INFO="${BOT_DIR}/baseInfo.php"
-REPO_URL="https://github.com/0fariid0/v2ray-store.git"
-RAW_INSTALL_URL="https://raw.githubusercontent.com/0fariid0/v2ray-store/main/v2raystore.sh"
+REPO_URL="${V2RAYSTORE_REPO_URL:-https://github.com/0fariid0/v2ray-store.git}"
 PANEL_ZIP_URL="https://raw.githubusercontent.com/0fariid0/v2ray-store/main/v2raystore-panel.zip"
 PANEL_RELEASE_ZIP_URL="https://github.com/0fariid0/v2ray-store/releases/latest/download/v2raystore-panel.zip"
-BACKUP_DIR="/root/v2raystore_update_backups"
-CONFIG_DIR="/root/confv2raystore"
+BACKUP_DIR="${V2RAYSTORE_BACKUP_DIR:-/root/v2raystore_update_backups}"
+CONFIG_DIR="${V2RAYSTORE_CONFIG_DIR:-/root/confv2raystore}"
 CONFIG_FILE="${CONFIG_DIR}/dbrootv2raystore.txt"
 LOCAL_CMD="/usr/local/bin/v2ray-store"
 LOG_FILE="/tmp/v2raystore_update.log"
@@ -42,7 +42,6 @@ LEGACY_BACKUP_FILE="dbbackup${LEGACY_NAME}.sh"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 WHITE='\033[1;37m'
 DIM='\033[0;37m'
@@ -313,8 +312,16 @@ backup_path() {
     local path="$1" label="$2"
     [ -e "$path" ] || return 0
     mkdir -p "$BACKUP_DIR"
-    local out="${BACKUP_DIR}/${label}.$(date +%Y%m%d-%H%M%S).tar.gz"
-    tar -czf "$out" -C "$(dirname "$path")" "$(basename "$path")" 2>/dev/null && success "Backup created: $out"
+    local out
+    out="${BACKUP_DIR}/${label}.$(date +%Y%m%d-%H%M%S).tar.gz"
+    if tar -czf "$out" -C "$(dirname "$path")" "$(basename "$path")" 2>/dev/null; then
+        chmod 600 "$out" 2>/dev/null || true
+        success "Backup created: $out"
+        return 0
+    fi
+    rm -f "$out"
+    error "Backup failed for: $path"
+    return 1
 }
 
 php_var() {
@@ -383,7 +390,8 @@ domain_points_here() {
 }
 
 ssl_days_left() {
-    local dom="$1" cert="/etc/letsencrypt/live/${dom}/cert.pem" expiry
+    local dom="$1" cert expiry
+    cert="/etc/letsencrypt/live/${dom}/cert.pem"
     [ -f "$cert" ] || return 1
     expiry=$(openssl x509 -enddate -noout -in "$cert" 2>/dev/null | cut -d= -f2)
     [ -z "$expiry" ] && return 1
@@ -442,11 +450,11 @@ PYINNER
 }
 
 configure_php_performance() {
-    local quiet="${1:-}" php_ini opcache_ini mysql_conf apache_changed=0
+    local quiet="${1:-}" php_ini opcache_ini mysql_conf
     [ "$quiet" != "--quiet" ] && section "PHP / Upload Performance"
 
     if command -v a2enmod >/dev/null 2>&1; then
-        a2enmod rewrite headers expires deflate >/dev/null 2>&1 && apache_changed=1 || true
+        a2enmod rewrite headers expires deflate >/dev/null 2>&1 || true
     fi
     command -v phpenmod >/dev/null 2>&1 && phpenmod opcache >/dev/null 2>&1 || true
 
@@ -506,7 +514,7 @@ ServerSignature Off
 FileETag None
 TraceEnable Off
 EOF
-        a2enconf v2raystore-security-performance >/dev/null 2>&1 && apache_changed=1 || true
+        a2enconf v2raystore-security-performance >/dev/null 2>&1 || true
     fi
 
     systemctl restart mysql >/dev/null 2>&1 || systemctl restart mariadb >/dev/null 2>&1 || true
@@ -520,6 +528,27 @@ EOF
         kv "memory_limit" "${DIM}${PHP_MEMORY_LIMIT}${NC}"
         kv "MySQL packet" "${DIM}${MYSQL_MAX_ALLOWED_PACKET}${NC}"
     fi
+}
+
+configure_bot_apache_security() {
+    [ "${V2RAYSTORE_SKIP_SYSTEM_CONFIG:-0}" = "1" ] && return 0
+    [ -d /etc/apache2/conf-available ] || return 0
+    cat > /etc/apache2/conf-available/v2raystore-bot.conf <<EOF
+<Directory "${BOT_DIR}">
+    Options -Indexes
+    AllowOverride All
+    Require all granted
+</Directory>
+EOF
+    a2enmod headers >/dev/null 2>&1 || true
+    a2enconf v2raystore-bot >/dev/null 2>&1 || true
+    if apache2ctl configtest > "$LOG_FILE" 2>&1; then
+        systemctl reload apache2 >/dev/null 2>&1 || true
+        return 0
+    fi
+    error "Apache rejected the V2Ray Store security configuration."
+    tail -n 20 "$LOG_FILE" 2>/dev/null || true
+    return 1
 }
 
 
@@ -593,32 +622,54 @@ update_crons_for_domain() {
     grep -v "${BOT_SLUG}/settings/gift2all.php" | \
     grep -v "${BOT_SLUG}/settings/tronChecker.php" | \
     grep -v "${BOT_SLUG}/settings/reportGroupBackup.php" | \
+    grep -v "${BOT_SLUG}/settings/channelLeaveChecker.php" | \
+    grep -v "${BOT_SLUG}/settings/autoApproveOrders.php" | \
     grep -v "${BOT_SLUG}/settings/cleanOldConfigsWorker.php" | \
     grep -v "cleanOldConfigsWorker.php" | \
     grep -v "${PANEL_SLUG}/backupnutif.php" | \
     grep -v "v2raystore" > "${tmp}.new" || true
     {
         cat "${tmp}.new"
-        echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/messagev2raystore.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/messagev2raystore.php >/dev/null 2>&1"
         echo "* * * * * cd ${BOT_DIR} && php settings/cleanOldConfigsWorker.php >/dev/null 2>&1"
         echo "* * * * * sleep 20; cd ${BOT_DIR} && php settings/cleanOldConfigsWorker.php >/dev/null 2>&1"
         echo "* * * * * sleep 40; cd ${BOT_DIR} && php settings/cleanOldConfigsWorker.php >/dev/null 2>&1"
-        echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/rewardReport.php >/dev/null 2>&1"
-        echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/warnusers.php >/dev/null 2>&1"
-        echo "* * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/gift2all.php >/dev/null 2>&1"
-        echo "*/3 * * * * curl -fsS https://${domain}/${BOT_SLUG}/settings/tronChecker.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/rewardReport.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/warnusers.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/gift2all.php >/dev/null 2>&1"
+        echo "*/3 * * * * cd ${BOT_DIR} && php settings/tronChecker.php >/dev/null 2>&1"
         echo "* * * * * cd ${BOT_DIR} && php settings/reportGroupBackup.php >/dev/null 2>&1"
-        echo "* * * * * curl -fsS https://${domain}/${PANEL_SLUG}/backupnutif.php >/dev/null 2>&1"
+        echo "*/5 * * * * cd ${BOT_DIR} && php settings/channelLeaveChecker.php >/dev/null 2>&1"
+        echo "* * * * * cd ${BOT_DIR} && php settings/autoApproveOrders.php >/dev/null 2>&1"
+        echo "* * * * * cd ${PANEL_DIR} && php backupnutif.php >/dev/null 2>&1"
     } | sort -u | crontab -
     rm -f "$tmp" "${tmp}.new"
 }
 
 set_bot_webhook() {
-    local token="$1" bot_url="$2" webhook_url response
+    local token="$1" bot_url="$2" webhook_url response secret
     webhook_url="${bot_url%/}/bot.php"
     [ -z "$token" ] || [ -z "$bot_url" ] && return 1
-    response=$(curl -fsS -X POST "https://api.telegram.org/bot${token}/setWebhook" --data-urlencode "url=${webhook_url}" -d "drop_pending_updates=false" 2>/dev/null || true)
+    ensure_webhook_secret || return 1
+    secret=$(php_var webhookSecret)
+    response=$(curl -fsS -X POST "https://api.telegram.org/bot${token}/setWebhook" \
+        --data-urlencode "url=${webhook_url}" \
+        --data-urlencode "secret_token=${secret}" \
+        -d "drop_pending_updates=false" 2>/dev/null || true)
     echo "$response" | grep -q '"ok":true'
+}
+
+ensure_webhook_secret() {
+    [ -f "$BASE_INFO" ] || return 1
+    local secret
+    secret=$(php_var webhookSecret)
+    if [[ "$secret" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+        return 0
+    fi
+    secret=$(openssl rand -hex 32) || return 1
+    set_php_string_var webhookSecret "$secret" || return 1
+    chmod 640 "$BASE_INFO" 2>/dev/null || true
+    chown www-data:www-data "$BASE_INFO" 2>/dev/null || true
 }
 
 send_admin_message() {
@@ -793,8 +844,18 @@ ssl_menu() {
 }
 
 repair_permissions() {
-    [ -d "$BOT_DIR" ] && chown -R www-data:www-data "$BOT_DIR" && chmod -R 755 "$BOT_DIR" 2>/dev/null || true
-    [ -d "$PANEL_DIR" ] && chown -R www-data:www-data "$PANEL_DIR" && chmod -R 755 "$PANEL_DIR" 2>/dev/null || true
+    if [ -d "$BOT_DIR" ]; then
+        chown -R www-data:www-data "$BOT_DIR" 2>/dev/null || true
+        find "$BOT_DIR" -type d -exec chmod 755 {} + 2>/dev/null || true
+        find "$BOT_DIR" -type f -exec chmod 644 {} + 2>/dev/null || true
+        find "$BOT_DIR" -type f -name '*.sh' -exec chmod 755 {} + 2>/dev/null || true
+        [ -f "$BASE_INFO" ] && chmod 640 "$BASE_INFO" 2>/dev/null || true
+    fi
+    if [ -d "$PANEL_DIR" ]; then
+        chown -R www-data:www-data "$PANEL_DIR" 2>/dev/null || true
+        find "$PANEL_DIR" -type d -exec chmod 755 {} + 2>/dev/null || true
+        find "$PANEL_DIR" -type f -exec chmod 644 {} + 2>/dev/null || true
+    fi
     success "Permissions repaired."
 }
 
@@ -928,7 +989,7 @@ find_legacy_panel_dir() {
         -exec test -f '{}/login.php' \; -exec test -f '{}/includ/db.php' \; -print 2>/dev/null | head -n1
 }
 migrate_legacy_installation() {
-    local changed=0 legacy_panel legacy_user legacy_pass legacy_path dom token url
+    local changed=0 legacy_panel legacy_user legacy_pass dom token url
     mkdir -p "$BACKUP_DIR"
 
     if ! legacy_installation_exists && [ ! -f "$BASE_INFO" ]; then
@@ -938,7 +999,6 @@ migrate_legacy_installation() {
     if [ -f "$LEGACY_CONFIG_FILE" ]; then
         legacy_user=$(read_legacy_config_value user)
         legacy_pass=$(read_legacy_config_value pass)
-        legacy_path=$(read_legacy_config_value path)
         backup_path "$LEGACY_CONFIG_DIR" "legacy-config"
         write_config_from_values "$legacy_user" "$legacy_pass"
         changed=1
@@ -990,25 +1050,97 @@ migrate_legacy_installation() {
     fi
     return 0
 }
-install_or_update_bot_files() {
-    install_packages || return 1
-    mkdir -p /var/www/html
-    backup_path "$BOT_DIR" "bot"
-    local tmp_dir
-    tmp_dir="/tmp/v2raystore_bot_$(date +%s)"
-    rm -rf "$tmp_dir"
-    run_step "Downloading ${BRAND_NAME} files" "git clone --depth 1 '$REPO_URL' '$tmp_dir'" || { rm -rf "$tmp_dir"; return 1; }
-    if [ -f "$BASE_INFO" ]; then
-        cp -a "$BASE_INFO" /root/baseInfo.v2raystore.tmp
+validate_bot_checkout() {
+    local checkout="$1" file
+    for file in bot.php config.php createDB.php install/update.php v2raystore.sh; do
+        [ -s "$checkout/$file" ] || { error "Downloaded source is incomplete: ${file}"; return 1; }
+    done
+    bash -n "$checkout/v2raystore.sh" || return 1
+    bash -n "$checkout/update.sh" || return 1
+    if command -v php >/dev/null 2>&1; then
+        while IFS= read -r -d '' file; do
+            php -l "$file" >/dev/null || return 1
+        done < <(find "$checkout" -type f -name '*.php' -not -path '*/.git/*' -print0)
     fi
-    rm -rf "$BOT_DIR"
-    mkdir -p "$BOT_DIR"
-    cp -a "$tmp_dir/." "$BOT_DIR/"
-    [ -f /root/baseInfo.v2raystore.tmp ] && mv /root/baseInfo.v2raystore.tmp "$BASE_INFO"
-    rm -rf "$tmp_dir"
+    return 0
+}
+
+check_update_prerequisites() {
+    [ "${V2RAYSTORE_SKIP_PREREQUISITE_CHECK:-0}" = "1" ] && return 0
+    local missing=0 command_name module_name
+    for command_name in git php curl python3 openssl tar; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+            error "Update prerequisite is missing: ${command_name}"
+            missing=1
+        fi
+    done
+    if command -v php >/dev/null 2>&1; then
+        for module_name in mysqli mbstring zip gd curl soap xml intl bcmath; do
+            if ! php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+                error "Required PHP module is missing: ${module_name}"
+                missing=1
+            fi
+        done
+    fi
+    [ "$missing" -eq 0 ] || {
+        warning "Update never installs operating-system packages. Repair the prerequisite, then run update again."
+        return 1
+    }
+}
+
+install_or_update_bot_files() {
+    local mode="${1:-update}" tmp_root tmp_checkout rollback_dir preserved_base="" deploy_parent
+    if [ "$mode" = "install" ]; then
+        install_packages || return 1
+    else
+        check_update_prerequisites || return 1
+    fi
+
+    deploy_parent=$(dirname "$BOT_DIR")
+    mkdir -p "$deploy_parent"
+    tmp_root=$(mktemp -d "${deploy_parent}/.v2raystore-stage.XXXXXX") || return 1
+    tmp_checkout="${tmp_root}/repo"
+    rollback_dir="${BOT_DIR}.rollback.$(date +%s)"
+    run_step "Downloading ${BRAND_NAME} files" "git clone --depth 1 '$REPO_URL' '$tmp_checkout'" || { rm -rf "$tmp_root"; return 1; }
+    validate_bot_checkout "$tmp_checkout" || { rm -rf "$tmp_root"; return 1; }
+
+    if [ -f "$BASE_INFO" ]; then
+        preserved_base=$(mktemp /root/baseInfo.v2raystore.XXXXXX) || { rm -rf "$tmp_root"; return 1; }
+        cp -a "$BASE_INFO" "$preserved_base" || { rm -f "$preserved_base"; rm -rf "$tmp_root"; return 1; }
+        backup_path "$BOT_DIR" "bot" || { rm -f "$preserved_base"; rm -rf "$tmp_root"; return 1; }
+    fi
+
+    if [ -e "$BOT_DIR" ]; then
+        mv "$BOT_DIR" "$rollback_dir" || { rm -f "$preserved_base"; rm -rf "$tmp_root"; return 1; }
+    fi
+    if ! mv "$tmp_checkout" "$BOT_DIR"; then
+        [ -d "$rollback_dir" ] && mv "$rollback_dir" "$BOT_DIR"
+        rm -f "$preserved_base"
+        rm -rf "$tmp_root"
+        return 1
+    fi
+    if [ -n "$preserved_base" ]; then
+        if ! mv "$preserved_base" "$BASE_INFO"; then
+            rm -rf "$BOT_DIR"
+            [ -d "$rollback_dir" ] && mv "$rollback_dir" "$BOT_DIR"
+            rm -rf "$tmp_root"
+            return 1
+        fi
+    fi
+    rm -rf "$tmp_root"
     clean_bot_after_update
     chown -R www-data:www-data "$BOT_DIR/" 2>/dev/null || true
-    chmod -R 755 "$BOT_DIR/" 2>/dev/null || true
+    find "$BOT_DIR" -type d -exec chmod 755 {} + 2>/dev/null || true
+    find "$BOT_DIR" -type f -exec chmod 644 {} + 2>/dev/null || true
+    find "$BOT_DIR" -type f -name '*.sh' -exec chmod 755 {} + 2>/dev/null || true
+    [ -f "$BASE_INFO" ] && chmod 640 "$BASE_INFO" 2>/dev/null || true
+    if ! configure_bot_apache_security; then
+        rm -rf "$BOT_DIR"
+        [ -d "$rollback_dir" ] && mv "$rollback_dir" "$BOT_DIR"
+        return 1
+    fi
+    rm -rf "$rollback_dir"
+    return 0
 }
 
 valid_mysql_identifier() {
@@ -1086,12 +1218,13 @@ error_reporting(0);
 \$dbName = '${dbname}';
 \$botUrl = '${bot_url}';
 \$admin = ${admin};
+\$webhookSecret = '$(openssl rand -hex 32)';
 ?>
 EOF2
     chown www-data:www-data "$BASE_INFO" 2>/dev/null || true
-    chmod 644 "$BASE_INFO" 2>/dev/null || true
+    chmod 640 "$BASE_INFO" 2>/dev/null || true
 
-    php "${BOT_DIR}/createDB.php" >/dev/null 2>&1 || curl -fsS "${bot_url}createDB.php" >/dev/null 2>&1 || true
+    php "${BOT_DIR}/createDB.php" || return 1
 
     if ! obtain_ssl_for_domain "$domain_clean"; then
         error "SSL certificate could not be issued for ${domain_clean}. Make sure DNS points to this server and ports 80/443 are open."
@@ -1142,8 +1275,15 @@ download_panel_package() {
 }
 
 install_or_update_panel() {
-    install_packages || return 1
-    local tmp_zip tmp_extract panel_source
+    local mode="${1:-update}"
+    if [ "$mode" = "install" ]; then
+        install_packages || return 1
+    else
+        check_update_prerequisites || return 1
+        command -v unzip >/dev/null 2>&1 || { error "Update prerequisite is missing: unzip"; return 1; }
+        command -v wget >/dev/null 2>&1 || { error "Update prerequisite is missing: wget"; return 1; }
+    fi
+    local tmp_zip tmp_extract panel_source panel_stage panel_rollback deploy_parent
     tmp_zip="/tmp/v2raystore-panel.$$.zip"
     tmp_extract="/tmp/v2raystore-panel.$$"
     rm -rf "$tmp_zip" "$tmp_extract"
@@ -1162,30 +1302,56 @@ install_or_update_panel() {
         return 1
     }
 
-    backup_path "$PANEL_DIR" "panel"
-    rm -rf "$PANEL_DIR"
-    mkdir -p "$PANEL_DIR"
-    cp -a "$panel_source/." "$PANEL_DIR/" || { rm -rf "$tmp_zip" "$tmp_extract"; return 1; }
+    deploy_parent=$(dirname "$PANEL_DIR")
+    panel_stage="${deploy_parent}/.${PANEL_SLUG}.stage.$$"
+    panel_rollback="${PANEL_DIR}.rollback.$(date +%s)"
+    rm -rf "$panel_stage" "$panel_rollback"
+    mkdir -p "$panel_stage"
+    cp -a "$panel_source/." "$panel_stage/" || {
+        rm -rf "$tmp_zip" "$tmp_extract" "$panel_stage"
+        return 1
+    }
+    find_panel_package_dir "$panel_stage" >/dev/null || {
+        rm -rf "$tmp_zip" "$tmp_extract" "$panel_stage"
+        error "Prepared panel package failed validation. Current panel was kept unchanged."
+        return 1
+    }
+
+    backup_path "$PANEL_DIR" "panel" || {
+        rm -rf "$tmp_zip" "$tmp_extract" "$panel_stage"
+        return 1
+    }
+    if [ -e "$PANEL_DIR" ]; then
+        mv "$PANEL_DIR" "$panel_rollback" || {
+            rm -rf "$tmp_zip" "$tmp_extract" "$panel_stage"
+            return 1
+        }
+    fi
+    if ! mv "$panel_stage" "$PANEL_DIR"; then
+        [ -d "$panel_rollback" ] && mv "$panel_rollback" "$PANEL_DIR"
+        rm -rf "$tmp_zip" "$tmp_extract" "$panel_stage"
+        return 1
+    fi
     rm -rf "$tmp_zip" "$tmp_extract"
 
-    update_panel_db_include
-    fix_panel_entrypoint
-    chown -R www-data:www-data "$PANEL_DIR/" 2>/dev/null || true
-    chmod -R 755 "$PANEL_DIR/" 2>/dev/null || true
-    if [ -f "$CONFIG_FILE" ]; then
-        python3 - "$CONFIG_FILE" "$PANEL_SLUG" <<'PY'
-import re, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-slug = sys.argv[2]
-text = p.read_text(errors='ignore')
-if re.search(r"\$path\s*=", text):
-    text = re.sub(r"\$path\s*=\s*['\"].*?['\"]\s*;", f"$path = '{slug}';", text)
-else:
-    text += f"\n$path = '{slug}';\n"
-p.write_text(text)
-PY
+    if ! update_panel_db_include || ! fix_panel_entrypoint; then
+        rm -rf "$PANEL_DIR"
+        [ -d "$panel_rollback" ] && mv "$panel_rollback" "$PANEL_DIR"
+        error "Panel configuration failed; the previous panel was restored."
+        return 1
     fi
+    if [ -f "$CONFIG_FILE" ]; then
+        if ! set_php_string_var path "$PANEL_SLUG" "$CONFIG_FILE"; then
+            rm -rf "$PANEL_DIR"
+            [ -d "$panel_rollback" ] && mv "$panel_rollback" "$PANEL_DIR"
+            error "Panel settings update failed; the previous panel was restored."
+            return 1
+        fi
+    fi
+    rm -rf "$panel_rollback"
+    chown -R www-data:www-data "$PANEL_DIR/" 2>/dev/null || true
+    find "$PANEL_DIR" -type d -exec chmod 755 {} + 2>/dev/null || true
+    find "$PANEL_DIR" -type f -exec chmod 644 {} + 2>/dev/null || true
     success "Panel installed/updated at: ${PANEL_DIR}"
 }
 
@@ -1308,7 +1474,11 @@ show_status() {
         bot_url=$(php_var botUrl)
         dom=$(current_domain)
         version=""
-        [ -f "$BOT_DIR/version" ] && version=$(tr -d ' \t\r\n' < "$BOT_DIR/version")
+        if [ -f "$BOT_DIR/VERSION" ]; then
+            version=$(tr -d ' \t\r\n' < "$BOT_DIR/VERSION")
+        elif [ -f "$BOT_DIR/version" ]; then
+            version=$(tr -d ' \t\r\n' < "$BOT_DIR/version")
+        fi
         kv "State" "$(dot ok) ${GREEN}installed${NC}"
         kv "Bot path" "${DIM}${BOT_DIR}${NC}"
         kv "Panel path" "${DIM}${PANEL_DIR}${NC}"
@@ -1432,53 +1602,65 @@ show_install_summary() {
     warning "This information was also saved securely in: ${INSTALL_INFO_FILE}"
 }
 
-full_install_or_update() {
+fresh_install() {
     banner
-    local had_legacy=0
-    legacy_installation_exists && had_legacy=1
+    if [ -f "$BASE_INFO" ]; then
+        error "${BRAND_NAME} is already installed. Use the update command; install will not overwrite an existing installation."
+        return 1
+    fi
+    if legacy_installation_exists; then
+        error "A legacy installation exists. Run the migrate command instead of fresh install."
+        return 1
+    fi
+    confirm "Install ${BRAND_NAME} ${SCRIPT_VERSION} now?" || return 0
+    install_or_update_bot_files install || return 1
+    create_database_and_baseinfo || return 1
+    install_or_update_panel update || return 1
+    install_local_command >/dev/null 2>&1 || true
+    send_admin_message "✅ ${BRAND_NAME} نسخه ${SCRIPT_VERSION} با موفقیت نصب شد."
+    success "Installation finished."
+    show_install_summary
+}
 
-    if [ "$had_legacy" -eq 1 ] && [ ! -f "$BASE_INFO" ]; then
-        warning "Legacy installation detected. Migrating it first, keeping database and settings..."
-        migrate_legacy_installation || { error "Legacy migration failed. Nothing was deleted."; return 1; }
-    elif [ "$had_legacy" -eq 1 ]; then
-        warning "Legacy folders/config were detected. They will be migrated before update."
+update_existing() {
+    banner
+    local had_legacy=0 dom token url panel_failed=0
+    legacy_installation_exists && had_legacy=1
+    if [ ! -f "$BASE_INFO" ] && [ "$had_legacy" -eq 0 ]; then
+        error "${BRAND_NAME} is not installed. Use the install command first."
+        return 1
+    fi
+    if [ "$had_legacy" -eq 1 ]; then
+        warning "Legacy installation detected. Migrating it while preserving data..."
         migrate_legacy_installation || { error "Legacy migration failed. Nothing was deleted."; return 1; }
     fi
+    confirm "Update ${BRAND_NAME} to ${SCRIPT_VERSION}? No operating-system packages will be installed." || return 0
+    install_or_update_bot_files update || return 1
+    php "${BOT_DIR}/install/update.php" || { error "Database migration failed. The source backup is in ${BACKUP_DIR}."; return 1; }
+    ensure_webhook_secret || return 1
+    install_or_update_panel update || panel_failed=1
+    dom=$(current_domain)
+    url=$(php_var botUrl)
+    token=$(php_var botToken)
+    [ -n "$dom" ] && update_crons_for_domain "$dom"
+    if [ -n "$token" ] && [ -n "$url" ]; then
+        set_bot_webhook "$token" "$url" || warning "Bot files were updated, but webhook repair failed."
+    fi
+    install_local_command >/dev/null 2>&1 || true
+    if [ "$panel_failed" -eq 1 ]; then
+        warning "Bot update finished, but the management panel package could not be updated. The previous panel was preserved."
+        return 1
+    fi
+    send_admin_message "✅ ${BRAND_NAME} به نسخه ${SCRIPT_VERSION} آپدیت شد."
+    success "Update finished. Database, baseInfo.php and panel settings were preserved."
+    show_install_summary
+}
 
-    if [ -f "$BASE_INFO" ]; then
-        if [ "$had_legacy" -eq 0 ]; then
-            confirm "Existing installation found. Update ${BRAND_NAME} now?" || return 0
-        else
-            warning "Migration finished. Updating files now..."
-        fi
-        install_or_update_bot_files || return 1
-        curl -fsS "$(php_var botUrl)install/update.php" >/dev/null 2>&1 || php "${BOT_DIR}/install/update.php" >/dev/null 2>&1 || true
-        migrate_legacy_installation || true
-        local panel_failed=0
-        install_or_update_panel || panel_failed=1
-        local dom token url
-        dom=$(current_domain)
-        url=$(php_var botUrl)
-        token=$(php_var botToken)
-        [ -n "$dom" ] && update_crons_for_domain "$dom"
-        [ -n "$token" ] && [ -n "$url" ] && set_bot_webhook "$token" "$url" || true
-        if [ "$panel_failed" -eq 1 ]; then
-            warning "Bot update/migration finished, but panel update failed and the current panel was kept unchanged."
-            warning "Add v2raystore-panel.zip to your repository root, then run Install / Update again."
-            return 1
-        fi
-        send_admin_message "✅ ${BRAND_NAME} با موفقیت آپدیت و منتقل شد."
-        success "Update/migration finished. Your database, baseInfo.php and panel settings were preserved."
-        show_install_summary
+full_install_or_update() {
+    if [ -f "$BASE_INFO" ] || legacy_installation_exists; then
+        update_existing
     else
-        confirm "No installation found. Install ${BRAND_NAME} now?" || return 0
-        install_or_update_bot_files || return 1
-        create_database_and_baseinfo || return 1
-        curl -fsS "$(php_var botUrl)install/update.php" >/dev/null 2>&1 || php "${BOT_DIR}/install/update.php" >/dev/null 2>&1 || true
-        install_or_update_panel || return 1
-        send_admin_message "✅ ${BRAND_NAME} با موفقیت نصب شد."
-        success "Installation finished."
-        show_install_summary
+        fresh_install
     fi
 }
 main_menu() {
@@ -1486,7 +1668,8 @@ main_menu() {
         show_status
         section "Menu"
         options=(
-            "Install / Update"
+            "Fresh install"
+            "Update existing installation"
             "Update panel"
             "Backup"
             "Status / Diagnostics"
@@ -1505,8 +1688,9 @@ main_menu() {
         PS3="Please select action: "
         select opt in "${options[@]}"; do
             case "$opt" in
-                "Install / Update") full_install_or_update; pause_screen; break ;;
-                "Update panel") install_or_update_panel; pause_screen; break ;;
+                "Fresh install") fresh_install; pause_screen; break ;;
+                "Update existing installation") update_existing; pause_screen; break ;;
+                "Update panel") install_or_update_panel update; pause_screen; break ;;
                 "Backup") run_backup_setup; pause_screen; break ;;
                 "Status / Diagnostics") run_diagnostics; pause_screen; break ;;
                 "Show access information") show_install_summary; pause_screen; break ;;
@@ -1526,9 +1710,14 @@ main_menu() {
     done
 }
 
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
+
 case "${1:-menu}" in
     menu) main_menu ;;
-    install|update) full_install_or_update ;;
+    install) fresh_install ;;
+    update) update_existing ;;
     migrate) migrate_legacy_installation ;;
     panel) install_or_update_panel ;;
     backup) run_backup_setup ;;
@@ -1545,8 +1734,9 @@ case "${1:-menu}" in
     status) show_status ;;
     help|-h|--help)
         echo "${BRAND_NAME}"
-        echo "Install/update command: bash <(curl -s ${RAW_INSTALL_URL})"
-        echo "Commands: status, info, diagnostics, repair, panel, backup, token, domain, webhook, ssl, password, php-tune, delete"
+        echo "Fresh install: bash install.sh"
+        echo "Update only: bash update.sh"
+        echo "Commands: install, update, status, info, diagnostics, repair, panel, backup, token, domain, webhook, ssl, password, php-tune, delete"
         ;;
     *) main_menu ;;
 esac

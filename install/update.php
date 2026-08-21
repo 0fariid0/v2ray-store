@@ -1,4 +1,9 @@
 <?php
+if(PHP_SAPI !== 'cli'){
+    http_response_code(403);
+    exit('CLI only');
+}
+
 function v2raystore_updateHttpGetJson($url){
     $ch = curl_init();
     curl_setopt_array($ch, [
@@ -8,8 +13,8 @@ function v2raystore_updateHttpGetJson($url){
         CURLOPT_TIMEOUT => 10,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS => 3,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_SSL_VERIFYPEER => true,
     ]);
     $body = curl_exec($ch);
     curl_close($ch);
@@ -17,8 +22,15 @@ function v2raystore_updateHttpGetJson($url){
     return is_array($json) ? $json : [];
 }
 
-require "../baseInfo.php";
+require __DIR__ . "/../baseInfo.php";
+if(!isset($dbUserName, $dbPassword, $dbName) || $dbUserName === '' || $dbName === ''){
+    exit("Database configuration is incomplete.\n");
+}
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
+if($connection->connect_error){
+    exit("Database connection failed: " . $connection->connect_error . "\n");
+}
+$connection->set_charset('utf8mb4');
 $arrays = [
     "CREATE TABLE  `send_list` (
         `id` int(255) NOT NULL AUTO_INCREMENT,
@@ -148,8 +160,8 @@ function updateBot(){
         }
     }
     
-    if(file_exists("../userInfo.json")){
-        $usersInfo = json_decode(file_get_contents("../userInfo.json"),true);
+    if(file_exists(__DIR__ . "/../userInfo.json")){
+        $usersInfo = json_decode(file_get_contents(__DIR__ . "/../userInfo.json"),true);
         foreach($usersInfo as $user => $value){
             $query = "UPDATE `users` SET `step` = '" . $value['step'] . "'";
             if(isset($value['first_start'])) $query .= ", `first_start` = '" . $value['first_start'] . "'";
@@ -159,7 +171,7 @@ function updateBot(){
             $connection->query($query);
         }
         
-        $newData = file_get_contents("../settings/botstate.json");
+        $newData = file_get_contents(__DIR__ . "/../settings/botstate.json");
         $checkExist = $connection->query("SELECT * FROM `setting` WHERE `type` = 'BOT_STATES'");
         if(mysqli_num_rows($checkExist) == 0) $connection->query("INSERT INTO `setting` (`type`, `value`) VALUES ('BOT_STATES', '$newData')");
     }
@@ -176,7 +188,7 @@ function updateBot(){
         if(mysqli_num_rows($checkExist) == 0) $connection->query("INSERT INTO `setting` (`type`, `value`) VALUES ('PAYMENT_KEYS', '$paymentKeys')");    
     }
     $list = $connection->query("SELECT * FROM `orders_list` WHERE `uuid` IS NULL");
-    if(mysqli_num_rows($list) > 0){
+    if($list && mysqli_num_rows($list) > 0){
         while($row = $list->fetch_assoc()){
             $id = $row['id'];
             $link = json_decode($row['link'],true)[0];
@@ -237,7 +249,12 @@ function updateBot(){
     }
     
     
-    if(file_exists(getcwd() . '/tempCookie.txt')) unlink('../tempCookie.txt');
-    if(file_exists(getcwd() . '/settings/messagev2raystore.json')) unlink('../settings/messagev2raystore.json');
+    if(file_exists(__DIR__ . '/../tempCookie.txt')) unlink(__DIR__ . '/../tempCookie.txt');
+    if(file_exists(__DIR__ . '/../settings/messagev2raystore.json')) unlink(__DIR__ . '/../settings/messagev2raystore.json');
+}
+
+if(realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__){
+    updateBot();
+    echo "Database migrations completed.\n";
 }
 ?>

@@ -1,7 +1,7 @@
 <?php
-include_once "settings/values.php";
-include_once 'settings/jdf.php';
-include_once 'baseInfo.php';
+include_once __DIR__ . "/settings/values.php";
+include_once __DIR__ . '/settings/jdf.php';
+include_once __DIR__ . '/baseInfo.php';
 
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
@@ -18,8 +18,8 @@ function v2raystore_httpGetJson($url, $connectTimeout = 5, $timeout = 10){
         CURLOPT_TIMEOUT => max(2, intval($timeout)),
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS => 3,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 2,
+        CURLOPT_SSL_VERIFYPEER => true,
         CURLOPT_USERAGENT => 'v2raystore/fast-http',
     ]);
     $body = curl_exec($ch);
@@ -9886,17 +9886,18 @@ function v2raystore_getPanelSubscriptionUris($server_id){
         return $result;
     }
 
-    // The UI copy button uses computed subscription settings. In 2.6.x and current 3x-ui this is exposed by
-    // /panel/setting/defaultSettings; /panel/setting/all may contain raw webBasePath/webPort values and can recreate
-    // the wrong :panelPort/basePath/sub/ URL. Prefer defaultSettings, then fall back to all.
+    // Current 3x-ui exposes these values below /panel/api/setting/* (singular).
+    // Keep the legacy routes as fallbacks for older Sanaei-compatible panels.
+    $settingsApiDefaultSettings = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/setting/defaultSettings');
+    $settingsApiAll = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/setting/all');
     $settingsDefault = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/setting/defaultSettings');
     $settingsAll = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/setting/all');
-    // 3x-ui v3.x exposes settings under /panel/api/settings/* (OpenAPI). Keep old endpoints as fallback.
+    // Compatibility with short-lived forks that used the plural route.
     $settingsApiDefault = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/default');
-    $settingsApiDefaultSettings = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/defaultSettings');
-    $settingsApiAll = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/all');
+    $settingsApiDefaultSettingsLegacy = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/defaultSettings');
+    $settingsApiAllLegacy = v2raystore_getPanelSettingResponse($server_info, $session, '/panel/api/settings/all');
 
-    foreach([$settingsApiDefault, $settingsApiDefaultSettings, $settingsApiAll, $settingsDefault, $settingsAll] as $settings){
+    foreach([$settingsApiDefaultSettings, $settingsApiAll, $settingsApiDefault, $settingsApiDefaultSettingsLegacy, $settingsApiAllLegacy, $settingsDefault, $settingsAll] as $settings){
         if(!is_array($settings) || empty($settings)) continue;
         $hasSubInfo = v2raystore_arrayGetDeep($settings, ['subURI','subJsonURI','subPort','sub_port','subscriptionPort','subscription_port','subPath','sub_path','subDomain','subscriptionDomain','subscribePort']) !== null;
         if(!$hasSubInfo) continue;

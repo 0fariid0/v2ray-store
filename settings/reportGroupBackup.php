@@ -1,4 +1,5 @@
 <?php
+if(PHP_SAPI !== 'cli'){ http_response_code(403); exit('CLI only'); }
 // V2Ray Store scheduled report runner.
 // Runs from cron and sends daily stats + database backups to the configured report group/topic.
 

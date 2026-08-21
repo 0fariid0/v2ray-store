@@ -1,7 +1,8 @@
 <?php
-include_once '../baseInfo.php';
-include_once '../config.php';
-include_once 'jdf.php';
+if(PHP_SAPI !== 'cli'){ http_response_code(403); exit('CLI only'); }
+include_once __DIR__ . '/../baseInfo.php';
+include_once __DIR__ . '/../config.php';
+include_once __DIR__ . '/jdf.php';
 
 @set_time_limit(55);
 @ignore_user_abort(true);

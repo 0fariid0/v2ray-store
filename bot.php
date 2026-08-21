@@ -1,5 +1,28 @@
 <?php
-include_once 'config.php';
+// Reject direct or forged requests before loading the database. Telegram sends
+// this value when setWebhook is configured with secret_token.
+if(!is_file(__DIR__ . '/baseInfo.php')){
+    if(PHP_SAPI !== 'cli') http_response_code(503);
+    exit;
+}
+require_once __DIR__ . '/baseInfo.php';
+if(PHP_SAPI !== 'cli'){
+    if(($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST'){
+        http_response_code(405);
+        header('Allow: POST');
+        exit;
+    }
+    if(!isset($webhookSecret) || !is_string($webhookSecret) || !preg_match('/\A[A-Za-z0-9_-]{32,256}\z/D', $webhookSecret)){
+        http_response_code(503);
+        exit;
+    }
+    $receivedWebhookSecret = (string)($_SERVER['HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN'] ?? '');
+    if(!hash_equals($webhookSecret, $receivedWebhookSecret)){
+        http_response_code(403);
+        exit;
+    }
+}
+include_once __DIR__ . '/config.php';
 check();
 $robotState = $botState['botState']??"on";
 if ($userInfo['step'] == "banned" && $from_id != $admin && $userInfo['isAdmin'] != true) {

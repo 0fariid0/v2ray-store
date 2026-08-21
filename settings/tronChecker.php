@@ -1,6 +1,7 @@
 <?php
+if(PHP_SAPI !== 'cli'){ http_response_code(403); exit('CLI only'); }
 
-require '../config.php';
+require __DIR__ . '/../config.php';
 $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `payid` IS NOT NULL AND `state` REGEXP '^[0-9]+$'");
 $stmt->execute();
 $paysList = $stmt->get_result();

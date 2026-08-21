@@ -1,13 +1,19 @@
 <?php
-include '../baseInfo.php';
-include '../config.php';
+include __DIR__ . '/../baseInfo.php';
+include __DIR__ . '/../config.php';
 //==============================================================
 
 $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'PAYMENT_KEYS'");
 $stmt->execute();
-$paymentKeys = $stmt->get_result()->fetch_assoc()['value'];
+$paymentKeysRow = $stmt->get_result()->fetch_assoc();
+$paymentKeys = $paymentKeysRow['value'] ?? null;
 if(!is_null($paymentKeys)) $paymentKeys = json_decode($paymentKeys,true);
 else $paymentKeys = array();
+$paymentKeys = is_array($paymentKeys) ? array_merge([
+    'nowpayment' => '',
+    'zarinpal' => '',
+    'nextpay' => '',
+], $paymentKeys) : ['nowpayment'=>'', 'zarinpal'=>'', 'nextpay'=>''];
 $stmt->close();
 
 if(isset($_GET['nowpayment'])){
@@ -33,7 +39,7 @@ if(isset($_GET['NP_id'])){
     $hash_id = $res->invoice_id;
 
     $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `payid` = ? AND (`state` = 'pending' OR `state` = 'send')");
-    $stmt->bind_param("i", $hash_id);
+    $stmt->bind_param("s", $hash_id);
     $stmt->execute();
     $payInfo = $stmt->get_result();
     $stmt->close();
@@ -50,6 +56,7 @@ if(isset($_GET['NP_id'])){
         $plan_id = $payParam['plan_id'];
         $volume = $payParam['volume'];
         $days = $payParam['day'];
+        $payDescription = "پرداخت";
         if($payType == "BUY_SUB") $payDescription = "خرید اکانت";
         elseif($payType == "RENEW_ACCOUNT") $payDescription = "تمدید اکانت";
         elseif($payType == "RENEW_SCONFIG") $payDescription = "تمدید اکانت";
@@ -63,14 +70,14 @@ if(isset($_GET['NP_id'])){
         } else {
             if($res->payment_status == 'partially_paid'){
                 $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'low_payment' WHERE `payid` =?");
-                $stmt->bind_param("i", $hash_id);
+                $stmt->bind_param("s", $hash_id);
                 $stmt->execute();
                 $stmt->close();
                 
                 showForm("#$hash_id - شما هزینه کمتری واریز کردید، لطفا به پشتیبانی مراجعه کنید",$payDescription);
             }else{
                 $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `payid` =?");
-                $stmt->bind_param("i", $hash_id);
+                $stmt->bind_param("s", $hash_id);
                 $stmt->execute();
                 $stmt->close();
 
@@ -84,7 +91,11 @@ else{
 }
 }
 elseif(isset($_GET['zarinpal'])){
-$hash_id = $_GET['hash_id'];
+$hash_id = trim((string)($_GET['hash_id'] ?? ''));
+if($hash_id === ''){
+    showForm("شناسه پرداخت ناقص است", "خطا!");
+    exit();
+}
 $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `hash_id` = ? AND (`state` = 'pending' OR `state` = 'send')");
 $stmt->bind_param("s", $hash_id);
 $stmt->execute();
@@ -101,16 +112,26 @@ if(mysqli_num_rows($payInfo)==0){
     $payType = $payParam['type'];
 
 
-    $Authority = $_GET['Authority'];
+    $Authority = trim((string)($_GET['Authority'] ?? ''));
+    $gatewayStatus = (string)($_GET['Status'] ?? '');
+    if($Authority === ''){
+        showForm("شناسه درگاه ناقص است", "درگاه زرین پال");
+        exit();
+    }
     //==============================================================
-    $client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', ['encoding' => 'UTF-8']);
-    $result = $client->PaymentVerification([
-    'MerchantID' => $paymentKeys['zarinpal'],
-    'Authority' => $Authority,
-    'Amount' => $amount,
-    ]);
+    try{
+        $client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', ['encoding' => 'UTF-8']);
+        $result = $client->PaymentVerification([
+            'MerchantID' => $paymentKeys['zarinpal'],
+            'Authority' => $Authority,
+            'Amount' => $amount,
+        ]);
+    }catch(Throwable $gatewayError){
+        showForm("ارتباط با درگاه زرین پال ناموفق بود؛ وضعیت پرداخت را دوباره بررسی کنید.", "خطای درگاه");
+        exit();
+    }
     //==============================================================
-    if ($_GET['Status'] == 'OK' and $result->Status == 100){
+    if ($gatewayStatus === 'OK' && is_object($result) && isset($result->Status) && intval($result->Status) === 100){
         doAction($rowId, "zarinpal");
     }else{
         $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `hash_id` = ?");
@@ -123,7 +144,11 @@ if(mysqli_num_rows($payInfo)==0){
 }
 }
 elseif(isset($_GET['nextpay'])){
-$hash_id = $_GET['trans_id'];
+$hash_id = trim((string)($_GET['trans_id'] ?? ''));
+if($hash_id === ''){
+    showForm("شناسه پرداخت ناقص است", "خطا!");
+    exit();
+}
 $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `payid` = ? AND (`state` = 'pending' OR `state` = 'send')");
 $stmt->bind_param("s", $hash_id);
 $stmt->execute();
@@ -159,7 +184,7 @@ if(mysqli_num_rows($payInfo)==0){
     curl_close($curl);
     $response = json_decode($response);
     
-    if ($response->code=='0') {
+    if (is_object($response) && isset($response->code) && (string)$response->code === '0') {
         doAction($rowId, "nextpay");   
     }else{
         $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `hash_id` = ?");
@@ -186,6 +211,10 @@ $payInfo = $stmt->get_result();
 $stmt->close();
 
 $payParam = $payInfo->fetch_assoc();
+if(!$payParam){
+    showForm('این پرداخت قبلاً پردازش شده یا دیگر قابل پردازش نیست.', 'وضعیت پرداخت');
+    exit;
+}
 $rowId = $payParam['id'];
 $amount = $payParam['price'];
 $user_id = $payParam['user_id'];
@@ -197,9 +226,11 @@ $plan_id = $payParam['plan_id'];
 $volume = $payParam['volume'];
 $days = $payParam['day'];
 $agentBought = $payParam['agent_bought'];
+$payDescription = "پرداخت";
 
 if($payType == "BUY_SUB") $payDescription = "خرید اشتراک";
 elseif($payType == "RENEW_ACCOUNT") $payDescription = "تمدید اکانت";
+elseif($payType == "RENEW_SCONFIG") $payDescription = "تمدید اکانت";
 elseif($payType == "INCREASE_WALLET") $payDescription ="شارژ کیف پول";
 elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType)) $payDescription = "افزایش زمان اکانت";
 elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $payDescription = "افزایش حجم اکانت";    
@@ -207,20 +238,32 @@ elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $payDescription = 
 if($gateType == "zarinpal" || $gateType == "nextpay") $payDescription = "خرید اشتراک";
 
 $GLOBALS['payParam'] = $payParam;
-$salesBlockReason = function_exists('v2raystore_salesBlockReasonForPayType') ? v2raystore_salesBlockReasonForPayType($payType) : '';
-if($salesBlockReason !== ''){
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `id` = ?");
-    $stmt->bind_param("i", $payRowId);
-    $stmt->execute();
-    $stmt->close();
-    showForm(strip_tags(function_exists('v2raystore_purchaseBlockedMessage') ? v2raystore_purchaseBlockedMessage($salesBlockReason) : 'فروش در حال حاضر غیرفعال است.'), $payDescription);
-    exit();
-}
 
-$stmt = $connection->prepare("UPDATE `pays` SET `state` = 'paid' WHERE `id` =?");
+// Claim the payment atomically. Concurrent/repeated gateway callbacks must not
+// create a second service or credit the wallet twice.
+$stmt = $connection->prepare("UPDATE `pays` SET `state` = 'paid' WHERE `id` = ? AND (`state` = 'pending' OR `state` = 'send')");
 $stmt->bind_param("i", $payRowId);
 $stmt->execute();
+$claimed = ($stmt->affected_rows === 1);
 $stmt->close();
+if(!$claimed){
+    showForm('این پرداخت قبلاً پردازش شده است.', $payDescription, true);
+    exit;
+}
+
+$salesBlockReason = function_exists('v2raystore_salesBlockReasonForPayType') ? v2raystore_salesBlockReasonForPayType($payType) : '';
+if($salesBlockReason !== ''){
+    // The gateway already confirmed the transfer. Compensate the user if sales
+    // were closed after checkout started instead of silently cancelling it.
+    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
+    $stmt->bind_param("ii", $amount, $user_id);
+    $stmt->execute();
+    $stmt->close();
+    sendMessage("✅ پرداخت تأیید شد؛ چون فروش در این فاصله بسته شده بود، مبلغ " . number_format($amount) . " تومان به کیف پول شما برگشت.", null, null, $user_id);
+    sendMessage("⚠️ پرداخت در زمان بسته بودن فروش تأیید شد و مبلغ " . number_format($amount) . " تومان به کیف پول کاربر $user_id منتقل شد.", null, null, $admin);
+    showForm('پرداخت تأیید شد؛ فروش بسته بود و کل مبلغ به کیف پول شما منتقل شد.', $payDescription, true);
+    exit();
+}
 
 if($payType == "BUY_SUB"){
     $user_id = $user_id;
@@ -312,7 +355,7 @@ if($payType == "BUY_SUB"){
     $portType = $server_info['port_type'];
     $panelUrl = $server_info['panel_url'];
     $stmt->close();
-    include_once '../phpqrcode/qrlib.php';
+    include_once __DIR__ . '/../phpqrcode/qrlib.php';
     define('IMAGE_WIDTH',540);
     define('IMAGE_HEIGHT',540);
     $v2raystoreRewardOrderIds = [];
@@ -320,14 +363,14 @@ if($payType == "BUY_SUB"){
     for($i =1; $i<= $accountCount; $i++){
         $uniqid = generateRandomString(42,$protocol); 
     
-        $savedinfo = file_get_contents('../settings/temp.txt');
+        $savedinfo = file_get_contents(__DIR__ . '/../settings/temp.txt');
         $savedinfo = explode('-',$savedinfo);
         $port = $savedinfo[0];
         $last_num = $savedinfo[1] + 1;
         
         if($portType == "auto"){
             $port++;
-            file_put_contents('../settings/temp.txt',$port.'-'.$last_num);
+            file_put_contents(__DIR__ . '/../settings/temp.txt',$port.'-'.$last_num, LOCK_EX);
         }else{
             $port = rand(1111,65000);
         }
@@ -398,7 +441,7 @@ if($payType == "BUY_SUB"){
     	}
     	if(!$response->success){
             showForm('پرداخت شما با موفقیت انجام شد ولی خطا داد لطفا سریع به مدیر بگو ... مبلغ '. number_format($amount) . " تومان به کیف پولت اضافه شد",$payDescription);
-            sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . $response['msg'], null, null, $admin);
+            sendMessage("خطای سرور {$serverInfo['title']}:\n\n" . (is_object($response) ? ($response->msg ?? 'خطای نامشخص') : 'پاسخ نامعتبر پنل'), null, null, $admin);
             $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
             $stmt->bind_param("ii", $amount, $user_id);
             $stmt->execute();
@@ -450,7 +493,7 @@ if($payType == "BUY_SUB"){
             QRcode::png($link, $file, $ecc, $pixel_Size, $frame_Size);
         	addBorderImage($file);
         	
-	        $backgroundImage = imagecreatefromjpeg("../settings/QRCode.jpg");
+	        $backgroundImage = imagecreatefromjpeg(__DIR__ . "/../settings/QRCode.jpg");
             $qrImage = imagecreatefrompng($file);
             
             $qrSize = array('width' => imagesx($qrImage), 'height' => imagesy($qrImage));
@@ -833,14 +876,13 @@ elseif($payType == "RENEW_SCONFIG"){
     $configInfo = json_decode($payParam['description'],true);
     $uuid = $configInfo['uuid'];
     $remark = $configInfo['remark'];
-    $isMarzban = $configInfo['marzban'];
+    $isMarzban = !empty($configInfo['marzban']);
     $rewardLegacyUuid = (string)($configInfo['uuid'] ?? '');
     $rewardLegacyRemark = (string)($configInfo['remark'] ?? '');
     
-    $uuid = $payParam['description'];
-    $inbound_id = $payParam['volume']; 
+    $inbound_id = intval($payParam['volume']);
     
-    if(isset($isMarzban)){
+    if($isMarzban){
         $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume' => $volume]);
     }else{
         if($inbound_id > 0)
@@ -850,11 +892,25 @@ elseif($payType == "RENEW_SCONFIG"){
     }
     
 	if(is_null($response)){
-		alert('🔻مشکل فنی در اتصال به سرور. لطفا به مدیریت اطلاع بدید',true);
+	    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
+	    $stmt->bind_param("ii", $amount, $user_id);
+	    $stmt->execute();
+	    $stmt->close();
+		sendMessage("اتصال به پنل برقرار نشد و مبلغ " . number_format($amount) . " تومان به کیف پول شما برگشت.", null, null, $user_id);
+		sendMessage("خطای اتصال پنل هنگام تمدید سرویس سفارشی کاربر {$user_id}؛ مبلغ به کیف پول برگشت.", null, null, $admin);
 		exit;
 	}
+	if(!is_object($response) || empty($response->success)){
+	    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
+	    $stmt->bind_param("ii", $amount, $user_id);
+	    $stmt->execute();
+	    $stmt->close();
+	    sendMessage("تمدید سرویس انجام نشد و مبلغ " . number_format($amount) . " تومان به کیف پول شما برگشت.", null, null, $user_id);
+	    sendMessage("خطای تمدید سرویس سفارشی کاربر $user_id: " . (is_object($response) ? ($response->msg ?? 'نامشخص') : 'پاسخ نامعتبر پنل'), null, null, $admin);
+	    exit;
+	}
 	$stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
-	$stmt->bind_param("iiisii", $user_id, $server_id, $inbound_id, $remark, $price, $time);
+	$stmt->bind_param("iiisii", $user_id, $server_id, $inbound_id, $remark, $amount, $time);
 	$stmt->execute();
 	$stmt->close();
     sendMessage("✅سرویس $remark با موفقیت تمدید شد",null,null,$user_id);

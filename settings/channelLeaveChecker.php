@@ -1,4 +1,5 @@
 <?php
+if(PHP_SAPI !== 'cli'){ http_response_code(403); exit('CLI only'); }
 // Batch checker for users who left the required channel.
 // Run by cron every few minutes. It processes a small batch each run so the bot does not hang.
 include_once __DIR__ . '/../config.php';

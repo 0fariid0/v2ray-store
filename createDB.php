@@ -1,6 +1,16 @@
 <?php
 
-include "baseInfo.php";
+if(PHP_SAPI !== 'cli'){
+    http_response_code(403);
+    exit('CLI only');
+}
+
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+require __DIR__ . "/baseInfo.php";
+if(!isset($dbUserName, $dbPassword, $dbName) || $dbUserName === '' || $dbName === ''){
+    exit("Database configuration is incomplete.\n");
+}
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
     exit("error " . $connection->connect_error);  
@@ -317,6 +327,5 @@ $connection->query("CREATE TABLE  `send_list` (
         PRIMARY KEY (`id`)
         )");
 
-
-
+echo "Database schema created successfully.\n";
 ?>

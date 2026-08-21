@@ -1,19 +1,23 @@
 <?php
-include "../baseInfo.php";
-include "../config.php";
-$connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
-if($connection->connect_error){
-    exit("error " . $connection->connect_error);  
+require __DIR__ . "/../config.php";
+header('Content-Type: text/plain; charset=utf-8');
+header('Cache-Control: no-store, private');
+
+$token = trim((string)($_GET['token'] ?? ''));
+if(!preg_match('/\A[A-Za-z0-9]{30}\z/D', $token)){
+    http_response_code(400);
+    exit('Wrong token');
 }
-$connection->set_charset("utf8mb4");
-if(isset($_GET['token'])){
-$token = $_GET['token'];
-    if(preg_match('/[a-zA-Z0-9]{30}/',$token)){
+
         $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `token` = ?");
         $stmt->bind_param("s", $token);
         $stmt->execute();
         $info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
+        if(!$info){
+            http_response_code(404);
+            exit('Wrong token');
+        }
         
         $remark = $info['remark'];
         $uuid = $info['uuid']??"0";
@@ -28,6 +32,11 @@ $token = $_GET['token'];
         $stmt->bind_param("i", $file_id);
         $stmt->execute();
         $file_detail = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$file_detail){
+            http_response_code(404);
+            exit('Plan not found');
+        }
         $customPath = $file_detail['custom_path'] ?? null;
         $customPort = $file_detail['custom_port'] ?? 0;
         $customSni = $file_detail['custom_sni'] ?? null;
@@ -39,6 +48,10 @@ $token = $_GET['token'];
         $stmt->execute();
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
+        if(!$server_info){
+            http_response_code(404);
+            exit('Server not found');
+        }
         $serverType = $server_info['type'];
 
         $panelSubLink = v2raystore_makeCustomerSubLink($server_id, $token, $uuid, $inbound_id, $remark);
@@ -58,7 +71,27 @@ $token = $_GET['token'];
             }
         }
 
-        $response = getJson($server_id)->obj;
+        $storedLinks = json_decode((string)($info['link'] ?? ''), true);
+        $serveStoredLinks = static function() use ($storedLinks){
+            if(!is_array($storedLinks) || empty($storedLinks)){
+                http_response_code(502);
+                exit('Subscription is temporarily unavailable');
+            }
+            echo base64_encode(implode("\n", array_map('strval', $storedLinks)));
+            exit();
+        };
+        $panelResponse = getJson($server_id);
+        if(!is_object($panelResponse) || !isset($panelResponse->obj) || !is_iterable($panelResponse->obj)){
+            $serveStoredLinks();
+        }
+        $response = $panelResponse->obj;
+        $clientInbound = intval($inbound_id);
+        $up = 0;
+        $down = 0;
+        $total = 0;
+        $port = 0;
+        $netType = '';
+        $statsFound = false;
         if($inbound_id == 0) {
             foreach($response as $row){
                 $clientInbound = $row->id;
@@ -70,6 +103,7 @@ $token = $_GET['token'];
                     $down = $row->down; 
                     $netType = json_decode($row->streamSettings)->network;
                     $security = json_decode($row->streamSettings)->security;
+                    $statsFound = true;
                     break;
                 }
             }
@@ -89,16 +123,19 @@ $token = $_GET['token'];
                             $emails = array_column($clientsStates,'email');
                             $emailKey = array_search($email,$emails);
                             
+                            if($emailKey === false || !isset($clientsStates[$emailKey])) continue;
                             $total = $clientsStates[$emailKey]->total;
                             $up = $clientsStates[$emailKey]->up;
                             $enable = $clientsStates[$emailKey]->enable;
-                            $down = $clientsStates[$emailKey]->down; 
+                            $down = $clientsStates[$emailKey]->down;
+                            $statsFound = true;
                             break;
                         }
                     }
                 }
             }
         }
+        if(!$statsFound) $serveStoredLinks();
         $totalUsed = round( ($up + $down) / 1073741824, 2) . " GB";
         $total = round ($total / 1073741824, 2) . " GB";
         $daysLeft = round(($info['expire_date'] - time())/86400,1);
@@ -133,7 +170,4 @@ $token = $_GET['token'];
             echo base64_encode(implode("\n", $vraylink));
             exit();
         }else exit("Error occured");
-    }
-}
-echo "Wrong token";
 ?>

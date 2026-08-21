@@ -1,6 +1,7 @@
 <?php
-include_once '../baseInfo.php';
-include_once '../config.php';
+if(PHP_SAPI !== 'cli'){ http_response_code(403); exit('CLI only'); }
+include_once __DIR__ . '/../baseInfo.php';
+include_once __DIR__ . '/../config.php';
 $time = time();
 
 if(file_exists("warnOffset.txt")) $warnOffset = intval(file_get_contents("warnOffset.txt"));
