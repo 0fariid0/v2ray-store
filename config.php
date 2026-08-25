@@ -4150,6 +4150,8 @@ function v2raystore_getPurchaseRewardConfig(){
         'special_chance' => 25,
         'purchase_enabled' => true,
         'renew_enabled' => true,
+        // Empty means every active paid plan is eligible. Otherwise only these plan IDs qualify.
+        'eligible_plan_ids' => [],
     ];
     $raw = function_exists('v2raystore_getSettingValue') ? v2raystore_getSettingValue('PURCHASE_REWARD_CONFIG', '') : '';
     $cfg = json_decode((string)$raw, true);
@@ -4162,6 +4164,7 @@ function v2raystore_getPurchaseRewardConfig(){
     $cfg['normal_percent'] = max(0, min(100, round(floatval($cfg['normal_percent']), 2)));
     $cfg['normal_gb'] = max(0, round(floatval($cfg['normal_gb']), 2));
     $cfg['special_chance'] = max(0, min(100, intval($cfg['special_chance'])));
+    $cfg['eligible_plan_ids'] = array_values(array_unique(array_filter(array_map('intval', is_array($cfg['eligible_plan_ids'] ?? null) ? $cfg['eligible_plan_ids'] : []), function($id){ return $id > 0; })));
     return $cfg;
 }
 
@@ -4178,6 +4181,7 @@ function v2raystore_savePurchaseRewardConfig($cfg){
         'special_chance' => max(0, min(100, intval($cfg['special_chance'] ?? 0))),
         'purchase_enabled' => !empty($cfg['purchase_enabled']),
         'renew_enabled' => !empty($cfg['renew_enabled']),
+        'eligible_plan_ids' => array_values(array_unique(array_filter(array_map('intval', is_array($cfg['eligible_plan_ids'] ?? null) ? $cfg['eligible_plan_ids'] : []), function($id){ return $id > 0; }))),
     ];
     return v2raystore_setSettingValue('PURCHASE_REWARD_CONFIG', json_encode($clean, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
@@ -4367,6 +4371,8 @@ function v2raystore_rewardSettingsText(){
     $renew = $cfg['renew_enabled'] ? '✅ فعال' : '❌ غیرفعال';
     $normalState = $cfg['normal_enabled'] ? '✅ روشن' : '❌ خاموش';
     $normalPercent = v2raystore_rewardFormatGb($cfg['normal_percent']);
+    $eligiblePlanIds = $cfg['eligible_plan_ids'] ?? [];
+    $eligiblePlans = empty($eligiblePlanIds) ? 'همه پلن‌های فعال' : (count($eligiblePlanIds) . ' پلن انتخاب‌شده');
     $normalRule = $cfg['normal_enabled']
         ? "📌 اگر قرعه جایزه ویژه به کاربر نخورد، جایزه عادی بر اساس درصد حجم همان خرید/تمدید محاسبه می‌شود؛ اگر برنده جایزه ویژه شود، همان جایزه ویژه جایگزین جایزه عادی می‌شود.\n"
         : "📌 جایزه عادی خاموش است؛ فقط برندگان قرعه ویژه هدیه می‌گیرند و در صورت برنده‌نشدن، حجمی اضافه نمی‌شود.\n";
@@ -4374,6 +4380,7 @@ function v2raystore_rewardSettingsText(){
         "وضعیت کلی: <b>{$state}</b>\n" .
         "🛒 جایزه خرید جدید: <b>{$purchase}</b>\n" .
         "♻️ جایزه تمدید: <b>{$renew}</b>\n\n" .
+        "🎯 پلن‌های مشمول: <b>{$eligiblePlans}</b>\n" .
         "🎁 وضعیت جایزه عادی: <b>{$normalState}</b>\n" .
         "📊 درصد جایزه عادی: <b>{$normalPercent}% حجم همان خرید/تمدید</b>\n" .
         "   مثال با {$normalPercent}%: پلن 5 گیگ → <b>" . v2raystore_rewardFormatGb(5 * floatval($cfg['normal_percent']) / 100) . " گیگ</b> | پلن 10 گیگ → <b>" . v2raystore_rewardFormatGb(10 * floatval($cfg['normal_percent']) / 100) . " گیگ</b>\n" .
@@ -4398,13 +4405,80 @@ function v2raystore_rewardSettingsKeyboard(){
             ['text'=>$renew, 'callback_data'=>'rewardToggleRenew'],
         ],
         [['text'=>'🎁 جایزه عادی: ' . $normal, 'callback_data'=>'rewardToggleNormal']],
+        [['text'=>'🎯 پلن‌های مشمول: ' . (empty($cfg['eligible_plan_ids']) ? 'همه' : count($cfg['eligible_plan_ids']) . ' پلن'), 'callback_data'=>'rewardPlans_0']],
         [['text'=>'📊 درصد جایزه عادی: ' . v2raystore_rewardFormatGb($cfg['normal_percent']) . '% حجم پلن', 'callback_data'=>'rewardSetNormal']],
         [['text'=>'🎲 شانس پایه ویژه: ' . intval($cfg['special_chance']) . '%', 'callback_data'=>'rewardSetChance']],
         [['text'=>'➕ افزودن جایزه ویژه محدود', 'callback_data'=>'rewardAddSpecial']],
         [['text'=>'⭐ مدیریت جوایز ویژه', 'callback_data'=>'rewardPrizes']],
         [['text'=>'👥 لیست دریافت‌کنندگان جایزه', 'callback_data'=>'rewardWinners_0']],
-        [['text'=>'« بازگشت به درگاه‌ها', 'callback_data'=>'gateWays_Channels']],
+        [['text'=>'« بازگشت به فروش و پلن‌ها', 'callback_data'=>'adminSalesMenu']],
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function v2raystore_rewardPlansMenu($offset = 0){
+    global $connection;
+    $cfg = v2raystore_getPurchaseRewardConfig();
+    $selected = array_fill_keys(array_map('intval', $cfg['eligible_plan_ids'] ?? []), true);
+    $offset = max(0, intval($offset));
+    $limit = 8;
+    $where = "sp.`active`=1 AND sp.`step`=10 AND COALESCE(sp.`price`,0)>0";
+    $countRes = @($connection->query("SELECT COUNT(*) AS c FROM `server_plans` sp WHERE {$where}"));
+    $total = $countRes ? intval($countRes->fetch_assoc()['c'] ?? 0) : 0;
+    if($total > 0 && $offset >= $total) $offset = max(0, intval(floor(($total - 1) / $limit)) * $limit);
+
+    $sql = "SELECT sp.`id`,sp.`title`,sp.`volume`,sp.`days`,sp.`price`,COALESCE(si.`title`,'') AS server_title " .
+        "FROM `server_plans` sp LEFT JOIN `server_info` si ON si.`id`=sp.`server_id` " .
+        "WHERE {$where} ORDER BY sp.`id` ASC LIMIT {$offset},{$limit}";
+    $res = @($connection->query($sql));
+    $rows = [];
+    if($res){ while($row = $res->fetch_assoc()) $rows[] = $row; }
+
+    $modeText = empty($selected)
+        ? 'همه پلن‌های فعال و پولی مشمول جایزه هستند.'
+        : count($selected) . ' پلن انتخاب شده و فقط همان‌ها مشمول جایزه‌اند.';
+    $text = "🎯 <b>انتخاب پلن‌های مشمول جایزه</b>\n\n{$modeText}\n\n" .
+        "روی هر پلن بزنید تا انتخاب یا حذف شود. اگر هیچ پلنی انتخاب نشده باشد، جایزه برای همه پلن‌ها فعال است.";
+    $keys = [];
+    foreach($rows as $row){
+        $id = intval($row['id']);
+        $mark = isset($selected[$id]) ? '✅' : '▫️';
+        $title = trim((string)$row['title']);
+        if($title === '') $title = 'پلن #' . $id;
+        $serverTitle = trim((string)$row['server_title']);
+        $details = v2raystore_rewardFormatGb($row['volume']) . 'GB / ' . v2raystore_rewardFormatGb($row['days']) . 'روز';
+        if($serverTitle !== '') $details .= ' / ' . $serverTitle;
+        $label = $mark . ' #' . $id . ' ' . $title . ' | ' . $details;
+        if(function_exists('mb_substr')) $label = mb_substr($label, 0, 60, 'UTF-8');
+        $keys[] = [['text'=>$label, 'callback_data'=>'rewardPlanToggle_' . $id . '_' . $offset]];
+    }
+    if(empty($rows)) $keys[] = [['text'=>'پلن فعال و پولی پیدا نشد', 'callback_data'=>'v2raystore']];
+    $nav = [];
+    if($offset > 0) $nav[] = ['text'=>'« قبلی', 'callback_data'=>'rewardPlans_' . max(0, $offset - $limit)];
+    if(($offset + $limit) < $total) $nav[] = ['text'=>'بعدی »', 'callback_data'=>'rewardPlans_' . ($offset + $limit)];
+    if($nav) $keys[] = $nav;
+    if(!empty($selected)) $keys[] = [['text'=>'🌐 انتخاب همه پلن‌ها', 'callback_data'=>'rewardPlansAll']];
+    $keys[] = [['text'=>'« بازگشت به تنظیمات جایزه', 'callback_data'=>'rewardSettings']];
+    return ['text'=>$text, 'keyboard'=>json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)];
+}
+
+function v2raystore_rewardResolvePlanId($order, $payHash = '', $userId = 0, $preferPaymentPlan = false){
+    global $connection;
+    $planId = intval(is_array($order) ? ($order['_reward_plan_id'] ?? ($order['fileid'] ?? 0)) : 0);
+    $payHash = trim((string)$payHash);
+    $userId = intval($userId);
+    if(!$preferPaymentPlan && $planId > 0) return $planId;
+    if($payHash !== '' && $userId > 0 && isset($connection) && ($connection instanceof mysqli)){
+        $stmt = @$connection->prepare("SELECT `plan_id` FROM `pays` WHERE `hash_id`=? AND `user_id`=? ORDER BY `id` DESC LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('si', $payHash, $userId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            $paidPlanId = intval($row['plan_id'] ?? 0);
+            if($paidPlanId > 0) return $paidPlanId;
+        }
+    }
+    return $planId;
 }
 
 function v2raystore_rewardAddSpecialPrize($volumeGb, $count){
@@ -4724,6 +4798,12 @@ function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $p
         if(!$order) return ['ok'=>false,'skipped'=>true,'message'=>'سفارش برای جایزه پیدا نشد.'];
     }
     if(intval($order['status'] ?? 0) != 1) return ['ok'=>true,'skipped'=>true,'message'=>'سرویس غیرفعال مشمول جایزه نیست.'];
+    // For renewals, the paid renewal plan is authoritative; the old order may still carry its previous plan ID in legacy paths.
+    $rewardPlanId = v2raystore_rewardResolvePlanId($order, $payHash, $userId, $eventType === 'renew');
+    $eligiblePlanIds = $cfg['eligible_plan_ids'] ?? [];
+    if(!empty($eligiblePlanIds) && ($rewardPlanId <= 0 || !in_array($rewardPlanId, $eligiblePlanIds, true))){
+        return ['ok'=>true,'skipped'=>true,'message'=>'این پلن در فهرست پلن‌های مشمول جایزه نیست.','plan_id'=>$rewardPlanId];
+    }
     $remark = trim((string)($order['remark'] ?? ''));
     $now = time();
 
@@ -11588,8 +11668,6 @@ function getGateWaysKeys(){
     $cartToCartState = $botState['cartToCartState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $walletState = $botState['walletState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $agentWalletState = (($botState['agentWalletState'] ?? ($botState['walletState'] ?? 'off'))=="on")?$buttonValues['on']:$buttonValues['off'];
-    $purchaseRewardCfg = function_exists('v2raystore_getPurchaseRewardConfig') ? v2raystore_getPurchaseRewardConfig() : ['enabled'=>false];
-    $purchaseRewardState = !empty($purchaseRewardCfg['enabled']) ? '🟢 روشن' : '🔴 خاموش';
     $sellState = $botState['sellState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $weSwapState = $botState['weSwapState']=="on"?$buttonValues['on']:$buttonValues['off'];
     $robotState = $botState['botState']=="on"?$buttonValues['on']:$buttonValues['off'];
@@ -11678,10 +11756,6 @@ function getGateWaysKeys(){
         [
             ['text'=>$agentWalletState,'callback_data'=>"changeGateWaysagentWalletState"],
             ['text'=>"کیف پول نماینده‌ها",'callback_data'=>"v2raystore"]
-        ],
-        [
-            ['text'=>$purchaseRewardState,'callback_data'=>'rewardSettings'],
-            ['text'=>"🎁 جایزه خرید و تمدید",'callback_data'=>'rewardSettings']
         ],
         [
             ['text'=>$rewaredChannel,'callback_data'=>'editRewardChannel'],

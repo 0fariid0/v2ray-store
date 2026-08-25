@@ -2030,6 +2030,40 @@ if($data=="rewardSettings" && ($from_id == $admin || $userInfo['isAdmin'] == tru
     editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
 }
+if(preg_match('/^rewardPlans_(\d+)$/', (string)$data, $rewardPlansMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $menu = v2raystore_rewardPlansMenu(intval($rewardPlansMatch[1]));
+    editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
+if(preg_match('/^rewardPlanToggle_(\d+)_(\d+)$/', (string)$data, $rewardPlanMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $planId = intval($rewardPlanMatch[1]);
+    $offset = intval($rewardPlanMatch[2]);
+    $stmt = $connection->prepare("SELECT `id` FROM `server_plans` WHERE `id`=? AND `active`=1 AND `step`=10 AND COALESCE(`price`,0)>0 LIMIT 1");
+    if(!$stmt){ alert('خواندن پلن انجام نشد.'); exit(); }
+    $stmt->bind_param('i', $planId);
+    $stmt->execute();
+    $exists = (bool)$stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$exists){ alert('این پلن دیگر فعال یا موجود نیست.'); exit(); }
+    $cfg = v2raystore_getPurchaseRewardConfig();
+    $ids = array_values(array_unique(array_map('intval', $cfg['eligible_plan_ids'] ?? [])));
+    if(in_array($planId, $ids, true)) $ids = array_values(array_diff($ids, [$planId]));
+    else $ids[] = $planId;
+    sort($ids, SORT_NUMERIC);
+    $cfg['eligible_plan_ids'] = $ids;
+    v2raystore_savePurchaseRewardConfig($cfg);
+    $menu = v2raystore_rewardPlansMenu($offset);
+    editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
+if($data==="rewardPlansAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $cfg = v2raystore_getPurchaseRewardConfig();
+    $cfg['eligible_plan_ids'] = [];
+    v2raystore_savePurchaseRewardConfig($cfg);
+    $menu = v2raystore_rewardPlansMenu(0);
+    editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
+    exit();
+}
 if(in_array($data, ['rewardToggleFeature','rewardTogglePurchase','rewardToggleRenew','rewardToggleNormal'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $cfg = v2raystore_getPurchaseRewardConfig();
     if($data === 'rewardToggleFeature') $cfg['enabled'] = empty($cfg['enabled']);
@@ -16525,6 +16559,9 @@ function getAdminSalesMenuKeys(){
         ['text'=>$buttonValues['gateways_settings'] ?? 'درگاه‌ها و کانال‌ها', 'callback_data'=>'gateWays_Channels'],
         ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu']
     ];
+    $rewardCfg = function_exists('v2raystore_getPurchaseRewardConfig') ? v2raystore_getPurchaseRewardConfig() : ['enabled'=>false];
+    $rewardState = !empty($rewardCfg['enabled']) ? '🟢' : '🔴';
+    $keys[] = [['text'=>$rewardState . ' 🎁 جایزه خرید و تمدید', 'callback_data'=>'rewardSettings']];
     $keys[] = v2raystore_adminSectionBackRow();
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }

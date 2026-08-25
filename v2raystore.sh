@@ -1465,6 +1465,7 @@ install_local_command() {
 show_status() {
     banner
     local installed token bot_url dom phpv apache_s mysql_s crons days version
+    local os_name uptime_text memory_text disk_text bot_size db_size dbname dbuser dbpass latest_backup backup_text
     installed="no"
     [ -f "$BASE_INFO" ] && installed="yes"
 
@@ -1501,6 +1502,34 @@ show_status() {
     kv "PHP upload" "${DIM}$(php -r 'echo ini_get("upload_max_filesize") . " / " . ini_get("post_max_size");' 2>/dev/null || echo n/a)${NC}"
     [ "$apache_s" = active ] && kv "Apache" "$(dot ok) ${GREEN}active${NC}" || kv "Apache" "$(dot bad) ${RED}${apache_s}${NC}"
     [ "$mysql_s" = active ] && kv "MySQL/MariaDB" "$(dot ok) ${GREEN}active${NC}" || kv "MySQL/MariaDB" "$(dot bad) ${RED}${mysql_s}${NC}"
+
+    section "System Resources"
+    os_name=$(awk -F= '/^PRETTY_NAME=/{gsub(/^"|"$/,"",$2); print $2; exit}' /etc/os-release 2>/dev/null)
+    uptime_text=$(uptime -p 2>/dev/null | sed 's/^up //' || true)
+    memory_text=$(free -h 2>/dev/null | awk '/^Mem:/{print $3 " used / " $2 " total / " $7 " available"}')
+    disk_text=$(df -hP "$BOT_DIR" 2>/dev/null | awk 'NR==2{print $3 " used / " $2 " total / " $4 " free (" $5 ")"}')
+    bot_size=$(du -sh "$BOT_DIR" 2>/dev/null | awk '{print $1}')
+    kv "OS" "${DIM}${os_name:-$(uname -sr 2>/dev/null || echo n/a)}${NC}"
+    kv "Uptime" "${DIM}${uptime_text:-n/a}${NC}"
+    kv "Memory" "${DIM}${memory_text:-n/a}${NC}"
+    kv "Disk" "${DIM}${disk_text:-n/a}${NC}"
+    [ "$installed" = "yes" ] && kv "Bot files size" "${DIM}${bot_size:-n/a}${NC}"
+    if [ "$installed" = "yes" ] && command -v mysql >/dev/null 2>&1; then
+        dbname=$(php_var dbName)
+        dbuser=$(php_var dbUserName)
+        dbpass=$(php_var dbPassword)
+        if [[ "$dbname" =~ ^[a-zA-Z0-9_-]+$ ]] && [ -n "$dbuser" ]; then
+            db_size=$(MYSQL_PWD="$dbpass" mysql -N -B -u "$dbuser" -e "SELECT CONCAT(ROUND(COALESCE(SUM(data_length+index_length),0)/1024/1024,1),' MB') FROM information_schema.tables WHERE table_schema='${dbname}';" 2>/dev/null || true)
+            [ -n "$db_size" ] && kv "Database size" "${DIM}${db_size}${NC}"
+        fi
+    fi
+    latest_backup=$(find "$BACKUP_DIR" -maxdepth 1 -type f -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)
+    if [ -n "$latest_backup" ]; then
+        backup_text="$(basename "$latest_backup") / $(du -h "$latest_backup" 2>/dev/null | awk '{print $1}') / $(date -r "$latest_backup" '+%Y-%m-%d %H:%M' 2>/dev/null)"
+        kv "Latest backup" "${DIM}${backup_text}${NC}"
+    else
+        kv "Latest backup" "$(dot warn) ${YELLOW}not found${NC}"
+    fi
 
     section "SSL / Cron / Webhook"
     if [ "$installed" = "yes" ] && [ -n "$dom" ]; then
