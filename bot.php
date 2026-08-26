@@ -1359,7 +1359,7 @@ if($data == 'markCartToCartCardChanged' && ($from_id == $admin || $userInfo['isA
     v2raystore_markCardInfoChanged();
     editText($message_id, "✅ وضعیت شماره کارت تغییر کرد.
 
-از این به بعد کاربران برای پرداخت کارت‌به‌کارت باید دوباره شماره کارت جدید را از ادمین دریافت کنند.", getGateWaysKeys(), 'HTML');
+از این به بعد کاربران برای پرداخت کارت‌به‌کارت باید دوباره شماره کارت جدید را از ادمین دریافت کنند.", getPaymentCardsSettingsKeys(), 'HTML');
     exit();
 }
 v2raystore_handleNewMemberLock();
@@ -1476,15 +1476,18 @@ if(preg_match('/^sendMessageToUser(\d+)/',$userInfo['step'],$match) && ($from_id
     setUser();
 }
 
-if(preg_match('/^admin(Main|Reports|Configs|Sales|Users|Messages|Settings)Menu$/', $data ?? '', $adminMenuMatch) && ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
+if(preg_match('/^admin(Main|Quick|Reports|Configs|Sales|Payments|Users|Messages|Content|Settings)Menu$/', $data ?? '', $adminMenuMatch) && ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
     $adminMenuMap = [
         'Main' => ['title' => $mainValues['reached_main_menu'] ?? 'مدیریت ربات', 'keys' => 'getAdminKeysPlus'],
-        'Reports' => ['title' => '📊 گزارش‌ها و جستجو', 'keys' => 'getAdminReportsMenuKeys'],
-        'Configs' => ['title' => '🧾 کانفیگ‌ها و سرویس‌ها', 'keys' => 'getAdminConfigsMenuKeys'],
-        'Sales' => ['title' => '🖥 سرورها، پلن‌ها و فروش', 'keys' => 'getAdminSalesMenuKeys'],
+        'Quick' => ['title' => '⚡ دسترسی سریع مدیریت', 'keys' => 'getAdminQuickMenuKeys'],
+        'Reports' => ['title' => '📊 داشبورد و گزارش‌ها', 'keys' => 'getAdminReportsMenuKeys'],
+        'Configs' => ['title' => '🧾 سفارش‌ها و سرویس‌ها', 'keys' => 'getAdminConfigsMenuKeys'],
+        'Sales' => ['title' => '🖥 سرورها و پلن‌ها', 'keys' => 'getAdminSalesMenuKeys'],
+        'Payments' => ['title' => '💳 پرداخت، درآمد و جایزه', 'keys' => 'getAdminPaymentsMenuKeys'],
         'Users' => ['title' => '👥 کاربران، نماینده‌ها و دسترسی‌ها', 'keys' => 'getAdminUsersMenuKeys'],
-        'Messages' => ['title' => '📨 پیام‌ها، پشتیبانی و محتوا', 'keys' => 'getAdminMessagesMenuKeys'],
-        'Settings' => ['title' => '⚙️ تنظیمات، ظاهر و آموزش‌ها', 'keys' => 'getAdminSettingsMenuKeys'],
+        'Messages' => ['title' => '📨 پیام‌ها و پشتیبانی', 'keys' => 'getAdminMessagesMenuKeys'],
+        'Content' => ['title' => '📝 محتوا و آموزش‌ها', 'keys' => 'getAdminContentMenuKeys'],
+        'Settings' => ['title' => '⚙️ تنظیمات و ظاهر ربات', 'keys' => 'getAdminSettingsMenuKeys'],
     ];
     $menuName = $adminMenuMatch[1];
     $menuInfo = $adminMenuMap[$menuName] ?? $adminMenuMap['Main'];
@@ -1493,9 +1496,9 @@ if(preg_match('/^admin(Main|Reports|Configs|Sales|Users|Messages|Settings)Menu$/
 
 ";
     if($menuName == 'Main'){
-        $textTitle = $menuInfo['title'];
+        $textTitle = function_exists('v2raystore_adminDashboardText') ? v2raystore_adminDashboardText() : $menuInfo['title'];
     }else{
-        $textTitle .= "گزینه‌های این بخش مرتب شده‌اند تا منوی مدیریت خلوت‌تر و سریع‌تر باشد.";
+        $textTitle .= "مسیر: مدیریت ← {$menuInfo['title']}";
     }
     editText($message_id, $textTitle, function_exists($keysFn) ? $keysFn() : getAdminKeysPlus(), 'HTML');
     exit();
@@ -1773,14 +1776,45 @@ if(preg_match('/^setAllUserButtons_(on|off)$/', $data, $match) && ($from_id == $
     exit();
 }
 
+if(preg_match('/^botSettings(Sales|Service|Connections|Access|Marketing)$/', $data ?? '', $botSettingsSectionMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $sectionFunctions = [
+        'Sales'=>'getBotSalesSettingKeys',
+        'Service'=>'getBotServiceSettingKeys',
+        'Connections'=>'getBotConnectionSettingKeys',
+        'Access'=>'getBotAccessSettingKeys',
+        'Marketing'=>'getBotMarketingSettingKeys',
+    ];
+    $sectionTitles = [
+        'Sales'=>'🛍 فروش، موجودی و نمایندگی',
+        'Service'=>'♻️ امکانات و چرخه سرویس',
+        'Connections'=>'🔗 لینک، ساب، QR و تحویل',
+        'Access'=>'🔐 دسترسی و وضعیت ربات',
+        'Marketing'=>'📣 بازاریابی و گزارش درآمد',
+    ];
+    $section = $botSettingsSectionMatch[1];
+    $fn = $sectionFunctions[$section];
+    editText($message_id, '<b>' . $sectionTitles[$section] . '</b>\n\nتنظیمات مرتبط این بخش را از دکمه‌های زیر مدیریت کنید.', $fn(), 'HTML');
+    exit();
+}
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $changedBotKey = '';
     if($data!="botSettings"){
+        $changedBotKey = $match[1];
         $defaultOnBotKeys = ['smartRenewState','configTutorialButtonsState','configDiagnosticsState'];
-        $currentBotValue = $botState[$match[1]] ?? (in_array($match[1], $defaultOnBotKeys, true) ? 'on' : 'off');
+        $currentBotValue = $botState[$changedBotKey] ?? (in_array($changedBotKey, $defaultOnBotKeys, true) ? 'on' : 'off');
         $newValue = $currentBotValue=="on"?"off":"on";
-        setSettings($match[1], $newValue);
+        setSettings($changedBotKey, $newValue);
     }
-    editText($message_id,$mainValues['change_bot_settings_message'],getBotSettingKeys());
+    $section = $changedBotKey !== '' && function_exists('v2raystore_botSettingSectionForKey') ? v2raystore_botSettingSectionForKey($changedBotKey) : '';
+    $sectionFn = [
+        'Sales'=>'getBotSalesSettingKeys',
+        'Service'=>'getBotServiceSettingKeys',
+        'Connections'=>'getBotConnectionSettingKeys',
+        'Access'=>'getBotAccessSettingKeys',
+        'Marketing'=>'getBotMarketingSettingKeys',
+    ][$section] ?? 'getBotSettingKeys';
+    editText($message_id,$mainValues['change_bot_settings_message'],$sectionFn());
+    exit();
 }
 
 
@@ -1931,7 +1965,7 @@ if($data=="adminTextSettings" && ($from_id == $admin || $userInfo['isAdmin'] == 
 
     $msg = "📝 <b>تنظیم متن‌ها</b>\n\n" .
            "اینجا هم متن خوش‌آمدگویی صفحه اصلی و هم متن قوانین/آخرین اخبار قبل از خرید تنظیم می‌شود.\n" .
-           "مسیر: <b>مدیریت ربات ← تنظیمات ربات ← متن‌ها / قوانین خرید</b>\n\n" .
+           "مسیر: <b>مدیریت ربات ← محتوا و آموزش‌ها ← متن‌ها / قوانین خرید</b>\n\n" .
            "📌 <b>متن خوش‌آمد فعلی:</b>\n<pre>" . $preview . "</pre>\n\n" .
            "📢 <b>قوانین/آخرین اخبار خرید:</b>\n<pre>" . $rulesPreview . "</pre>";
     editText($message_id, $msg, farid_textSettingsKeyboard(), "HTML");
@@ -1997,14 +2031,33 @@ if($data=="clearPurchaseRulesText" && ($from_id == $admin || $userInfo['isAdmin'
 if($data=="changeUpdateConfigLinkState" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $newValue = $botState['updateConnectionState']=="robot"?"site":"robot";
     setSettings('updateConnectionState', $newValue);
-    editText($message_id,$mainValues['change_bot_settings_message'],getBotSettingKeys());
+    editText($message_id,$mainValues['change_bot_settings_message'],getBotConnectionSettingKeys());
+}
+if(in_array($data ?? '', ['paymentCardsSettings','paymentCredentialsSettings','paymentMethodsSettings','paymentChannelsSettings'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $paymentMenuFns = [
+        'paymentCardsSettings'=>'getPaymentCardsSettingsKeys',
+        'paymentCredentialsSettings'=>'getPaymentCredentialsSettingsKeys',
+        'paymentMethodsSettings'=>'getPaymentMethodsSettingsKeys',
+        'paymentChannelsSettings'=>'getPaymentChannelsSettingsKeys',
+    ];
+    $paymentTitles = [
+        'paymentCardsSettings'=>'💳 کارت‌ها و مسئول دریافت',
+        'paymentCredentialsSettings'=>'🔑 کلیدها و آدرس درگاه‌ها',
+        'paymentMethodsSettings'=>'🔌 وضعیت روش‌های پرداخت',
+        'paymentChannelsSettings'=>'📢 کانال گزارش و کانال قفل',
+    ];
+    editText($message_id, '<b>' . $paymentTitles[$data] . '</b>', $paymentMenuFns[$data](), 'HTML');
+    exit();
 }
 if(($data=="gateWays_Channels" or preg_match("/^changeGateWays(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if($data!="gateWays_Channels"){
         $newValue = $botState[$match[1]]=="on"?"off":"on";
         setSettings($match[1], $newValue);
+        editText($message_id,$mainValues['change_bot_settings_message'],getPaymentMethodsSettingsKeys());
+    }else{
+        editText($message_id,"🏦 <b>حساب‌ها، درگاه‌ها و کانال‌ها</b>\n\nبرای پیدا کردن سریع‌تر، تنظیمات پرداخت در چهار بخش جدا شده است.",getGateWaysKeys(),'HTML');
     }
-    editText($message_id,$mainValues['change_bot_settings_message'],getGateWaysKeys());
+    exit();
 }
 
 // ==================== تنظیمات جایزه خرید و تمدید ====================
@@ -2248,7 +2301,7 @@ if($data=="changeConfigRemarkType"){
             break;
     }
     setSettings('remark', $newValue);
-    editText($message_id,$mainValues['change_bot_settings_message'],getBotSettingKeys());
+    editText($message_id,$mainValues['change_bot_settings_message'],getBotConnectionSettingKeys());
 }
 if(preg_match('/^changePaymentKeys(\w+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     delMessage();
@@ -2298,7 +2351,10 @@ if(preg_match('/^changePaymentKeys(\w+)/',$userInfo['step'],$match) && $text != 
     v2raystore_savePaymentKeys($paymentKeys);
 
     sendMessage($mainValues['saved_successfuly'],$removeKeyboard);
-    sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
+    $paymentKeySection = in_array($match[1], ['bankAccount','holderName','secondBankAccount','secondHolderName','cardContact'], true)
+        ? getPaymentCardsSettingsKeys()
+        : getPaymentCredentialsSettingsKeys();
+    sendMessage($mainValues['change_bot_settings_message'],$paymentKeySection);
     setUser();
 }
 if(($data == "agentsList" || preg_match('/^nextAgentList(\d+)/',$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -2798,7 +2854,7 @@ if($data=="inviteSetting" && ($from_id == $admin || $userInfo['isAdmin'] == true
             ['text'=>"مقدار پورسانت",'callback_data'=>"v2raystore"]
             ],
         [
-            ['text'=>$buttonValues['back_button'],'callback_data'=>"botSettings"]
+            ['text'=>$buttonValues['back_button'],'callback_data'=>"botSettingsMarketing"]
             ],
         ]]); 
     $res = editText($message_id,"✅ تنظیمات بازاریابی",$keys);
@@ -2913,7 +2969,7 @@ if($userInfo['step'] == "editInviteAmount" && $text != $buttonValues['cancel'] &
                 ['text'=>"مقدار پورسانت",'callback_data'=>"v2raystore"]
                 ], 
             [
-                ['text'=>$buttonValues['back_button'],'callback_data'=>"botSettings"]
+                ['text'=>$buttonValues['back_button'],'callback_data'=>"botSettingsMarketing"]
                 ],
             ]]); 
         sendMessage("✅ تنظیمات بازاریابی",$keys);
@@ -2931,7 +2987,7 @@ if($userInfo['step'] == "editRewardTime" && ($from_id == $admin || $userInfo['is
     }
     
     setSettings('rewaredTime', $text);
-    sendMessage($mainValues['change_bot_settings_message'],getBotSettingKeys());
+    sendMessage($mainValues['change_bot_settings_message'],getBotMarketingSettingKeys());
     setUser();
     exit();
 }
@@ -3232,7 +3288,7 @@ if($userInfo['step'] == "editRewardChannel" && ($from_id == $admin || $userInfo[
     if(is_object($result) && !empty($result->ok)){
         if($result->result->status == "administrator"){
             setSettings('rewardChannel', $text);
-            sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
+            sendMessage($mainValues['change_bot_settings_message'],getPaymentChannelsSettingsKeys());
             setUser();
             exit();
         }
@@ -3251,7 +3307,7 @@ if($userInfo['step'] == "editLockChannel" && ($from_id == $admin || $userInfo['i
     if(is_object($result) && !empty($result->ok)){
         if($result->result->status == "administrator"){
             setSettings("lockChannel", $text);
-            sendMessage($mainValues['change_bot_settings_message'],getGateWaysKeys());
+            sendMessage($mainValues['change_bot_settings_message'],getPaymentChannelsSettingsKeys());
             setUser();
             exit();
         }
@@ -15460,15 +15516,9 @@ if(preg_match('/^copyHash(.*)/',$data,$match) && ($from_id == $admin || $userInf
 if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == true))){
     
     setUser();
-    $msg = "
-👤 عزیزم به بخش مدیریت خوشومدی 
-🤌 هرچی نیاز داشتی میتونی اینجا طبق نیازهای فروشگاهت اضافه و تغییر بدی، عزیزم $first_name جان.
-
-
-
-🚪 /start
-";
-    editText($message_id, $msg, getAdminKeysPlus());
+    $msg = function_exists('v2raystore_adminDashboardText') ? v2raystore_adminDashboardText() : ($mainValues['reached_main_menu'] ?? 'مدیریت ربات');
+    editText($message_id, $msg, getAdminKeysPlus(), 'HTML');
+    exit();
 }
 
 if(in_array($data ?? '', ['faqMenu', 'tutorialsMenu', 'reciveApplications'], true)){
@@ -15811,17 +15861,21 @@ if (($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || 
     $adminCancelSpecific = '';
 
     if(preg_match('/^(manualAttachConfig|createAcc|cleanOldConfigs|inboundMove|addTestPlan|editTestPlan|resetOneTestAccount|setTestAccount|removeTestAccount|testAccount)/', $adminCancelStep)) $adminCancelSection = 'Configs';
-    elseif(preg_match('/^(setAutoApprove|addAutoApprove|removeAutoApprove|autoCancelOrder)/', $adminCancelStep)){ $adminCancelSection = 'Configs'; $adminCancelSpecific = 'autoApprove'; }
+    elseif(preg_match('/^(setAutoApprove|addAutoApprove|removeAutoApprove|autoCancelOrder)/', $adminCancelStep)){ $adminCancelSection = 'Payments'; $adminCancelSpecific = 'autoApprove'; }
     elseif(preg_match('/^(addNewDayPlan|changeDayPlan|addNewVolumePlan|changeVolumePlan|editCustom|v2raystoreplan|editDestName|editSpiderX|editServerNames|editFlow|editPFlow|addNewPlan|addNewRahgozarPlan|addNewMarzbanPlan)/', $adminCancelStep)){ $adminCancelSection = 'Sales'; $adminCancelSpecific = 'plans'; }
     elseif(preg_match('/^(addserverName|addServer|changesServer|editServerPane|editInboundAddr|editServer)/', $adminCancelStep)) $adminCancelSection = 'Sales';
     elseif(preg_match('/^(v2raystorecategoryedit)/', $adminCancelStep)) $adminCancelSection = 'Sales';
-    elseif(preg_match('/^(addDiscount|changeDiscount|editRewardChannel|editLockChannel)/', $adminCancelStep)) $adminCancelSection = 'Sales';
-    elseif(preg_match('/^reward/', $adminCancelStep)){ $adminCancelSection = 'Sales'; $adminCancelSpecific = 'reward'; }
+    elseif(preg_match('/^(addDiscount|changeDiscount)/', $adminCancelStep)) $adminCancelSection = 'Sales';
+    elseif(preg_match('/^(changePaymentKeys|editRewardChannel|editLockChannel)/', $adminCancelStep)) $adminCancelSection = 'Payments';
+    elseif(preg_match('/^reward/', $adminCancelStep)){ $adminCancelSection = 'Payments'; $adminCancelSpecific = 'reward'; }
     elseif(preg_match('/^(increaseUserWallet|decreaseUserWallet|increaseWalletUser|decreaseWalletUser|banUser|unbanUser|giftServer)/', $adminCancelStep)) $adminCancelSection = 'Users';
     elseif(preg_match('/^(addAgent|saveAgent|agent|setBuyersAccessCode|addJoinExemptUser|removeJoinExemptUser|addNewAdmin)/', $adminCancelStep)) $adminCancelSection = 'Users';
     elseif(preg_match('/^(message2All|forwardToAll|broadcast|xuiMsg|editDiagAdminText|addTicketCategory|answer_|reply|sendMsg_)/', $adminCancelStep)) $adminCancelSection = 'Messages';
-    elseif(preg_match('/^(searchUsersConfig|messageToSpeceficUser|userReports|decPayment|setReport|setDailyChannelStatsTime)/', $adminCancelStep)){ $adminCancelSection = 'Reports'; if(strpos($adminCancelStep,'setReport')===0 || $adminCancelStep==='setDailyChannelStatsTime') $adminCancelSpecific='reports'; }
-    elseif(preg_match('/^(editStartWelcomeText|editPurchaseRulesText|editSwitch|editInvite|editRewardTime|setMainButton|addNewMainButton|adminHelp|adminAppTutorial)/', $adminCancelStep)) $adminCancelSection = 'Settings';
+    elseif(preg_match('/^searchUsersConfig/', $adminCancelStep)) $adminCancelSection = 'Configs';
+    elseif(preg_match('/^messageToSpeceficUser/', $adminCancelStep)) $adminCancelSection = 'Messages';
+    elseif(preg_match('/^(userReports|decPayment|setReport|setDailyChannelStatsTime)/', $adminCancelStep)){ $adminCancelSection = 'Reports'; if(strpos($adminCancelStep,'setReport')===0 || $adminCancelStep==='setDailyChannelStatsTime') $adminCancelSpecific='reports'; }
+    elseif(preg_match('/^(editStartWelcomeText|editPurchaseRulesText|adminHelp|adminAppTutorial)/', $adminCancelStep)) $adminCancelSection = 'Content';
+    elseif(preg_match('/^(editSwitch|editInvite|editRewardTime|setMainButton|addNewMainButton)/', $adminCancelStep)) $adminCancelSection = 'Settings';
 
     $stmt = $connection->prepare("DELETE FROM `server_plans` WHERE `active`=0");
     if($stmt){ $stmt->execute(); $stmt->close(); }
@@ -15835,15 +15889,17 @@ if (($text ?? '') === ($buttonValues['cancel'] ?? '') && ($from_id == $admin || 
     }elseif($adminCancelSpecific === 'reports' && function_exists('v2raystore_getReportSettingsMenuText') && function_exists('v2raystore_getReportSettingsMenuKeys')){
         sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     }elseif($adminCancelSpecific === 'plans'){
-        sendMessage('<b>🖥 سرورها، پلن‌ها و فروش</b>', getAdminSalesMenuKeys(), 'HTML');
+        sendMessage('<b>🖥 سرورها و پلن‌ها</b>', getAdminSalesMenuKeys(), 'HTML');
     }else{
         $adminCancelMenus = [
             'Reports' => ['📊 گزارش‌ها و جستجو', 'getAdminReportsMenuKeys'],
-            'Configs' => ['🧾 کانفیگ‌ها و سرویس‌ها', 'getAdminConfigsMenuKeys'],
-            'Sales' => ['🖥 سرورها، پلن‌ها و فروش', 'getAdminSalesMenuKeys'],
+            'Configs' => ['🧾 سفارش‌ها و سرویس‌ها', 'getAdminConfigsMenuKeys'],
+            'Sales' => ['🖥 سرورها و پلن‌ها', 'getAdminSalesMenuKeys'],
+            'Payments' => ['💳 پرداخت، درآمد و جایزه', 'getAdminPaymentsMenuKeys'],
             'Users' => ['👥 کاربران، نماینده‌ها و دسترسی‌ها', 'getAdminUsersMenuKeys'],
-            'Messages' => ['📨 پیام‌ها، پشتیبانی و محتوا', 'getAdminMessagesMenuKeys'],
-            'Settings' => ['⚙️ تنظیمات، ظاهر و آموزش‌ها', 'getAdminSettingsMenuKeys'],
+            'Messages' => ['📨 پیام‌ها و پشتیبانی', 'getAdminMessagesMenuKeys'],
+            'Content' => ['📝 محتوا و آموزش‌ها', 'getAdminContentMenuKeys'],
+            'Settings' => ['⚙️ تنظیمات و ظاهر ربات', 'getAdminSettingsMenuKeys'],
             'Main' => [$mainValues['reached_main_menu'] ?? 'مدیریت ربات', 'getAdminKeysPlus'],
         ];
         $adminCancelMenu = $adminCancelMenus[$adminCancelSection] ?? $adminCancelMenus['Main'];
@@ -15885,7 +15941,7 @@ function farid_textSettingsKeyboard(){
             ['text'=>'🗑 حذف متن قوانین/اخبار خرید', 'callback_data'=>'clearPurchaseRulesText', 'style'=>'danger']
         ],
         [
-            ['text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'botSettings', 'style'=>'primary']
+            ['text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'adminContentMenu', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
@@ -16488,20 +16544,67 @@ function getAdminKeysPlus(){
     // منوی اصلی مدیریت فقط دسته‌ها را نشان می‌دهد تا شلوغی کم شود.
     $keys = [];
     $keys[] = [
-        ['text'=>'📊 گزارش‌ها و جستجو', 'callback_data'=>'adminReportsMenu'],
-        ['text'=>'🧾 کانفیگ‌ها و سرویس‌ها', 'callback_data'=>'adminConfigsMenu']
+        ['text'=>'📊 داشبورد و گزارش‌ها', 'callback_data'=>'adminReportsMenu'],
+        ['text'=>'🧾 سفارش‌ها و سرویس‌ها', 'callback_data'=>'adminConfigsMenu']
     ];
     $keys[] = [
-        ['text'=>'🖥 سرورها، پلن‌ها و فروش', 'callback_data'=>'adminSalesMenu'],
-        ['text'=>'👥 کاربران و نماینده‌ها', 'callback_data'=>'adminUsersMenu']
+        ['text'=>'🖥 سرورها و پلن‌ها', 'callback_data'=>'adminSalesMenu'],
+        ['text'=>'💳 پرداخت، درآمد و جایزه', 'callback_data'=>'adminPaymentsMenu']
     ];
     $keys[] = [
-        ['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'adminMessagesMenu'],
-        ['text'=>'⚙️ تنظیمات و ظاهر ربات', 'callback_data'=>'adminSettingsMenu']
+        ['text'=>'👥 کاربران و نماینده‌ها', 'callback_data'=>'adminUsersMenu'],
+        ['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'adminMessagesMenu']
     ];
+    $keys[] = [
+        ['text'=>'📝 محتوا و آموزش‌ها', 'callback_data'=>'adminContentMenu'],
+        ['text'=>'⚙️ تنظیمات ربات', 'callback_data'=>'adminSettingsMenu']
+    ];
+    $keys[] = [['text'=>'⚡ دسترسی سریع مدیریت', 'callback_data'=>'adminQuickMenu']];
     $keys[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'mainMenu']];
 
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_adminDashboardText(){
+    global $connection, $botState, $mainValues;
+    $count = function($sql) use ($connection){
+        $res = @($connection->query($sql));
+        if(!$res) return 0;
+        return intval($res->fetch_assoc()['c'] ?? 0);
+    };
+    $users = $count("SELECT COUNT(*) AS c FROM `users`");
+    $active = $count("SELECT COUNT(*) AS c FROM `orders_list` WHERE `status`=1");
+    $servers = $count("SELECT COUNT(*) AS c FROM `server_info` WHERE `active`=1 AND `state`=1");
+    $pending = $count("SELECT COUNT(*) AS c FROM `pays` WHERE `state` IN ('sent','pending','processing','auto_processing')");
+    $botOn = (($botState['botState'] ?? 'on') === 'on');
+    $salesOn = (($botState['sellState'] ?? 'on') === 'on');
+    return "🧭 <b>مرکز مدیریت ربات</b>\n\n" .
+        "🤖 ربات: <b>" . ($botOn ? 'روشن 🟢' : 'خاموش 🔴') . "</b> | فروش: <b>" . ($salesOn ? 'باز 🟢' : 'بسته 🔴') . "</b>\n" .
+        "👥 کاربران: <b>{$users}</b> | 🟢 سرویس فعال: <b>{$active}</b>\n" .
+        "🖥 سرور فعال: <b>{$servers}</b> | 🧾 پرداخت در انتظار: <b>{$pending}</b>\n\n" .
+        "بخش موردنظر را انتخاب کنید؛ کارهای پرتکرار داخل «دسترسی سریع» قرار گرفته‌اند.";
+}
+
+function getAdminQuickMenuKeys(){
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'🔎 جستجوی کانفیگ', 'callback_data'=>'searchUsersConfig'],
+            ['text'=>'✉️ پیام به کاربر', 'callback_data'=>'messageToSpeceficUser']
+        ],
+        [
+            ['text'=>'♻️ آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu'],
+            ['text'=>'➕ افزودن کانفیگ', 'callback_data'=>'manualAttachConfig']
+        ],
+        [
+            ['text'=>'🖥 مدیریت سرورها', 'callback_data'=>'serversSetting'],
+            ['text'=>'📦 مدیریت پلن‌ها', 'callback_data'=>'backplan']
+        ],
+        [
+            ['text'=>'🧾 تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu'],
+            ['text'=>'📨 وضعیت صف پیام‌ها', 'callback_data'=>'broadcastQueueStatus']
+        ],
+        [v2raystore_adminSectionBackRow()[0]]
+    ]], JSON_UNESCAPED_UNICODE);
 }
 
 function getAdminReportsMenuKeys(){
@@ -16510,10 +16613,6 @@ function getAdminReportsMenuKeys(){
     $keys[] = [
         ['text'=>$buttonValues['bot_reports'] ?? 'آمار کلی ربات', 'callback_data'=>'botReports'],
         ['text'=>$buttonValues['user_reports'] ?? 'گزارش کاربران', 'callback_data'=>'userReports']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['search_admin_config'] ?? 'جستجوی کانفیگ', 'callback_data'=>'searchUsersConfig'],
-        ['text'=>$buttonValues['message_to_user'] ?? 'پیام به کاربر', 'callback_data'=>'messageToSpeceficUser']
     ];
     $keys[] = [
         ['text'=>'📊 تنظیمات آمار کانال', 'callback_data'=>'reportChannelSettingsMenu']
@@ -16525,6 +16624,7 @@ function getAdminReportsMenuKeys(){
 function getAdminConfigsMenuKeys(){
     global $buttonValues;
     $keys = [];
+    $keys[] = [['text'=>'🔎 جستجوی کاربر یا کانفیگ', 'callback_data'=>'searchUsersConfig']];
     $keys[] = [
         ['text'=>'➕ افزودن کانفیگ به کاربر', 'callback_data'=>'manualAttachConfig', 'style'=>'success'],
         ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu']
@@ -16536,9 +16636,6 @@ function getAdminConfigsMenuKeys(){
     $keys[] = [
         ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu'],
         ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement']
-    ];
-    $keys[] = [
-        ['text'=>'⏱ تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu']
     ];
     $keys[] = v2raystore_adminSectionBackRow();
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
@@ -16555,13 +16652,23 @@ function getAdminSalesMenuKeys(){
         ['text'=>$buttonValues['plan_settings'] ?? 'پلن‌ها', 'callback_data'=>'backplan'],
         ['text'=>$buttonValues['discount_settings'] ?? 'کد تخفیف', 'callback_data'=>'discount_codes']
     ];
-    $keys[] = [
-        ['text'=>$buttonValues['gateways_settings'] ?? 'درگاه‌ها و کانال‌ها', 'callback_data'=>'gateWays_Channels'],
-        ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu']
-    ];
+    $keys[] = v2raystore_adminSectionBackRow();
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
+function getAdminPaymentsMenuKeys(){
+    global $buttonValues;
     $rewardCfg = function_exists('v2raystore_getPurchaseRewardConfig') ? v2raystore_getPurchaseRewardConfig() : ['enabled'=>false];
     $rewardState = !empty($rewardCfg['enabled']) ? '🟢' : '🔴';
-    $keys[] = [['text'=>$rewardState . ' 🎁 جایزه خرید و تمدید', 'callback_data'=>'rewardSettings']];
+    $keys = [];
+    $keys[] = [
+        ['text'=>'🏦 حساب‌ها، درگاه‌ها و کانال‌ها', 'callback_data'=>'gateWays_Channels'],
+        ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu']
+    ];
+    $keys[] = [
+        ['text'=>$rewardState . ' 🎁 جایزه خرید و تمدید', 'callback_data'=>'rewardSettings'],
+        ['text'=>'⏱ تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu']
+    ];
     $keys[] = v2raystore_adminSectionBackRow();
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
@@ -16599,6 +16706,7 @@ function getAdminUsersMenuKeys(){
 function getAdminMessagesMenuKeys(){
     global $buttonValues;
     $keys = [];
+    $keys[] = [['text'=>$buttonValues['message_to_user'] ?? '✉️ پیام به یک کاربر', 'callback_data'=>'messageToSpeceficUser']];
     $keys[] = [
         ['text'=>$buttonValues['tickets_list'] ?? 'تیکت‌ها', 'callback_data'=>'ticketsList'],
         ['text'=>$buttonValues['message_to_all'] ?? 'ارسال پیام عمومی', 'callback_data'=>'message2All']
@@ -16619,6 +16727,16 @@ function getAdminMessagesMenuKeys(){
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
 
+function getAdminContentMenuKeys(){
+    $keys = [];
+    $keys[] = [
+        ['text'=>'📝 متن خوش‌آمد و قوانین خرید', 'callback_data'=>'adminTextSettings'],
+        ['text'=>'📚 سوالات متداول و آموزش‌ها', 'callback_data'=>'adminHelpMenu']
+    ];
+    $keys[] = v2raystore_adminSectionBackRow();
+    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+}
+
 function getAdminSettingsMenuKeys(){
     global $buttonValues;
     $keys = [];
@@ -16626,13 +16744,7 @@ function getAdminSettingsMenuKeys(){
         ['text'=>$buttonValues['bot_settings'] ?? 'تنظیمات ربات', 'callback_data'=>'botSettings'],
         ['text'=>$buttonValues['main_button_settings'] ?? 'مدیریت دکمه‌های اصلی', 'callback_data'=>'mainMenuButtons']
     ];
-    $keys[] = [
-        ['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'userButtonSettings'],
-        ['text'=>'📝 متن خوش‌آمد / قوانین خرید', 'callback_data'=>'adminTextSettings']
-    ];
-    $keys[] = [
-        ['text'=>'📚 مدیریت FAQ و آموزش‌ها', 'callback_data'=>'adminHelpMenu']
-    ];
+    $keys[] = [['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'userButtonSettings']];
     $keys[] = v2raystore_adminSectionBackRow();
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }

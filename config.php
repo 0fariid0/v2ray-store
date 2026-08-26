@@ -3414,7 +3414,7 @@ function v2raystore_getSwitchSettingsMenuKeys(){
         [
             ['text'=>'🗑 حذف تنظیم اختصاصی مسیر', 'callback_data'=>'selectSwitchPairDeleteFrom', 'style'=>'danger']
         ],
-        [['text'=>'⬅️ بازگشت', 'callback_data'=>'botSettings']]
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'botSettingsService']]
     ]);
 }
 
@@ -4411,7 +4411,7 @@ function v2raystore_rewardSettingsKeyboard(){
         [['text'=>'➕ افزودن جایزه ویژه محدود', 'callback_data'=>'rewardAddSpecial']],
         [['text'=>'⭐ مدیریت جوایز ویژه', 'callback_data'=>'rewardPrizes']],
         [['text'=>'👥 لیست دریافت‌کنندگان جایزه', 'callback_data'=>'rewardWinners_0']],
-        [['text'=>'« بازگشت به فروش و پلن‌ها', 'callback_data'=>'adminSalesMenu']],
+        [['text'=>'« بازگشت به پرداخت و درآمد', 'callback_data'=>'adminPaymentsMenu']],
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
@@ -6850,7 +6850,7 @@ function v2raystore_helpAdminHomeKeys(){
     return v2raystore_inlineKeyboardJson([
         [[ 'text'=>'📱 مدیریت آموزش برنامه‌ها', 'callback_data'=>'adminHelpList_tutorial', 'style'=>'primary' ]],
         [[ 'text'=>'❓ مدیریت سوالات متداول', 'callback_data'=>'adminHelpList_faq', 'style'=>'primary' ]],
-        [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary' ]]
+        [[ 'text'=>$buttonValues['back_button'] ?? '🔙 برگشت', 'callback_data'=>'adminContentMenu', 'style'=>'primary' ]]
     ]);
 }
 
@@ -7349,7 +7349,7 @@ function v2raystore_getUserButtonSettingsKeys(){
         ['text'=>'✅ نمایش همه', 'callback_data'=>'setAllUserButtons_on', 'style'=>'success'],
         ['text'=>'❌ مخفی کردن همه', 'callback_data'=>'setAllUserButtons_off', 'style'=>'danger']
     ];
-    $keys[] = [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary']];
+    $keys[] = [['text'=>'🔙 برگشت به تنظیمات', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary']];
     return v2raystore_inlineKeyboardJson($keys);
 }
 
@@ -11655,7 +11655,84 @@ function getCategoriesKeys($offset = 0){
     $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminSalesMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
+function v2raystore_adminPaymentState(){
+    global $connection;
+    $stmt = $connection->prepare("SELECT `value` FROM `setting` WHERE `type`='BOT_STATES' LIMIT 1");
+    if(!$stmt) return [];
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $state = json_decode((string)($row['value'] ?? ''), true);
+    return is_array($state) ? $state : [];
+}
+
 function getGateWaysKeys(){
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'💳 کارت‌ها و مسئول دریافت', 'callback_data'=>'paymentCardsSettings'],
+            ['text'=>'🔑 کلیدها و آدرس درگاه‌ها', 'callback_data'=>'paymentCredentialsSettings']
+        ],
+        [
+            ['text'=>'🔌 روشن/خاموش روش‌های پرداخت', 'callback_data'=>'paymentMethodsSettings'],
+            ['text'=>'📢 کانال گزارش و کانال قفل', 'callback_data'=>'paymentChannelsSettings']
+        ],
+        [['text'=>'⬅️ بازگشت به پرداخت و درآمد', 'callback_data'=>'adminPaymentsMenu']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getPaymentCardsSettingsKeys(){
+    global $admin;
+    $p = v2raystore_getPaymentKeys();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>(!empty($p['bankAccount'])?$p['bankAccount']:'—'),'callback_data'=>'changePaymentKeysbankAccount'], ['text'=>'شماره کارت اول','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['holderName'])?$p['holderName']:'—'),'callback_data'=>'changePaymentKeysholderName'], ['text'=>'دارنده کارت اول','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['secondBankAccount'])?$p['secondBankAccount']:(!empty($p['bankAccount2'])?$p['bankAccount2']:'—')),'callback_data'=>'changePaymentKeyssecondBankAccount'], ['text'=>'شماره کارت دوم','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['secondHolderName'])?$p['secondHolderName']:(!empty($p['holderName2'])?$p['holderName2']:'—')),'callback_data'=>'changePaymentKeyssecondHolderName'], ['text'=>'دارنده کارت دوم','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['cardContact'])?$p['cardContact']:(string)$admin),'callback_data'=>'changePaymentKeyscardContact'], ['text'=>'ادمین دریافت کارت','callback_data'=>'v2raystore']],
+        [['text'=>'🔄 اعلام تغییر شماره کارت به کاربران','callback_data'=>'markCartToCartCardChanged']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getPaymentCredentialsSettingsKeys(){
+    $p = v2raystore_getPaymentKeys();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>(!empty($p['nowpayment'])?$p['nowpayment']:'—'),'callback_data'=>'changePaymentKeysnowpayment'], ['text'=>'کلید NowPayments','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['zarinpal'])?$p['zarinpal']:'—'),'callback_data'=>'changePaymentKeyszarinpal'], ['text'=>'مرچنت زرین‌پال','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['nextpay'])?$p['nextpay']:'—'),'callback_data'=>'changePaymentKeysnextpay'], ['text'=>'کلید نکست‌پی','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['tronwallet'])?$p['tronwallet']:'—'),'callback_data'=>'changePaymentKeystronwallet'], ['text'=>'آدرس والت ترون','callback_data'=>'v2raystore']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getPaymentMethodsSettingsKeys(){
+    global $buttonValues;
+    $s = v2raystore_adminPaymentState();
+    $label = function($key, $fallback = 'off') use ($s, $buttonValues){ return (($s[$key] ?? $fallback)==='on') ? $buttonValues['on'] : $buttonValues['off']; };
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>$label('cartToCartState'),'callback_data'=>'changeGateWayscartToCartState'], ['text'=>'کارت‌به‌کارت','callback_data'=>'v2raystore']],
+        [['text'=>$label('walletState'),'callback_data'=>'changeGateWayswalletState'], ['text'=>'کیف پول کاربران','callback_data'=>'v2raystore']],
+        [['text'=>$label('agentWalletState', $s['walletState'] ?? 'off'),'callback_data'=>'changeGateWaysagentWalletState'], ['text'=>'کیف پول نماینده‌ها','callback_data'=>'v2raystore']],
+        [['text'=>$label('weSwapState'),'callback_data'=>'changeGateWaysweSwapState'], ['text'=>'وی‌سواپ','callback_data'=>'v2raystore']],
+        [['text'=>$label('nextpay'),'callback_data'=>'changeGateWaysnextpay'], ['text'=>'نکست‌پی','callback_data'=>'v2raystore']],
+        [['text'=>$label('zarinpal'),'callback_data'=>'changeGateWayszarinpal'], ['text'=>'زرین‌پال','callback_data'=>'v2raystore']],
+        [['text'=>$label('nowPaymentWallet'),'callback_data'=>'changeGateWaysnowPaymentWallet'], ['text'=>'NowPayments کیف پول','callback_data'=>'v2raystore']],
+        [['text'=>$label('nowPaymentOther'),'callback_data'=>'changeGateWaysnowPaymentOther'], ['text'=>'NowPayments سایر','callback_data'=>'v2raystore']],
+        [['text'=>$label('tronWallet'),'callback_data'=>'changeGateWaystronWallet'], ['text'=>'ترون','callback_data'=>'v2raystore']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getPaymentChannelsSettingsKeys(){
+    $s = v2raystore_adminPaymentState();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>(trim((string)($s['rewardChannel'] ?? '')) ?: 'تنظیم نشده'),'callback_data'=>'editRewardChannel'], ['text'=>'گروه/کانال گزارش','callback_data'=>'v2raystore']],
+        [['text'=>(trim((string)($s['lockChannel'] ?? '')) ?: 'تنظیم نشده'),'callback_data'=>'editLockChannel'], ['text'=>'کانال قفل عضویت','callback_data'=>'v2raystore']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getGateWaysLegacyKeys(){
     global $connection, $mainValues, $buttonValues, $admin;
     
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'BOT_STATES'");
@@ -11769,7 +11846,115 @@ function getGateWaysKeys(){
         ]]);
 
 }
+function v2raystore_adminBotSettingsState(){
+    return v2raystore_adminPaymentState();
+}
+
+function v2raystore_adminToggleLabel($state, $key, $default = 'off'){
+    global $buttonValues;
+    return (($state[$key] ?? $default) === 'on') ? $buttonValues['on'] : $buttonValues['off'];
+}
+
 function getBotSettingKeys(){
+    return json_encode(['inline_keyboard'=>[
+        [
+            ['text'=>'🛍 فروش، موجودی و نمایندگی','callback_data'=>'botSettingsSales'],
+            ['text'=>'♻️ امکانات و چرخه سرویس','callback_data'=>'botSettingsService']
+        ],
+        [['text'=>'🔗 لینک، ساب، QR و تحویل','callback_data'=>'botSettingsConnections']],
+        [
+            ['text'=>'🔐 دسترسی و وضعیت ربات','callback_data'=>'botSettingsAccess'],
+            ['text'=>'📣 بازاریابی و گزارش درآمد','callback_data'=>'botSettingsMarketing']
+        ],
+        [['text'=>'⬅️ بازگشت به تنظیمات','callback_data'=>'adminSettingsMenu']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getBotSalesSettingKeys(){
+    global $buttonValues;
+    $s = v2raystore_adminBotSettingsState();
+    $agencyDiscount = (($s['agencyPlanDiscount'] ?? 'off') === 'on') ? $buttonValues['plan_discount'] : $buttonValues['server_discount'];
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>v2raystore_adminToggleLabel($s,'sellState'),'callback_data'=>'changeBotsellState'], ['text'=>'فروش کاربران','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'agentSellState',$s['sellState'] ?? 'off'),'callback_data'=>'changeBotagentSellState'], ['text'=>'فروش نماینده‌ها','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'agencyState'),'callback_data'=>'changeBotagencyState'], ['text'=>'نمایندگی','callback_data'=>'v2raystore']],
+        [['text'=>$agencyDiscount,'callback_data'=>'changeBotagencyPlanDiscount'], ['text'=>'نوع تخفیف نمایندگی','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'individualExistence'),'callback_data'=>'changeBotindividualExistence'], ['text'=>'موجودی اختصاصی','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'sharedExistence'),'callback_data'=>'changeBotsharedExistence'], ['text'=>'موجودی اشتراکی','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'plandelkhahState'),'callback_data'=>'changeBotplandelkhahState'], ['text'=>'پلن دلخواه','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'testAccount'),'callback_data'=>'changeBottestAccount'], ['text'=>'اکانت تست','callback_data'=>'v2raystore']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getBotServiceSettingKeys(){
+    $s = v2raystore_adminBotSettingsState();
+    $renewSettings = function_exists('v2raystore_getRenewSettings') ? v2raystore_getRenewSettings() : ['mode'=>'reset','max_days'=>45];
+    $renewMode = ($renewSettings['mode'] ?? 'reset') === 'add' ? 'افزایشی / سقف ۴۵ روز' : 'ریست کامل';
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>v2raystore_adminToggleLabel($s,'renewAccountState'),'callback_data'=>'changeBotrenewAccountState'], ['text'=>'تمدید سرویس','callback_data'=>'v2raystore']],
+        [['text'=>$renewMode,'callback_data'=>'renewSettings'], ['text'=>'روش تمدید','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'increaseTimeState'),'callback_data'=>'changeBotincreaseTimeState'], ['text'=>'افزایش زمان','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'increaseVolumeState'),'callback_data'=>'changeBotincreaseVolumeState'], ['text'=>'افزایش حجم','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'switchLocationState'),'callback_data'=>'changeBotswitchLocationState'], ['text'=>'تغییر لوکیشن','callback_data'=>'v2raystore']],
+        [['text'=>'⚙️ تنظیم هزینه و محدودیت تغییر لوکیشن','callback_data'=>'switchLocationSettings']],
+        [['text'=>v2raystore_adminToggleLabel($s,'changeProtocolState'),'callback_data'=>'changeBotchangeProtocolState'], ['text'=>'تغییر پروتکل','callback_data'=>'v2raystore']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getBotConnectionSettingKeys(){
+    $s = v2raystore_adminBotSettingsState();
+    $source = (($s['updateConnectionState'] ?? 'robot') === 'robot') ? 'از روی ربات' : 'از روی سایت';
+    $remark = (($s['remark'] ?? '') === 'digits') ? 'عدد رندم ۵ حرفی' : ((($s['remark'] ?? '') === 'manual') ? 'توسط کاربر' : 'آیدی و عدد رندوم');
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>$source,'callback_data'=>'changeUpdateConfigLinkState'], ['text'=>'منبع آپدیت کانفیگ','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'subLinkState'),'callback_data'=>'changeBotsubLinkState'], ['text'=>'لینک ساب و وب','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'configLinkState','on'),'callback_data'=>'changeBotconfigLinkState'], ['text'=>'لینک کانفیگ','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'searchState'),'callback_data'=>'changeBotsearchState'], ['text'=>'نمایش مشخصات کانفیگ','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'manualConfigRegisterState'),'callback_data'=>'changeBotmanualConfigRegisterState'], ['text'=>'ثبت کانفیگ توسط کاربر','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'renewConfigLinkState'),'callback_data'=>'changeBotrenewConfigLinkState'], ['text'=>'دریافت لینک جدید','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'updateConfigLinkState'),'callback_data'=>'changeBotupdateConfigLinkState'], ['text'=>'بروزرسانی لینک','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'smartRenewState','on'),'callback_data'=>'changeBotsmartRenewState'], ['text'=>'تمدید هوشمند','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'configTutorialButtonsState','on'),'callback_data'=>'changeBotconfigTutorialButtonsState'], ['text'=>'دکمه آموزش زیر کانفیگ','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'configDiagnosticsState','on'),'callback_data'=>'changeBotconfigDiagnosticsState'], ['text'=>'دکمه خطایابی اتصال','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'qrConfigState'),'callback_data'=>'changeBotqrConfigState'], ['text'=>'QR کانفیگ','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'qrSubState'),'callback_data'=>'changeBotqrSubState'], ['text'=>'QR ساب','callback_data'=>'v2raystore']],
+        [['text'=>$remark,'callback_data'=>'changeConfigRemarkType'], ['text'=>'نوع ریمارک','callback_data'=>'v2raystore']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getBotAccessSettingKeys(){
+    $s = v2raystore_adminBotSettingsState();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>v2raystore_adminToggleLabel($s,'botState','on'),'callback_data'=>'changeBotbotState'], ['text'=>'وضعیت کلی ربات','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'requirePhone'),'callback_data'=>'changeBotrequirePhone'], ['text'=>'تأیید شماره موبایل','callback_data'=>'v2raystore']],
+        [['text'=>v2raystore_adminToggleLabel($s,'requireIranPhone'),'callback_data'=>'changeBotrequireIranPhone'], ['text'=>'فقط شماره ایرانی','callback_data'=>'v2raystore']],
+        [['text'=>'🔐 مدیریت دسترسی اعضای جدید','callback_data'=>'newMemberAccessMenu']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function getBotMarketingSettingKeys(){
+    $s = v2raystore_adminBotSettingsState();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>'🎗 بنر و پورسانت دعوت','callback_data'=>'inviteSetting']],
+        [['text'=>(intval($s['rewaredTime'] ?? 0) . ' ساعت'),'callback_data'=>'editRewardTime'], ['text'=>'فاصله گزارش درآمد','callback_data'=>'v2raystore']],
+        [['text'=>'📝 متن خوش‌آمد و قوانین خرید','callback_data'=>'adminTextSettings']],
+        [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function v2raystore_botSettingSectionForKey($key){
+    if(in_array($key, ['sellState','agentSellState','agencyState','agencyPlanDiscount','individualExistence','sharedExistence','plandelkhahState','testAccount'], true)) return 'Sales';
+    if(in_array($key, ['renewAccountState','increaseTimeState','increaseVolumeState','switchLocationState','changeProtocolState'], true)) return 'Service';
+    if(in_array($key, ['subLinkState','configLinkState','searchState','manualConfigRegisterState','renewConfigLinkState','updateConfigLinkState','smartRenewState','configTutorialButtonsState','configDiagnosticsState','qrConfigState','qrSubState'], true)) return 'Connections';
+    if(in_array($key, ['botState','requirePhone','requireIranPhone'], true)) return 'Access';
+    return '';
+}
+
+function getBotSettingLegacyKeys(){
     global $connection, $mainValues, $buttonValues;
     
     $stmt = $connection->prepare("SELECT * FROM `setting` WHERE `type` = 'BOT_STATES'");
@@ -19924,7 +20109,7 @@ function v2raystore_getAutoApproveMenuKeys(){
             ['text'=>'🚀 بررسی و اجرای الان', 'callback_data'=>'runAutoApproveOrdersNow', 'style'=>'success']
         ],
         [
-            ['text'=>'⬅️ بازگشت', 'callback_data'=>'adminConfigsMenu', 'style'=>'primary']
+            ['text'=>'⬅️ بازگشت', 'callback_data'=>'adminPaymentsMenu', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
@@ -21218,7 +21403,7 @@ function v2raystore_getRenewSettingsMenuKeys(){
             ['text'=>($mode === 'add' ? '✅ افزایشی' : 'افزایشی'), 'callback_data'=>'setRenewExtendMode_add', 'style'=>($mode === 'add' ? 'success' : 'primary')]
         ],
         [
-            ['text'=>'⬅️ بازگشت به تنظیمات ربات', 'callback_data'=>'botSettings', 'style'=>'primary']
+            ['text'=>'⬅️ بازگشت به امکانات سرویس', 'callback_data'=>'botSettingsService', 'style'=>'primary']
         ]
     ]], JSON_UNESCAPED_UNICODE);
 }
