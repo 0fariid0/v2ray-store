@@ -732,7 +732,7 @@ function v2raystore_pro_keyboard($rows){
 if(!function_exists('v2raystore_pro_menu_keyboard')){
 function v2raystore_pro_menu_keyboard(){
     return v2raystore_pro_keyboard([
-        [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']],
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMainMenu']],
     ]);
 }}
 
@@ -799,7 +799,7 @@ function v2raystore_pro_pinned_broadcasts_text(){
     $res = @$connection->query("SELECT `send_id`, COALESCE(NULLIF(`title`,''), CONCAT('Broadcast #',`send_id`)) AS title, COUNT(*) AS total, SUM(CASE WHEN `unpinned`=0 THEN 1 ELSE 0 END) AS active, MAX(`created_at`) AS last_at FROM `broadcast_pins` GROUP BY `send_id`, title ORDER BY last_at DESC LIMIT 20");
     $rows = [];
     if($res){ while($r = $res->fetch_assoc()) $rows[] = $r; }
-    if(!count($rows)) return ['text'=>'📌 هنوز هیچ پیام پین‌شده‌ای از ارسال همگانی ثبت نشده است.', 'keyboard'=>v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]])];
+    if(!count($rows)) return ['text'=>'📌 هنوز هیچ پیام پین‌شده‌ای از ارسال همگانی ثبت نشده است.', 'keyboard'=>v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'adminMessagesMenu']]])];
     $lines = ["📌 <b>پیام‌های پین‌شده همگانی</b>
 "];
     $keys = [];
@@ -815,7 +815,7 @@ function v2raystore_pro_pinned_broadcasts_text(){
 $title";
         if($sid > 0 && $active > 0) $keys[] = [['text'=>'📍 آن‌پین صف #' . $sid . ' (' . $active . ')', 'callback_data'=>'unpinBroadcastPins' . $sid]];
     }
-    $keys[] = [['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']];
+    $keys[] = [['text'=>'⬅️ بازگشت','callback_data'=>'adminMessagesMenu']];
     return ['text'=>implode("
 
 ", $lines), 'keyboard'=>v2raystore_pro_keyboard($keys)];
@@ -849,7 +849,7 @@ function v2raystore_pro_unpin_broadcast($sendId, $limit = 80){
     $keys = [];
     if($remaining > 0) $keys[] = [['text'=>'ادامه آن‌پین همین صف', 'callback_data'=>'unpinBroadcastPins' . $sendId]];
     $keys[] = [['text'=>'📌 لیست پیام‌های پین‌شده', 'callback_data'=>'broadcastPinsMenu']];
-    $keys[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'managePanel']];
+    $keys[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']];
     return ['text'=>$text, 'keyboard'=>v2raystore_pro_keyboard($keys)];
 }}
 
@@ -873,17 +873,17 @@ function v2raystore_pro_handle_bot_update(){
     }
 
     if(($data ?? '') === 'proToolsMenu'){
-        editText($message_id, "✅ این منوی جدا حذف شد و هر قابلیت به بخش مربوط خودش منتقل شده است.", function_exists('getAdminKeysPlus') ? getAdminKeysPlus() : v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
+        editText($message_id, "✅ این منوی جدا حذف شد و هر قابلیت به بخش مربوط خودش منتقل شده است.", function_exists('getAdminKeysPlus') ? getAdminKeysPlus() : v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'adminMainMenu']]]), 'HTML');
         exit();
     }
     if(($data ?? '') === 'proReferralAsk'){
         setUser('proReferralLookup');
-        editText($message_id, "👥 آیدی عددی کاربر را ارسال کن تا زیرمجموعه‌های او با تعداد و ID عددی نمایش داده شود.", v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
+        editText($message_id, "👥 آیدی عددی کاربر را ارسال کن تا زیرمجموعه‌های او با تعداد و ID عددی نمایش داده شود.", v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'adminUsersMenu']]]), 'HTML');
         exit();
     }
     if($step === 'proReferralLookup' && isset($text) && trim((string)$text) !== ''){
         setUser();
-        sendMessage(v2raystore_pro_referrals_text($text), v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']]]), 'HTML');
+        sendMessage(v2raystore_pro_referrals_text($text), v2raystore_pro_keyboard([[['text'=>'⬅️ بازگشت','callback_data'=>'adminUsersMenu']]]), 'HTML');
         exit();
     }
     if(($data ?? '') === 'proLeaveNoticeMenu'){
@@ -892,7 +892,7 @@ function v2raystore_pro_handle_bot_update(){
         editText($message_id, "🚪 <b>پیام ترک کانال</b>\nوضعیت: <b>$state</b>\n\nمتن فعلی:\n<code>" . v2raystore_pro_h($txt) . "</code>", v2raystore_pro_keyboard([
             [['text'=>($state==='on'?'خاموش کردن':'روشن کردن'), 'callback_data'=>'proToggleLeaveNotice']],
             [['text'=>'✏️ تنظیم متن پیام', 'callback_data'=>'proSetLeaveNoticeText']],
-            [['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']],
+            [['text'=>'⬅️ بازگشت','callback_data'=>'adminUsersMenu']],
         ]), 'HTML');
         exit();
     }
@@ -919,7 +919,7 @@ function v2raystore_pro_handle_bot_update(){
         $c2c = $GLOBALS['botState']['cartToCartState'] ?? 'on';
         editText($message_id, "💳 <b>تنظیمات کارت‌به‌کارت حرفه‌ای</b>\n\nکارت‌به‌کارت فعلی: <b>$c2c</b>\nقیمت رندم فاکتور: <b>$rand</b>\n\nکسر همزمان کیف پول هنگام کارت‌به‌کارت به‌صورت خودکار فعال است: اگر موجودی کمتر از مبلغ فاکتور باشد، همان مقدار از کیف پول کم و فقط باقی‌مانده کارت‌به‌کارت می‌شود.", v2raystore_pro_keyboard([
             [['text'=>($rand==='on'?'خاموش کردن قیمت رندم':'روشن کردن قیمت رندم'), 'callback_data'=>'proToggleC2CRandom']],
-            [['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']],
+            [['text'=>'⬅️ بازگشت','callback_data'=>'adminPaymentsMenu']],
         ]), 'HTML');
         exit();
     }
@@ -936,7 +936,7 @@ function v2raystore_pro_handle_bot_update(){
             [['text'=>'✏️ تنظیم مقصد پین', 'callback_data'=>'proSetPinChat']],
             [['text'=>'📌 پین متن', 'callback_data'=>'proPinText'], ['text'=>'🖼/📎 پین تصویر/فایل', 'callback_data'=>'proPinMedia']],
             [['text'=>'📍 آن‌پین آخرین پیام پین‌شده', 'callback_data'=>'proUnpinLast']],
-            [['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']],
+            [['text'=>'⬅️ بازگشت','callback_data'=>'adminMessagesMenu']],
         ]), 'HTML');
         exit();
     }
@@ -990,7 +990,7 @@ function v2raystore_pro_handle_bot_update(){
         editText($message_id, "📣 نوع ارسال هدفمند را انتخاب کن. گروه‌های جدید شامل بدون کانفیگ، خرید نداشته ۳۰ روزه، خارج‌شده از کانال و کانفیگ غیرفعال به منوی ارسال همگانی اضافه شده‌اند.", v2raystore_pro_keyboard([
             [['text'=>'✉️ پیام متنی هدفمند','callback_data'=>'message2All'], ['text'=>'↪️ فوروارد هدفمند','callback_data'=>'forwardToAll']],
             [['text'=>'📌 پین هدفمند برای گروه‌ها','callback_data'=>'proPinBroadcastMenu']],
-            [['text'=>'⬅️ بازگشت','callback_data'=>'managePanel']],
+            [['text'=>'⬅️ بازگشت','callback_data'=>'adminMessagesMenu']],
         ]), 'HTML');
         exit();
     }
