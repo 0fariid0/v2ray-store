@@ -231,10 +231,10 @@ APACHECONF
 verify_web_stack() {
     command -v php >/dev/null 2>&1 || { error "PHP is missing after package installation."; return 1; }
     command -v mysql >/dev/null 2>&1 || { error "MySQL/MariaDB is missing after package installation."; return 1; }
-    php -m 2>/dev/null | grep -qiE '^(mysqli|pdo_mysql)$' || {
+    if ! php_module_loaded mysqli && ! php_module_loaded pdo_mysql; then
         error "PHP MySQL extension is not enabled."
         return 1
-    }
+    fi
     systemctl is-active --quiet apache2 || { error "Apache is not active."; return 1; }
     if ! systemctl is-active --quiet mysql && ! systemctl is-active --quiet mariadb; then
         error "MySQL/MariaDB service is not active."
@@ -242,6 +242,12 @@ verify_web_stack() {
     fi
     [ -d /usr/share/phpmyadmin ] || { error "phpMyAdmin is not installed."; return 1; }
     return 0
+}
+
+php_module_loaded() {
+    local module_name="$1"
+    command -v php >/dev/null 2>&1 || return 1
+    php -r 'exit(extension_loaded($argv[1]) ? 0 : 1);' "$module_name" >/dev/null 2>&1
 }
 
 install_packages() {
@@ -1108,7 +1114,7 @@ install_php_cli_module() {
     fi
 
     command -v phpenmod >/dev/null 2>&1 && phpenmod -v "$php_version" "$module_name" >> "$LOG_FILE" 2>&1 || true
-    if php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+    if php_module_loaded "$module_name"; then
         echo -e "\r ${GREEN}✔${NC} Installing PHP ${php_version} module ${module_name}"
         return 0
     fi
@@ -1142,7 +1148,7 @@ check_update_prerequisites() {
 
     if command -v php >/dev/null 2>&1; then
         for module_name in "${required_modules[@]}"; do
-            php -m 2>/dev/null | grep -qi "^${module_name}$" || missing=1
+            php_module_loaded "$module_name" || missing=1
         done
     else
         missing=1
@@ -1170,7 +1176,7 @@ check_update_prerequisites() {
     command -v php >/dev/null 2>&1 || { error "PHP could not be installed."; return 1; }
 
     for module_name in "${required_modules[@]}"; do
-        if ! php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+        if ! php_module_loaded "$module_name"; then
             install_php_cli_module "$module_name" || return 1
         fi
     done
@@ -1185,7 +1191,7 @@ check_update_prerequisites() {
         fi
     done
     for module_name in "${required_modules[@]}"; do
-        if ! php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+        if ! php_module_loaded "$module_name"; then
             error "Required PHP module is still missing: ${module_name}"
             missing=1
         fi
