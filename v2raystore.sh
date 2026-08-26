@@ -1065,27 +1065,134 @@ validate_bot_checkout() {
     return 0
 }
 
+php_module_package_suffix() {
+    case "$1" in
+        mysqli) echo "mysql" ;;
+        mbstring) echo "mbstring" ;;
+        zip) echo "zip" ;;
+        gd) echo "gd" ;;
+        curl) echo "curl" ;;
+        soap) echo "soap" ;;
+        xml) echo "xml" ;;
+        intl) echo "intl" ;;
+        bcmath) echo "bcmath" ;;
+        *) return 1 ;;
+    esac
+}
+
+install_php_cli_module() {
+    local module_name="$1" package_suffix php_version versioned_package generic_package target
+    package_suffix=$(php_module_package_suffix "$module_name") || return 1
+    php_version=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
+    [ -n "$php_version" ] || { error "The active PHP version could not be detected."; return 1; }
+
+    versioned_package="php${php_version}-${package_suffix}"
+    generic_package="php-${package_suffix}"
+    target="$generic_package"
+    apt-cache show "$versioned_package" >/dev/null 2>&1 && target="$versioned_package"
+
+    : > "$LOG_FILE"
+    echo -ne " ${YELLOW}⏳${NC} Installing PHP ${php_version} module ${module_name} ..."
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall "$target" >> "$LOG_FILE" 2>&1; then
+        if [ "$target" != "$generic_package" ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall "$generic_package" >> "$LOG_FILE" 2>&1 || {
+                echo -e "\r ${RED}✘${NC} Installing PHP ${php_version} module ${module_name}"
+                tail -n 30 "$LOG_FILE" 2>/dev/null || true
+                return 1
+            }
+        else
+            echo -e "\r ${RED}✘${NC} Installing PHP ${php_version} module ${module_name}"
+            tail -n 30 "$LOG_FILE" 2>/dev/null || true
+            return 1
+        fi
+    fi
+
+    command -v phpenmod >/dev/null 2>&1 && phpenmod -v "$php_version" "$module_name" >> "$LOG_FILE" 2>&1 || true
+    if php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+        echo -e "\r ${GREEN}✔${NC} Installing PHP ${php_version} module ${module_name}"
+        return 0
+    fi
+
+    echo -e "\r ${RED}✘${NC} Installing PHP ${php_version} module ${module_name}"
+    error "PHP module is still unavailable after installation: ${module_name}"
+    tail -n 30 "$LOG_FILE" 2>/dev/null || true
+    return 1
+}
+
 check_update_prerequisites() {
     [ "${V2RAYSTORE_SKIP_PREREQUISITE_CHECK:-0}" = "1" ] && return 0
-    local missing=0 command_name module_name
-    for command_name in git php curl python3 openssl tar; do
+    local command_name module_name package missing=0
+    local missing_commands=() command_packages=()
+    local required_commands=(git php curl python3 openssl tar unzip wget)
+    local required_modules=(mysqli mbstring zip gd curl soap xml intl bcmath)
+
+    for command_name in "${required_commands[@]}"; do
+        command -v "$command_name" >/dev/null 2>&1 || missing_commands+=("$command_name")
+    done
+
+    if [ "${#missing_commands[@]}" -gt 0 ]; then
+        warning "Missing update tools detected: ${missing_commands[*]}"
+        for command_name in "${missing_commands[@]}"; do
+            case "$command_name" in
+                php) command_packages+=(php php-cli php-common) ;;
+                *) command_packages+=("$command_name") ;;
+            esac
+        done
+    fi
+
+    if command -v php >/dev/null 2>&1; then
+        for module_name in "${required_modules[@]}"; do
+            php -m 2>/dev/null | grep -qi "^${module_name}$" || missing=1
+        done
+    else
+        missing=1
+    fi
+
+    if [ "${#missing_commands[@]}" -eq 0 ] && [ "$missing" -eq 0 ]; then
+        return 0
+    fi
+
+    warning "Installing only missing update prerequisites. No full operating-system upgrade will be performed."
+    apt_recover
+    export DEBIAN_FRONTEND=noninteractive
+    : > "$LOG_FILE"
+    if ! apt-get update -y >> "$LOG_FILE" 2>&1; then
+        error "APT package lists could not be updated."
+        tail -n 30 "$LOG_FILE" 2>/dev/null || true
+        return 1
+    fi
+    enable_ubuntu_universe
+    apt-get update -y >> "$LOG_FILE" 2>&1 || true
+
+    for package in "${command_packages[@]}"; do
+        install_apt_package "$package" yes || return 1
+    done
+    command -v php >/dev/null 2>&1 || { error "PHP could not be installed."; return 1; }
+
+    for module_name in "${required_modules[@]}"; do
+        if ! php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+            install_php_cli_module "$module_name" || return 1
+        fi
+    done
+
+    systemctl is-active --quiet apache2 && systemctl restart apache2 >/dev/null 2>&1 || true
+
+    missing=0
+    for command_name in "${required_commands[@]}"; do
         if ! command -v "$command_name" >/dev/null 2>&1; then
-            error "Update prerequisite is missing: ${command_name}"
+            error "Update prerequisite is still missing: ${command_name}"
             missing=1
         fi
     done
-    if command -v php >/dev/null 2>&1; then
-        for module_name in mysqli mbstring zip gd curl soap xml intl bcmath; do
-            if ! php -m 2>/dev/null | grep -qi "^${module_name}$"; then
-                error "Required PHP module is missing: ${module_name}"
-                missing=1
-            fi
-        done
-    fi
-    [ "$missing" -eq 0 ] || {
-        warning "Update never installs operating-system packages. Repair the prerequisite, then run update again."
-        return 1
-    }
+    for module_name in "${required_modules[@]}"; do
+        if ! php -m 2>/dev/null | grep -qi "^${module_name}$"; then
+            error "Required PHP module is still missing: ${module_name}"
+            missing=1
+        fi
+    done
+    [ "$missing" -eq 0 ] || return 1
+    success "Update prerequisites are ready."
+    return 0
 }
 
 install_or_update_bot_files() {
@@ -1663,7 +1770,7 @@ update_existing() {
         warning "Legacy installation detected. Migrating it while preserving data..."
         migrate_legacy_installation || { error "Legacy migration failed. Nothing was deleted."; return 1; }
     fi
-    confirm "Update ${BRAND_NAME} to ${SCRIPT_VERSION}? No operating-system packages will be installed." || return 0
+    confirm "Update ${BRAND_NAME} to ${SCRIPT_VERSION}? Missing prerequisites may be installed; no full operating-system upgrade will run." || return 0
     install_or_update_bot_files update || return 1
     php "${BOT_DIR}/install/update.php" || { error "Database migration failed. The source backup is in ${BACKUP_DIR}."; return 1; }
     ensure_webhook_secret || return 1
