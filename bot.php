@@ -75,6 +75,83 @@ if(isset($data) && (in_array($data, ['v2raystore', 'noop'], true) || preg_match(
     exit();
 }
 
+// اعلام نتیجه جایزه: این دکمه عمداً فقط یک اعلان کوتاه نشان می‌دهد.
+if(($data ?? '') === 'rewardGiftNotice'){
+    alert('این حجم هدیه اضافه شد.');
+    exit();
+}
+
+// لغو سفارش تأییدشده و رد رسید، هر دو قبل از اجرای نهایی نیاز به تأیید دوم دارند.
+if(preg_match('/^(?:autoCancelOrder|confirmCancelOrder)(.+)$/', (string)($data ?? ''), $cancelAskMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $hashId = trim($cancelAskMatch[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('سفارش پیدا نشد.', true); exit(); }
+    $state = (string)($pay['state'] ?? '');
+    if(!in_array($state, ['approved','auto_processing','processing'], true)){
+        alert('این سفارش دیگر در وضعیت قابل لغو نیست.', true);
+        exit();
+    }
+    editKeys(function_exists('v2raystore_cancelConfirmationKeyboard') ? v2raystore_cancelConfirmationKeyboard($hashId) : null);
+    alert('برای لغو نهایی، تأیید کنید.');
+    exit();
+}
+if(preg_match('/^executeCancelOrder(.+)$/', (string)($data ?? ''), $cancelDoMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $hashId = trim($cancelDoMatch[1]);
+    $result = function_exists('v2raystore_cancelAutoApprovedPay') ? v2raystore_cancelAutoApprovedPay($hashId, 'لغو توسط مدیریت') : ['ok'=>false, 'message'=>'امکان لغو سفارش در دسترس نیست.'];
+    if(!empty($result['ok'])){
+        $uid = intval($result['user_id'] ?? 0);
+        if(function_exists('v2raystore_updateAdminPayMessageStatus')) v2raystore_updateAdminPayMessageStatus($hashId, '❌ سفارش لغو شد', 'danger', $uid, '');
+        editKeys(function_exists('v2raystore_orderStatusKeyboard') ? v2raystore_orderStatusKeyboard('❌ سفارش لغو شد', $uid, 'danger', '', '') : null);
+        alert('سفارش با موفقیت لغو شد.');
+    }else{
+        alert($result['message'] ?? 'لغو سفارش ناموفق بود.', true);
+    }
+    exit();
+}
+if(preg_match('/^restoreOrderActions(.+)$/', (string)($data ?? ''), $cancelRestoreMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $hashId = trim($cancelRestoreMatch[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if($pay && function_exists('v2raystore_orderStatusKeyboard')) editKeys(v2raystore_orderStatusKeyboard('✅ تأیید شد', intval($pay['user_id'] ?? 0), 'success', '', $hashId));
+    alert('لغو سفارش انجام نشد.');
+    exit();
+}
+
+// قبل از اجرای هرکدام از دکمه‌های رد، صفحهٔ تأیید نمایش داده می‌شود.
+if(preg_match('/^(declineOrder|decPayment|decRenewAcc|decIncreaseDay|decIncreaseVolume)(.+)$/', (string)($data ?? ''), $declineAskMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $hashId = trim($declineAskMatch[2]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('پرداخت پیدا نشد.', true); exit(); }
+    $state = (string)($pay['state'] ?? '');
+    if(in_array($state, ['declined','auto_cancelled','cancelled_by_user'], true)){
+        alert('این درخواست قبلاً رد یا لغو شده است.', true);
+        exit();
+    }
+    if($state === 'approved' && function_exists('v2raystore_payHasLinkedApprovedOrder') && v2raystore_payHasLinkedApprovedOrder($pay)){
+        alert('این درخواست قبلاً تأیید شده و قابل رد کردن نیست.', true);
+        exit();
+    }
+    editKeys(function_exists('v2raystore_declineConfirmationKeyboard') ? v2raystore_declineConfirmationKeyboard($hashId) : null);
+    alert('برای عدم تأیید نهایی، تأیید کنید.');
+    exit();
+}
+if(preg_match('/^confirmDeclinePay(.+)$/', (string)($data ?? ''), $declineDoMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $hashId = trim($declineDoMatch[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if(!$pay){ alert('پرداخت پیدا نشد.', true); exit(); }
+    $uid = intval($pay['user_id'] ?? 0);
+    setUser('manualReceiptDecline|' . $hashId . '|' . intval($message_id) . '|' . $uid);
+    sendMessage('📝 لطفاً دلیل عدم تأیید را ارسال کنید؛ این دلیل برای مشتری فرستاده می‌شود.', $cancelKey, 'HTML');
+    alert('حالا دلیل عدم تأیید را بفرستید.');
+    exit();
+}
+if(preg_match('/^restorePendingPayActions(.+)$/', (string)($data ?? ''), $declineRestoreMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $hashId = trim($declineRestoreMatch[1]);
+    $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($hashId) : null;
+    if($pay && function_exists('v2raystore_adminReceiptKeyboardByPay')) editKeys(v2raystore_adminReceiptKeyboardByPay($pay));
+    alert('درخواست همچنان در انتظار بررسی است.');
+    exit();
+}
+
 // پنل «ارسال و دسترسی هر سرور» نماینده مثل بقیه منوهای ساده،
 // در بخش مدیریت نماینده هندل می‌شود. کدهای زودهنگام قبلی حذف شدند تا دکمه فقط رنگ عوض نکند.
 
@@ -1796,6 +1873,34 @@ if(preg_match('/^botSettings(Sales|Service|Connections|Access|Marketing)$/', $da
     editText($message_id, '<b>' . $sectionTitles[$section] . '</b>\n\nتنظیمات مرتبط این بخش را از دکمه‌های زیر مدیریت کنید.', $fn(), 'HTML');
     exit();
 }
+if(($data ?? '') === 'orderCooldownSettings' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    editText($message_id, v2raystore_orderCooldownMenuText(), v2raystore_orderCooldownMenuKeys(), 'HTML');
+    exit();
+}
+if(($data ?? '') === 'toggleOrderCooldown' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $s = v2raystore_orderCooldownSettings();
+    setSettings('orderCooldownState', $s['enabled'] ? 'off' : 'on');
+    editText($message_id, v2raystore_orderCooldownMenuText(), v2raystore_orderCooldownMenuKeys(), 'HTML');
+    exit();
+}
+if(($data ?? '') === 'setOrderCooldownMinutes' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    sendMessage('⏱ تعداد دقیقه فاصله ثبت سفارش جدید را ارسال کنید.\n\nمثال: <code>5</code>\nعدد مجاز: 1 تا 1440 دقیقه', $cancelKey, 'HTML');
+    setUser('setOrderCooldownMinutes');
+    exit();
+}
+if(($userInfo['step'] ?? '') === 'setOrderCooldownMinutes' && ($text ?? '') !== ($buttonValues['cancel'] ?? '') && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $value = trim((string)$text);
+    $value = strtr($value, ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9']);
+    if(!ctype_digit($value) || intval($value) < 1 || intval($value) > 1440){
+        sendMessage('❌ فقط عدد صحیح بین 1 تا 1440 دقیقه وارد کنید.', $cancelKey, 'HTML');
+        exit();
+    }
+    setSettings('orderCooldownMinutes', intval($value));
+    setUser();
+    sendMessage('✅ فاصله ثبت سفارش جدید روی <b>' . intval($value) . ' دقیقه</b> تنظیم شد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_orderCooldownMenuText(), v2raystore_orderCooldownMenuKeys(), 'HTML');
+    exit();
+}
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $changedBotKey = '';
     if($data!="botSettings"){
@@ -3337,6 +3442,13 @@ if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy
     exit();
 }
 if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy") && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true))){
+    if(function_exists('v2raystore_orderCooldownCheck') && $from_id != $admin && empty($userInfo['isAdmin']) && !(function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo))){
+        $cooldownGate = v2raystore_orderCooldownCheck($from_id, false);
+        if(empty($cooldownGate['ok'])){
+            alert('⏳ برای ثبت سفارش جدید باید ' . v2raystore_orderCooldownFormatRemaining($cooldownGate['remaining'] ?? 0) . ' صبر کنید؛ رسید سفارش قبلی ثبت شده است.', true);
+            exit();
+        }
+    }
     if($botState['cartToCartState'] == "off" && $botState['walletState'] == "off"){
         alert($mainValues['selling_is_off']);
         exit();
@@ -5937,6 +6049,13 @@ if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|active_config
     exit();
 }
 if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true)) ) {
+    if(function_exists('v2raystore_orderCooldownCheck') && $from_id != $admin && empty($userInfo['isAdmin']) && !(function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo))){
+        $cooldownGate = v2raystore_orderCooldownCheck($from_id, false);
+        if(empty($cooldownGate['ok'])){
+            alert('⏳ برای ثبت سفارش جدید باید ' . v2raystore_orderCooldownFormatRemaining($cooldownGate['remaining'] ?? 0) . ' صبر کنید؛ رسید سفارش قبلی ثبت شده است.', true);
+            exit();
+        }
+    }
     $sid = intval($match['serverId']);
     if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($sid, $from_id, $userInfo ?? null, $match['buyType'])){
         alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);

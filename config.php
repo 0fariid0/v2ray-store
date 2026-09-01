@@ -4858,7 +4858,12 @@ function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $p
     }else{
         $message = "🎁 <b>هدیه {$action} شما</b>\n\n✨ <b>{$gbText} گیگ</b> حجم هدیه روی همین سرویس اضافه شد:\n🔮 <code>{$safeRemarkHtml}</code>\n\n✅ هدیه با موفقیت به حجم سرویس اضافه شد.";
     }
-    sendMessage($message, null, 'HTML', $userId);
+    $rewardKeyboard = null;
+    if(function_exists('v2raystore_rewardNoticeButton')){
+        $noticeButton = v2raystore_rewardNoticeButton($payHash);
+        if($noticeButton) $rewardKeyboard = v2raystore_inlineKeyboardJson([[$noticeButton]]);
+    }
+    sendMessage($message, $rewardKeyboard, 'HTML', $userId);
     return ['ok'=>true,'awarded'=>true,'prize_type'=>$prizeType,'prize_id'=>$prizeId,'volume_gb'=>$volumeGb,'log_id'=>$logId,'qualifying_volume_gb'=>$qualifyingVolumeGb,'effective_special_chance'=>$effectiveSpecialChance];
 }
 
@@ -4868,6 +4873,67 @@ function v2raystore_botFeatureEnabled($key, $default = 'on'){
     $default = ($default === 'off') ? 'off' : 'on';
     $value = $botState[$key] ?? $default;
     return $value !== 'off';
+}
+
+/* ======================================================================
+   فاصله ثبت سفارش جدید پس از ارسال رسید
+   فقط رسیدهای واقعاً ارسال‌شده (sent_date) در این محدودیت اثر دارند؛
+   پرداخت‌های صرفاً ساخته‌شده و رهاشده در حالت pending نادیده گرفته می‌شوند.
+   ====================================================================== */
+function v2raystore_orderCooldownSettings(){
+    global $botState;
+    $enabled = (($botState['orderCooldownState'] ?? 'on') !== 'off');
+    $minutes = intval($botState['orderCooldownMinutes'] ?? 5);
+    if($minutes < 1) $minutes = 5;
+    if($minutes > 1440) $minutes = 1440;
+    return ['enabled'=>$enabled, 'minutes'=>$minutes];
+}
+
+function v2raystore_orderCooldownCheck($userId, $isAdmin = false){
+    global $connection;
+    $userId = intval($userId);
+    $settings = v2raystore_orderCooldownSettings();
+    if($userId <= 0 || $isAdmin || empty($settings['enabled'])) return ['ok'=>true, 'remaining'=>0];
+
+    $cutoff = time() - (intval($settings['minutes']) * 60);
+    // sent_date فقط وقتی مقدار می‌گیرد که کاربر تصویر رسید را ثبت کرده باشد.
+    $stmt = @$connection->prepare("SELECT `sent_date` FROM `pays` WHERE `user_id`=? AND `type`='BUY_SUB' AND COALESCE(`sent_date`,0)>? ORDER BY `sent_date` DESC LIMIT 1");
+    if(!$stmt) return ['ok'=>true, 'remaining'=>0];
+    $stmt->bind_param('ii', $userId, $cutoff);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $sentAt = intval($row['sent_date'] ?? 0);
+    if($sentAt <= 0) return ['ok'=>true, 'remaining'=>0];
+    $remaining = max(1, ($sentAt + intval($settings['minutes']) * 60) - time());
+    return ['ok'=>false, 'remaining'=>$remaining, 'minutes'=>intval($settings['minutes']), 'sent_at'=>$sentAt];
+}
+
+function v2raystore_orderCooldownFormatRemaining($seconds){
+    $seconds = max(0, intval($seconds));
+    $minutes = intdiv($seconds, 60);
+    $seconds = $seconds % 60;
+    if($minutes > 0) return $minutes . ' دقیقه' . ($seconds > 0 ? ' و ' . $seconds . ' ثانیه' : '');
+    return $seconds . ' ثانیه';
+}
+
+function v2raystore_orderCooldownMenuText(){
+    $s = v2raystore_orderCooldownSettings();
+    $state = $s['enabled'] ? '🟢 روشن' : '🔴 خاموش';
+    return "⏱ <b>فاصله ثبت سفارش جدید</b>\n\n" .
+        "وضعیت: <b>{$state}</b>\n" .
+        "فاصله فعلی: <b>{$s['minutes']} دقیقه</b>\n\n" .
+        "بعد از اینکه کاربر رسید کارت‌به‌کارت را ارسال کرد، تا پایان این فاصله نمی‌تواند سفارش خرید جدید دیگری ثبت کند.\n" .
+        "پرداخت‌هایی که فقط ساخته شده‌اند و هنوز رسید ندارند، در این محدودیت حساب نمی‌شوند.";
+}
+
+function v2raystore_orderCooldownMenuKeys(){
+    $s = v2raystore_orderCooldownSettings();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>($s['enabled'] ? '🟢 روشن' : '🔴 خاموش'), 'callback_data'=>'toggleOrderCooldown', 'style'=>($s['enabled'] ? 'success' : 'warning')]],
+        [['text'=>'⏱ تغییر فاصله (' . $s['minutes'] . ' دقیقه)', 'callback_data'=>'setOrderCooldownMinutes', 'style'=>'primary']],
+        [['text'=>'⬅️ بازگشت به امکانات سرویس', 'callback_data'=>'botSettingsService', 'style'=>'primary']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
 /* ======================================================================
@@ -7150,12 +7216,22 @@ function v2raystore_salesStateBlockReason($kind = 'new', $agentContext = null){
     // خاموش بودن دکمه خرید فقط برای خرید کاربران عادی اعمال شود.
     // نماینده‌ها دکمه‌های خرید جداگانه خودشان را دارند.
     if(!$agentContext && $kind === 'new' && !v2raystore_userButtonVisible('buy_subscriptions', $state)) return 'buy_button_off';
+    if(!$agentContext && $kind === 'new' && function_exists('v2raystore_orderCooldownCheck')){
+        $uid = intval($GLOBALS['from_id'] ?? 0);
+        $gate = v2raystore_orderCooldownCheck($uid, false);
+        if(empty($gate['ok'])) return 'order_cooldown:' . intval($gate['remaining'] ?? 0);
+    }
     return '';
 }
 
 function v2raystore_purchaseBlockedMessage($reason = ''){
     if($reason === 'buy_button_off'){
         return "🔒 بخش خرید کانفیگ جدید در حال حاضر توسط مدیریت غیرفعال شده است.\n\nدر صورت نیاز، لطفاً از بخش پشتیبانی با مدیریت در ارتباط باشید.";
+    }
+    if(strpos((string)$reason, 'order_cooldown:') === 0){
+        $seconds = intval(substr((string)$reason, strlen('order_cooldown:')));
+        $remaining = function_exists('v2raystore_orderCooldownFormatRemaining') ? v2raystore_orderCooldownFormatRemaining($seconds) : ($seconds . ' ثانیه');
+        return '⏳ برای ثبت سفارش جدید باید ' . $remaining . ' صبر کنید؛ رسید سفارش قبلی ثبت شده است.';
     }
     return "🔒 فروش خدمات در حال حاضر توسط مدیریت غیرفعال شده است.\n\nتا زمان فعال‌سازی مجدد فروش، امکان ثبت خرید، تمدید یا افزایش حجم و زمان وجود ندارد.";
 }
@@ -11891,6 +11967,8 @@ function getBotServiceSettingKeys(){
     $s = v2raystore_adminBotSettingsState();
     $renewSettings = function_exists('v2raystore_getRenewSettings') ? v2raystore_getRenewSettings() : ['mode'=>'reset','max_days'=>45];
     $renewMode = ($renewSettings['mode'] ?? 'reset') === 'add' ? 'افزایشی / سقف ۴۵ روز' : 'ریست کامل';
+    $cooldown = function_exists('v2raystore_orderCooldownSettings') ? v2raystore_orderCooldownSettings() : ['enabled'=>true, 'minutes'=>5];
+    $cooldownLabel = ($cooldown['enabled'] ? '🟢 روشن' : '🔴 خاموش') . ' / ' . intval($cooldown['minutes']) . ' دقیقه';
     return json_encode(['inline_keyboard'=>[
         [['text'=>v2raystore_adminToggleLabel($s,'renewAccountState'),'callback_data'=>'changeBotrenewAccountState'], ['text'=>'تمدید سرویس','callback_data'=>'v2raystore']],
         [['text'=>$renewMode,'callback_data'=>'renewSettings'], ['text'=>'روش تمدید','callback_data'=>'v2raystore']],
@@ -11899,6 +11977,7 @@ function getBotServiceSettingKeys(){
         [['text'=>v2raystore_adminToggleLabel($s,'switchLocationState'),'callback_data'=>'changeBotswitchLocationState'], ['text'=>'تغییر لوکیشن','callback_data'=>'v2raystore']],
         [['text'=>'⚙️ تنظیم هزینه و محدودیت تغییر لوکیشن','callback_data'=>'switchLocationSettings']],
         [['text'=>v2raystore_adminToggleLabel($s,'changeProtocolState'),'callback_data'=>'changeBotchangeProtocolState'], ['text'=>'تغییر پروتکل','callback_data'=>'v2raystore']],
+        [['text'=>$cooldownLabel,'callback_data'=>'orderCooldownSettings'], ['text'=>'فاصله ثبت سفارش جدید','callback_data'=>'v2raystore']],
         [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
@@ -19800,7 +19879,7 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
     $isIncreaseOnly = ($reportType === 'INCREASE_VOLUME' || $reportType === 'INCREASE_DAY' || $reportType === 'INCREASE_WALLET' || preg_match('/^INCREASE_(VOLUME|DAY)_/', (string)$payType));
     if($isRenewReport){
         $keyboard = function_exists('v2raystore_renewCompletedReportKeyboard') ? v2raystore_renewCompletedReportKeyboard($hashId, $uid) : v2raystore_reportPrivateKeyboard($uid);
-    }elseif($auto && !$isIncreaseOnly){
+    }elseif(!$isIncreaseOnly){
         $keyboard = v2raystore_autoOrderActionKeyboard($hashId, $uid);
     }else{
         $keyboard = v2raystore_reportPrivateKeyboard($uid);
@@ -20449,7 +20528,7 @@ function v2raystore_updateAdminPayMessageStatus($hashId, $statusText, $style = '
     }
     $messages = v2raystore_getAdminPayMessages($hashId);
     if(count($messages) == 0) return false;
-    $keys = v2raystore_styleReplyMarkup(v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText));
+    $keys = v2raystore_styleReplyMarkup(v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText, $hashId));
     $any = false;
     foreach($messages as $item){
         $chat = intval($item[0] ?? 0);
@@ -20485,7 +20564,7 @@ function v2raystore_finalizeManualPayMessage($hashId, $statusText, $style = 'suc
     global $from_id, $message_id;
     $currentChatId = intval($currentChatId ?: ($from_id ?? 0));
     $currentMessageId = intval($currentMessageId ?: ($message_id ?? 0));
-    $keys = v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText);
+    $keys = v2raystore_orderStatusKeyboard($statusText, $userId, $style, $copyText, $hashId);
     v2raystore_updateAdminPayMessageStatus($hashId, $statusText, $style, $userId, $copyText);
     if($currentChatId != 0 && $currentMessageId > 0){
         bot('editMessageReplyMarkup',[
@@ -20529,14 +20608,44 @@ function v2raystore_payLinkedOrderIds($hashId){
 function v2raystore_autoOrderActionKeyboard($hashId, $userId){
     $rows = [];
     if(v2raystore_reportDetailEnabled('cancel_button', 'on')){
-        $rows[] = [[ 'text'=>'❌ لغو کامل سفارش', 'callback_data'=>'autoCancelOrder' . $hashId, 'style'=>'danger' ]];
+        $rows[] = [[ 'text'=>'❌ لغو کامل سفارش', 'callback_data'=>'confirmCancelOrder' . $hashId, 'style'=>'danger' ]];
     }
     if(v2raystore_reportDetailEnabled('private_button', 'on')) $rows[] = [v2raystore_userPrivateButton($userId)];
+    $rewardButton = v2raystore_rewardNoticeButton($hashId);
+    if($rewardButton) $rows[] = [$rewardButton];
     if(count($rows) == 0) return null;
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
-function v2raystore_orderStatusKeyboard($statusText, $userId = 0, $style = 'success', $copyText = ''){
+function v2raystore_cancelConfirmationKeyboard($hashId){
+    $hashId = trim((string)$hashId);
+    return v2raystore_inlineKeyboardJson([
+        [
+            ['text'=>'✅ تأیید لغو', 'callback_data'=>'executeCancelOrder' . $hashId, 'style'=>'danger'],
+            ['text'=>'↩️ انصراف', 'callback_data'=>'restoreOrderActions' . $hashId, 'style'=>'primary']
+        ]
+    ]);
+}
+
+function v2raystore_declineConfirmationKeyboard($hashId){
+    $hashId = trim((string)$hashId);
+    return v2raystore_inlineKeyboardJson([
+        [
+            ['text'=>'✅ تأیید عدم تأیید', 'callback_data'=>'confirmDeclinePay' . $hashId, 'style'=>'danger'],
+            ['text'=>'↩️ انصراف', 'callback_data'=>'restorePendingPayActions' . $hashId, 'style'=>'primary']
+        ]
+    ]);
+}
+
+function v2raystore_rewardNoticeButton($payHash){
+    $payHash = trim((string)$payHash);
+    if($payHash === '' || !function_exists('v2raystore_rewardAwardsByPayment')) return null;
+    $awards = v2raystore_rewardAwardsByPayment($payHash);
+    if(floatval($awards['total_gb'] ?? 0) <= 0) return null;
+    return ['text'=>'🎁 حجم هدیه اضافه شد', 'callback_data'=>'rewardGiftNotice', 'style'=>'success'];
+}
+
+function v2raystore_orderStatusKeyboard($statusText, $userId = 0, $style = 'success', $copyText = '', $payHash = ''){
     $copyText = trim((string)$copyText);
     if($copyText !== ''){
         $mainButton = ['text'=>$statusText, 'copy_text'=>['text'=>$copyText]];
@@ -20544,6 +20653,17 @@ function v2raystore_orderStatusKeyboard($statusText, $userId = 0, $style = 'succ
         $mainButton = ['text'=>$statusText, 'callback_data'=>'v2raystore', 'style'=>$style];
     }
     $rows = [[$mainButton]];
+    $payHash = trim((string)$payHash);
+    // بعد از تأیید، لغو کامل سفارش از همان پیام مستقیم ادمین در دسترس است.
+    if($payHash !== '' && function_exists('v2raystore_getPayByHash')){
+        $pay = v2raystore_getPayByHash($payHash);
+        $payType = is_array($pay) ? (string)($pay['type'] ?? '') : '';
+        if(is_array($pay) && (string)($pay['state'] ?? '') === 'approved' && in_array($payType, ['BUY_SUB','RENEW_ACCOUNT','RENEW_SCONFIG'], true)){
+            $rows[] = [['text'=>'❌ لغو سفارش', 'callback_data'=>'confirmCancelOrder' . $payHash, 'style'=>'danger']];
+        }
+    }
+    $rewardButton = v2raystore_rewardNoticeButton($payHash);
+    if($rewardButton) $rows[] = [$rewardButton];
     $userId = intval($userId);
     if($userId > 0) $rows[] = [v2raystore_userPrivateButton($userId)];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
@@ -21659,7 +21779,9 @@ function v2raystore_restorePanelServiceExact($snapshot){
 function v2raystore_renewCompletedReportKeyboard($hashId, $userId){
     $rows = [];
     // برای تمدید، دکمه برگشت سرویس باید همیشه روی گزارش نهایی باشد؛ مستقل از تنظیمات عمومی دکمه لغو سفارش.
-    $rows[] = [[ 'text'=>'↩️ لغو تمدید و برگشت سرویس', 'callback_data'=>'autoCancelOrder' . $hashId, 'style'=>'danger' ]];
+    $rows[] = [[ 'text'=>'↩️ لغو تمدید و برگشت سرویس', 'callback_data'=>'confirmCancelOrder' . $hashId, 'style'=>'danger' ]];
+    $rewardButton = v2raystore_rewardNoticeButton($hashId);
+    if($rewardButton) $rows[] = [$rewardButton];
     return v2raystore_reportPrivateKeyboard($userId, $rows);
 }
 
