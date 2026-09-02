@@ -357,8 +357,14 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
         exit();
     }
 
+    // هش محتوای عکس یک درخواست کوتاه به Telegram دارد؛ پاسخ وبهوک را قبل از
+    // آن می‌بندیم تا این بررسی هرگز باعث retry یا اختلال در ثبت سفارش نشود.
+    if(function_exists('farid_finishWebhookResponse')) farid_finishWebhookResponse();
+    $storeReceiptContentHash = function_exists('v2raystore_getReceiptContentHash')
+        ? v2raystore_getReceiptContentHash($storeReceiptFileId) : '';
+
     if(function_exists('v2raystore_processCartToCartReceiptUpload')){
-        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId);
+        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId, $storeReceiptContentHash);
         if(!empty($storeReceiptResult['ok'])){
             setUser();
             setUser('', 'temp');
