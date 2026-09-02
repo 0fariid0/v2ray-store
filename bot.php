@@ -347,7 +347,9 @@ if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $storeCancelPayMatch)){
 if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->message) && v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $storeReceiptStepMatch)){
     $storeReceiptHashId = $storeReceiptStepMatch[2] ?? '';
     $storeReceiptStepPrefix = $storeReceiptStepMatch[1] ?? '';
-    $storeReceiptFileId = function_exists('v2raystore_getBestPhotoFileId') ? v2raystore_getBestPhotoFileId($update, '') : ($fileid ?? '');
+    $storeReceiptPhotoInfo = function_exists('v2raystore_getBestPhotoInfo') ? v2raystore_getBestPhotoInfo($update) : [];
+    $storeReceiptFileId = ($storeReceiptPhotoInfo['file_id'] ?? '') !== '' ? $storeReceiptPhotoInfo['file_id'] : ($fileid ?? '');
+    $storeReceiptFileUniqueId = trim((string)($storeReceiptPhotoInfo['file_unique_id'] ?? ''));
 
     if($storeReceiptFileId === ''){
         if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($storeReceiptHashId);
@@ -356,7 +358,7 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
     }
 
     if(function_exists('v2raystore_processCartToCartReceiptUpload')){
-        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId);
+        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId);
         if(!empty($storeReceiptResult['ok'])){
             setUser();
             setUser('', 'temp');

@@ -7699,18 +7699,103 @@ function v2raystore_isCartToCartReceiptStep($step, &$matches = null){
 }
 
 function v2raystore_getBestPhotoFileId($updateObj = null, $fallback = ''){
-    $fallback = trim((string)$fallback);
+    $info = v2raystore_getBestPhotoInfo($updateObj);
+    return ($info['file_id'] ?? '') !== '' ? $info['file_id'] : trim((string)$fallback);
+}
+
+// شناسهٔ file_unique_id تلگرام برای تشخیص ارسال دوبارهٔ دقیقِ همان تصویر کافی است
+// و نیازی به دانلود/ذخیرهٔ عکس یا پردازش سنگین تصویر ندارد.
+function v2raystore_getBestPhotoInfo($updateObj = null){
     if($updateObj === null && isset($GLOBALS['update'])) $updateObj = $GLOBALS['update'];
-    if(!isset($updateObj->message->photo) || !is_array($updateObj->message->photo) || count($updateObj->message->photo) == 0) return $fallback;
+    $info = ['file_id'=>'', 'file_unique_id'=>''];
+    if(!isset($updateObj->message->photo) || !is_array($updateObj->message->photo) || count($updateObj->message->photo) == 0) return $info;
     $best = null;
     foreach($updateObj->message->photo as $photoSize){
         if(isset($photoSize->file_id) && trim((string)$photoSize->file_id) !== '') $best = $photoSize;
     }
-    return $best && isset($best->file_id) ? trim((string)$best->file_id) : $fallback;
+    if($best){
+        $info['file_id'] = trim((string)($best->file_id ?? ''));
+        $info['file_unique_id'] = trim((string)($best->file_unique_id ?? ''));
+    }
+    return $info;
 }
 
 function v2raystore_isReceiptPhotoMessage($updateObj = null){
     return v2raystore_getBestPhotoFileId($updateObj, '') !== '';
+}
+
+function v2raystore_ensureReceiptFingerprintsTable(){
+    global $connection;
+    static $ready = null;
+    if($ready !== null) return $ready;
+    if(!isset($connection) || !$connection){ $ready = false; return false; }
+    $sql = "CREATE TABLE IF NOT EXISTS `receipt_fingerprints` (
+        `id` bigint(20) NOT NULL AUTO_INCREMENT,
+        `pay_hash` varchar(191) NOT NULL,
+        `user_id` bigint(20) NOT NULL DEFAULT 0,
+        `file_unique_id` varchar(191) NOT NULL,
+        `created_at` int(11) NOT NULL DEFAULT 0,
+        PRIMARY KEY (`id`),
+        KEY `idx_receipt_unique_id` (`file_unique_id`),
+        KEY `idx_receipt_created_at` (`created_at`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
+    $ready = (bool)@$connection->query($sql);
+    return $ready;
+}
+
+function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId = ''){
+    global $connection;
+    $payHash = trim((string)$payHash);
+    $fileUniqueId = trim((string)$fileUniqueId);
+    $userId = intval($userId);
+    if($payHash === '' || $fileUniqueId === '' || !v2raystore_ensureReceiptFingerprintsTable()) return ['duplicate'=>false];
+
+    $previous = null;
+    $stmt = @$connection->prepare("SELECT `pay_hash`,`user_id`,`created_at` FROM `receipt_fingerprints` WHERE `file_unique_id` = ? AND `pay_hash` <> ? ORDER BY `id` ASC LIMIT 1");
+    if($stmt){
+        $stmt->bind_param('ss', $fileUniqueId, $payHash);
+        $stmt->execute();
+        $previous = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+
+    $now = time();
+    $stmt = @$connection->prepare("INSERT INTO `receipt_fingerprints` (`pay_hash`,`user_id`,`file_unique_id`,`created_at`) VALUES (?,?,?,?)");
+    if($stmt){
+        $stmt->bind_param('sisi', $payHash, $userId, $fileUniqueId, $now);
+        @$stmt->execute();
+        $stmt->close();
+    }
+
+    // نگهداری فقط ۹۰ روز از شناسه‌ها؛ عکس‌ها اصلاً روی سرور ذخیره نمی‌شوند.
+    if(($now % 300) < 2) @$connection->query("DELETE FROM `receipt_fingerprints` WHERE `created_at` < " . intval($now - (90 * 86400)) . " LIMIT 1000");
+
+    if(!$previous) return ['duplicate'=>false];
+    return [
+        'duplicate'=>true,
+        'pay_hash'=>(string)($previous['pay_hash'] ?? ''),
+        'user_id'=>intval($previous['user_id'] ?? 0),
+        'created_at'=>intval($previous['created_at'] ?? 0),
+    ];
+}
+
+function v2raystore_warnDuplicateReceipt($duplicate, $messages = []){
+    if(empty($duplicate['duplicate']) || !is_array($messages)) return;
+    $oldHash = trim((string)($duplicate['pay_hash'] ?? ''));
+    $oldUser = intval($duplicate['user_id'] ?? 0);
+    $text = "⚠️ <b>هشدار فیش تکراری</b>\nاین تصویر رسید قبلاً برای یک سفارش دیگر ارسال شده است.\n";
+    if($oldUser > 0) $text .= "👤 کاربر قبلی: <code>" . intval($oldUser) . "</code>\n";
+    if($oldHash !== '') $text .= "🧾 پرداخت قبلی: <code>" . v2raystore_h($oldHash) . "</code>\n";
+    $text .= "لطفاً رسید را دستی بررسی کنید؛ سفارش رد یا متوقف نشده است.";
+    foreach($messages as $item){
+        $chatId = intval($item[0] ?? 0);
+        $messageId = intval($item[1] ?? 0);
+        if($chatId != 0 && $messageId > 0){
+            // فقط یک پیام هشدار جداگانه ارسال می‌شود تا برای چند ادمین اعلان تکراری ساخته نشود.
+            @sendMessage($text, null, 'HTML', $chatId, $messageId);
+            break;
+        }
+    }
 }
 
 function v2raystore_sendReceiptPhotoOnlyNotice($hashId = ''){
@@ -20963,11 +21048,16 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     return implode("\n", $lines);
 }
 
-function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId){
+function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId, $fileUniqueId = ''){
     global $from_id, $mainValues;
     $hashId = trim((string)$hashId);
     $fileId = trim((string)$fileId);
+    $fileUniqueId = trim((string)$fileUniqueId);
     $stepPrefix = trim((string)$stepPrefix);
+    if($fileUniqueId === '' && function_exists('v2raystore_getBestPhotoInfo')){
+        $photoInfo = v2raystore_getBestPhotoInfo();
+        $fileUniqueId = trim((string)($photoInfo['file_unique_id'] ?? ''));
+    }
     if($hashId === '') return ['ok'=>false, 'message'=>'کد پرداخت نامعتبر است.'];
     if($fileId === '') return ['ok'=>false, 'message'=>'لطفاً رسید را فقط به صورت عکس ارسال کنید.'];
 
@@ -20993,6 +21083,10 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
     }
     $adminSend = v2raystore_sendAdminPaymentPhoto($hashId, $fileId, $msg, $keyboard, 'HTML', $uid);
 
+    // تشخیص فقط برای هشدار است و هیچ‌وقت نتیجهٔ ثبت رسید/سفارش را تغییر نمی‌دهد.
+    $duplicate = v2raystore_registerReceiptFingerprint($hashId, $uid, $fileUniqueId);
+    if(!empty($duplicate['duplicate'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? []);
+
     $type = (string)($pay['type'] ?? '');
     if($type === 'INCREASE_WALLET') $userMessage = $mainValues['order_increase_sent'] ?? '✅ رسید شارژ کیف پول شما ثبت شد و برای ادمین ارسال شد.';
     elseif($type === 'RENEW_ACCOUNT' || preg_match('/^INCREASE_(DAY|VOLUME)_/', $type)) $userMessage = $mainValues['renew_order_sent'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.';
@@ -21002,6 +21096,7 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
         'ok'=>true,
         'admin_ok'=>!empty($adminSend['ok']),
         'admin_message'=>($adminSend['message'] ?? ''),
+        'duplicate_warning'=>!empty($duplicate['duplicate']),
         'user_message'=>$userMessage,
     ];
 }
@@ -21110,6 +21205,7 @@ function v2raystore_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard =
     $sent = 0;
     $firstChat = 0;
     $firstMsg = 0;
+    $sentMessages = [];
     $errors = [];
 
     foreach($recipients as $chatId){
@@ -21133,6 +21229,7 @@ function v2raystore_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard =
             $sent++;
             if(is_object($res) && isset($res->result->message_id)){
                 $sentMsgId = intval($res->result->message_id);
+                if($sentMsgId > 0) $sentMessages[] = [$chatId, $sentMsgId];
                 if($hashId !== '' && $sentMsgId > 0) v2raystore_storeAdminPayMessage($hashId, $chatId, $sentMsgId);
                 if($firstMsg <= 0 && $sentMsgId > 0){
                     $firstChat = $chatId;
@@ -21158,10 +21255,10 @@ function v2raystore_sendAdminPaymentPhoto($hashId, $photo, $caption, $keyboard =
             $keyboardReport = $userId ? v2raystore_reportPrivateKeyboard($userId) : null;
             v2raystore_reportEvent('⚠️ خطای ارسال سفارش به ادمین', $body, $keyboardReport, 'admin_order_send_failed');
         }
-        return ['ok'=>false, 'sent'=>0, 'message'=>$faErr, 'errors'=>$errors];
+        return ['ok'=>false, 'sent'=>0, 'message'=>$faErr, 'errors'=>$errors, 'messages'=>$sentMessages];
     }
 
-    return ['ok'=>true, 'sent'=>$sent, 'chat_id'=>$firstChat, 'message_id'=>$firstMsg, 'errors'=>$errors];
+    return ['ok'=>true, 'sent'=>$sent, 'chat_id'=>$firstChat, 'message_id'=>$firstMsg, 'errors'=>$errors, 'messages'=>$sentMessages];
 }
 
 function v2raystore_buildPendingAdminOrderMessage($pay){

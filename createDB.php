@@ -159,6 +159,17 @@ $connection->query("CREATE TABLE IF NOT EXISTS `pays` (
     PRIMARY KEY (`id`)
 );");
 
+$connection->query("CREATE TABLE IF NOT EXISTS `receipt_fingerprints` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT,
+    `pay_hash` varchar(191) NOT NULL,
+    `user_id` bigint(20) NOT NULL DEFAULT 0,
+    `file_unique_id` varchar(191) NOT NULL,
+    `created_at` int(11) NOT NULL DEFAULT 0,
+    PRIMARY KEY (`id`),
+    KEY `idx_receipt_unique_id` (`file_unique_id`),
+    KEY `idx_receipt_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
 
 $connection->query("CREATE TABLE `server_categories` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
