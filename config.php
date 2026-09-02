@@ -4150,6 +4150,8 @@ function v2raystore_getPurchaseRewardConfig(){
         'special_chance' => 25,
         'purchase_enabled' => true,
         'renew_enabled' => true,
+        // نماینده‌ها جداگانه قابل فعال/غیرفعال‌کردن هستند؛ پیش‌فرض رفتار قبلی را حفظ می‌کند.
+        'agent_enabled' => true,
         // Empty means every active paid plan is eligible. Otherwise only these plan IDs qualify.
         'eligible_plan_ids' => [],
     ];
@@ -4160,6 +4162,7 @@ function v2raystore_getPurchaseRewardConfig(){
     $cfg['enabled'] = !empty($cfg['enabled']);
     $cfg['purchase_enabled'] = !empty($cfg['purchase_enabled']);
     $cfg['renew_enabled'] = !empty($cfg['renew_enabled']);
+    $cfg['agent_enabled'] = !empty($cfg['agent_enabled']);
     $cfg['normal_enabled'] = !empty($cfg['normal_enabled']);
     $cfg['normal_percent'] = max(0, min(100, round(floatval($cfg['normal_percent']), 2)));
     $cfg['normal_gb'] = max(0, round(floatval($cfg['normal_gb']), 2));
@@ -4181,6 +4184,7 @@ function v2raystore_savePurchaseRewardConfig($cfg){
         'special_chance' => max(0, min(100, intval($cfg['special_chance'] ?? 0))),
         'purchase_enabled' => !empty($cfg['purchase_enabled']),
         'renew_enabled' => !empty($cfg['renew_enabled']),
+        'agent_enabled' => !empty($cfg['agent_enabled']),
         'eligible_plan_ids' => array_values(array_unique(array_filter(array_map('intval', is_array($cfg['eligible_plan_ids'] ?? null) ? $cfg['eligible_plan_ids'] : []), function($id){ return $id > 0; }))),
     ];
     return v2raystore_setSettingValue('PURCHASE_REWARD_CONFIG', json_encode($clean, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
@@ -4369,6 +4373,7 @@ function v2raystore_rewardSettingsText(){
     $state = $cfg['enabled'] ? '🟢 روشن' : '🔴 خاموش';
     $purchase = $cfg['purchase_enabled'] ? '✅ فعال' : '❌ غیرفعال';
     $renew = $cfg['renew_enabled'] ? '✅ فعال' : '❌ غیرفعال';
+    $agent = $cfg['agent_enabled'] ? '✅ فعال' : '❌ غیرفعال';
     $normalState = $cfg['normal_enabled'] ? '✅ روشن' : '❌ خاموش';
     $normalPercent = v2raystore_rewardFormatGb($cfg['normal_percent']);
     $eligiblePlanIds = $cfg['eligible_plan_ids'] ?? [];
@@ -4380,6 +4385,7 @@ function v2raystore_rewardSettingsText(){
         "وضعیت کلی: <b>{$state}</b>\n" .
         "🛒 جایزه خرید جدید: <b>{$purchase}</b>\n" .
         "♻️ جایزه تمدید: <b>{$renew}</b>\n\n" .
+        "👥 جایزه خرید/تمدید نماینده‌ها: <b>{$agent}</b>\n\n" .
         "🎯 پلن‌های مشمول: <b>{$eligiblePlans}</b>\n" .
         "🎁 وضعیت جایزه عادی: <b>{$normalState}</b>\n" .
         "📊 درصد جایزه عادی: <b>{$normalPercent}% حجم همان خرید/تمدید</b>\n" .
@@ -4398,12 +4404,14 @@ function v2raystore_rewardSettingsKeyboard(){
     $purchase = $cfg['purchase_enabled'] ? '✅ خرید' : '❌ خرید';
     $renew = $cfg['renew_enabled'] ? '✅ تمدید' : '❌ تمدید';
     $normal = $cfg['normal_enabled'] ? '✅ روشن' : '❌ خاموش';
+    $agent = $cfg['agent_enabled'] ? '✅ نماینده‌ها' : '❌ نماینده‌ها';
     return json_encode(['inline_keyboard'=>[
         [['text'=>'وضعیت: ' . $onOff, 'callback_data'=>'rewardToggleFeature']],
         [
             ['text'=>$purchase, 'callback_data'=>'rewardTogglePurchase'],
             ['text'=>$renew, 'callback_data'=>'rewardToggleRenew'],
         ],
+        [['text'=>$agent, 'callback_data'=>'rewardToggleAgents']],
         [['text'=>'🎁 جایزه عادی: ' . $normal, 'callback_data'=>'rewardToggleNormal']],
         [['text'=>'🎯 پلن‌های مشمول: ' . (empty($cfg['eligible_plan_ids']) ? 'همه' : count($cfg['eligible_plan_ids']) . ' پلن'), 'callback_data'=>'rewardPlans_0']],
         [['text'=>'📊 درصد جایزه عادی: ' . v2raystore_rewardFormatGb($cfg['normal_percent']) . '% حجم پلن', 'callback_data'=>'rewardSetNormal']],
@@ -4796,6 +4804,23 @@ function v2raystore_rewardMaybeAward($eventType, $payHash, $orderId, $userId, $p
         if(!$stmt) return ['ok'=>false,'skipped'=>true,'message'=>'خواندن سفارش برای جایزه ناموفق بود.'];
         $stmt->bind_param('ii',$orderId,$userId); $stmt->execute(); $order=$stmt->get_result()->fetch_assoc(); $stmt->close();
         if(!$order) return ['ok'=>false,'skipped'=>true,'message'=>'سفارش برای جایزه پیدا نشد.'];
+    }
+    // جایزه نماینده‌ها مستقل از جایزه کاربران عادی کنترل می‌شود. در مسیرهای
+    // قدیمی تمدید ممکن است orderOverride فیلد agent_bought نداشته باشد؛ در
+    // آن حالت مقدار ثبت‌شده روی همان پرداخت را نیز بررسی می‌کنیم.
+    $isAgentPurchase = intval($order['agent_bought'] ?? 0) === 1;
+    if(!$isAgentPurchase && $payHash !== '' && isset($connection) && $connection){
+        $agentStmt = @$connection->prepare("SELECT `agent_bought` FROM `pays` WHERE `hash_id`=? LIMIT 1");
+        if($agentStmt){
+            $agentStmt->bind_param('s', $payHash);
+            $agentStmt->execute();
+            $agentRow = $agentStmt->get_result()->fetch_assoc();
+            $agentStmt->close();
+            $isAgentPurchase = intval($agentRow['agent_bought'] ?? 0) === 1;
+        }
+    }
+    if($isAgentPurchase && empty($cfg['agent_enabled'])){
+        return ['ok'=>true,'skipped'=>true,'message'=>'جایزه نماینده‌ها خاموش است.'];
     }
     if(intval($order['status'] ?? 0) != 1) return ['ok'=>true,'skipped'=>true,'message'=>'سرویس غیرفعال مشمول جایزه نیست.'];
     // For renewals, the paid renewal plan is authoritative; the old order may still carry its previous plan ID in legacy paths.
@@ -20641,8 +20666,10 @@ function v2raystore_rewardNoticeButton($payHash){
     $payHash = trim((string)$payHash);
     if($payHash === '' || !function_exists('v2raystore_rewardAwardsByPayment')) return null;
     $awards = v2raystore_rewardAwardsByPayment($payHash);
-    if(floatval($awards['total_gb'] ?? 0) <= 0) return null;
-    return ['text'=>'🎁 حجم هدیه اضافه شد', 'callback_data'=>'rewardGiftNotice', 'style'=>'success'];
+    $giftGb = floatval($awards['total_gb'] ?? 0);
+    if($giftGb <= 0) return null;
+    $giftText = v2raystore_rewardFormatGb($giftGb);
+    return ['text'=>'🎁 ' . $giftText . ' گیگ هدیه اضافه شد', 'callback_data'=>'rewardGiftNotice', 'style'=>'success'];
 }
 
 function v2raystore_orderStatusKeyboard($statusText, $userId = 0, $style = 'success', $copyText = '', $payHash = ''){
@@ -20953,6 +20980,11 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
 
     $msg = v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix);
     $keyboard = v2raystore_adminReceiptKeyboardByPay($pay, $stepPrefix);
+    // رسید شارژ کیف پول هم باید مثل رسید خرید، مستقیماً برای ادمین با دکمه‌های
+    // تأیید/عدم‌تأیید ارسال شود؛ وابسته به نام مرحلهٔ کاربر نباشد.
+    if((string)($pay['type'] ?? '') === 'INCREASE_WALLET' && function_exists('v2raystore_adminPendingWalletKeyboard')){
+        $keyboard = v2raystore_adminPendingWalletKeyboard($hashId, $uid);
+    }
     $adminSend = v2raystore_sendAdminPaymentPhoto($hashId, $fileId, $msg, $keyboard, 'HTML', $uid);
 
     $type = (string)($pay['type'] ?? '');

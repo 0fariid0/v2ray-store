@@ -2222,12 +2222,13 @@ if($data==="rewardPlansAll" && ($from_id == $admin || $userInfo['isAdmin'] == tr
     editText($message_id, $menu['text'], $menu['keyboard'], 'HTML');
     exit();
 }
-if(in_array($data, ['rewardToggleFeature','rewardTogglePurchase','rewardToggleRenew','rewardToggleNormal'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(in_array($data, ['rewardToggleFeature','rewardTogglePurchase','rewardToggleRenew','rewardToggleNormal','rewardToggleAgents'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $cfg = v2raystore_getPurchaseRewardConfig();
     if($data === 'rewardToggleFeature') $cfg['enabled'] = empty($cfg['enabled']);
     elseif($data === 'rewardTogglePurchase') $cfg['purchase_enabled'] = empty($cfg['purchase_enabled']);
     elseif($data === 'rewardToggleRenew') $cfg['renew_enabled'] = empty($cfg['renew_enabled']);
     elseif($data === 'rewardToggleNormal') $cfg['normal_enabled'] = empty($cfg['normal_enabled']);
+    elseif($data === 'rewardToggleAgents') $cfg['agent_enabled'] = empty($cfg['agent_enabled']);
     v2raystore_savePurchaseRewardConfig($cfg);
     editText($message_id, v2raystore_rewardSettingsText(), v2raystore_rewardSettingsKeyboard(), 'HTML');
     exit();
