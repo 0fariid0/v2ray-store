@@ -552,14 +552,26 @@ if(($userInfo['step'] ?? '') == 'setReportGroupChat' && $text != $buttonValues['
 }
 if($data == 'toggleReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if(v2raystore_reportForumEnabled()){
-        v2raystore_reportDeleteAllTopics();
         setSettings('storeReportForumState', 'off');
-        alert('تاپیک‌های گزارش خاموش و حذف شدند.');
+        alert('ارسال تاپیکی خاموش شد؛ تاپیک‌های موجود حذف نمی‌شوند.');
     }else{
         setSettings('storeReportForumState', 'on');
         alert('حالت تاپیک فعال شد. با اولین گزارش، تاپیک مربوطه ساخته می‌شود.');
     }
     editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
+if(preg_match('/^report(Topic|Event|Detail|Stat)SelectionMenu$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $type = strtolower($m[1]);
+    editText($message_id, '✅ موردهای فعال را انتخاب کنید؛ موارد غیرفعال حذف نمی‌شوند و تاپیک‌های موجود هم باقی می‌مانند.', v2raystore_getReportSelectionMenuKeys($type), 'HTML');
+    exit();
+}
+if(preg_match('/^toggleReportTopic_(.+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $key = $m[1];
+    if(array_key_exists($key, v2raystore_reportTopicItems())){
+        setSettings('storeReportTopicState_' . $key, v2raystore_reportTopicEnabled($key) ? 'off' : 'on');
+        editText($message_id, '✅ موردهای فعال را انتخاب کنید؛ موارد غیرفعال حذف نمی‌شوند و تاپیک‌های موجود هم باقی می‌مانند.', v2raystore_getReportSelectionMenuKeys('topic'), 'HTML');
+    }
     exit();
 }
 if($data == 'deleteAllReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -671,7 +683,7 @@ if($data == 'reportChannelSettingsMenu' && ($from_id == $admin || $userInfo['isA
     exit();
 }
 if($data == 'toggleDailyChannelStats' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    v2raystore_reportToggleSetting('storeReportDailyState', 'off');
+    v2raystore_reportToggleSetting('storeReportDailyState', 'on');
     editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
@@ -682,9 +694,9 @@ if($data == 'toggleReportLiveStats' && ($from_id == $admin || $userInfo['isAdmin
 }
 if($data == 'setDailyChannelStatsTime' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     sendMessage("🕘 لطفاً ساعت ارسال آمار روزانه را با فرمت 24 ساعته بفرستید.
-مثال: <code>21:30</code>
+مثال: <code>23:59</code>
 
-زمان بر اساس ساعت سرور ربات محاسبه می‌شود.", $cancelKey, 'HTML');
+زمان همیشه بر اساس ساعت تهران محاسبه می‌شود.", $cancelKey, 'HTML');
     setUser('setDailyChannelStatsTime');
     exit();
 }
@@ -710,8 +722,7 @@ if(preg_match('/^toggleReportEvent_(.+)$/', $data, $match) && ($from_id == $admi
     $key = $match[1];
     if(array_key_exists($key, v2raystore_reportEventItems())){
         $newState = v2raystore_reportToggleSetting(v2raystore_reportEventKey($key), 'on');
-        if($newState === 'off') v2raystore_reportDeleteTopicForEvent($key);
-        editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+        editText($message_id, '✅ اعلان‌های فعال را انتخاب کنید.', v2raystore_getReportSelectionMenuKeys('event'), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }
@@ -719,7 +730,7 @@ if(preg_match('/^toggleReportDetail_(.+)$/', $data, $match) && ($from_id == $adm
     $key = $match[1];
     if(array_key_exists($key, v2raystore_reportDetailItems())){
         v2raystore_reportToggleSetting(v2raystore_reportDetailKey($key), 'on');
-        editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+        editText($message_id, '✅ جزئیات فعال پیام‌ها را انتخاب کنید.', v2raystore_getReportSelectionMenuKeys('detail'), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }
@@ -727,7 +738,7 @@ if(preg_match('/^toggleReportStat_(.+)$/', $data, $match) && ($from_id == $admin
     $key = $match[1];
     if(array_key_exists($key, v2raystore_reportStatItems())){
         v2raystore_reportToggleSetting(v2raystore_reportStatKey($key), 'on');
-        editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+        editText($message_id, '✅ آیتم‌های آماری فعال را انتخاب کنید.', v2raystore_getReportSelectionMenuKeys('stat'), 'HTML');
     }else alert('گزینه معتبر نیست.', true);
     exit();
 }

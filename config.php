@@ -635,24 +635,29 @@ function v2raystore_statsScalar($sql, $types = '', $params = [], $field = null){
 
 if(!function_exists('v2raystore_statsPeriodStarts')){
 function v2raystore_statsPeriodStarts(){
-    $todayStart = strtotime('today');
-    $weekStart = strtotime('-' . (date('w') + 1) . ' days');
-    $monthStart = strtotime(date('Y-m-01 00:00:00'));
+    $tz = new DateTimeZone('Asia/Tehran');
+    $now = new DateTime('now', $tz);
+    $today = new DateTime($now->format('Y-m-d') . ' 00:00:00', $tz);
+    $todayStart = $today->getTimestamp();
+    $weekStart = (clone $today)->modify('-' . intval($today->format('w')) . ' days')->getTimestamp();
+    $monthStart = new DateTime($now->format('Y-m-01') . ' 00:00:00', $tz);
+    $monthStart = $monthStart->getTimestamp();
     if(function_exists('jdate') && function_exists('jalali_to_gregorian')){
-        $persian = explode('-', jdate('Y-n-1', time()));
+        $persian = explode('-', jdate('Y-n-1', time(), '', 'Asia/Tehran', 'en'));
         if(count($persian) >= 3){
             $gregorian = jalali_to_gregorian(intval($persian[0]), intval($persian[1]), intval($persian[2]));
             if(is_array($gregorian) && count($gregorian) >= 3){
-                $monthStart = strtotime($gregorian[0] . '-' . $gregorian[1] . '-' . $gregorian[2]);
+                $monthDate = new DateTime($gregorian[0] . '-' . $gregorian[1] . '-' . $gregorian[2] . ' 00:00:00', $tz);
+                $monthStart = $monthDate->getTimestamp();
             }
         }
     }
-    return ['today'=>$todayStart, 'week'=>$weekStart, 'month'=>$monthStart, 'yesterday'=>strtotime('yesterday')];
+    return ['today'=>$todayStart, 'week'=>$weekStart, 'month'=>$monthStart, 'yesterday'=>$todayStart - 86400];
 }
 }
 
 if(!function_exists('v2raystore_statsProductIncome')){
-function v2raystore_statsProductIncome($since = 0, $userId = 0, $agentOnly = false, $until = 0){
+function v2raystore_statsProductIncome($since = 0, $userId = 0, $agentOnly = false, $until = 0, $userOnly = false){
     $where = v2raystore_statsProductWhere();
     $types = '';
     $params = [];
@@ -660,6 +665,7 @@ function v2raystore_statsProductIncome($since = 0, $userId = 0, $agentOnly = fal
     if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
     if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
     if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
+    elseif($userOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 0"; }
     return intval(v2raystore_statsScalar("SELECT COALESCE(SUM(`price`),0) AS v FROM `pays` WHERE $where", $types, $params, 'v'));
 }
 }
@@ -18867,16 +18873,8 @@ function v2raystore_reportCleanupLegacyTopics(){
     static $done = false;
     if($done) return;
     $done = true;
-    if(!v2raystore_reportForumEnabled()) return;
-
-    $topics = v2raystore_reportTopicStore();
-    if(!is_array($topics) || count($topics) == 0) return;
-
-    $validKeys = array_keys(v2raystore_reportTopicItems());
-    foreach(array_keys($topics) as $topicKey){
-        // تاپیک‌های قدیمی مثل test که در نسخه‌های قبلی جدا ساخته می‌شدند، بعد از تغییر دسته‌بندی حذف می‌شوند.
-        if(!in_array($topicKey, $validKeys, true)) v2raystore_reportDeleteTopic($topicKey);
-    }
+    // تاپیک‌های قدیمی عمداً حذف نمی‌شوند؛ انتخاب/خاموش‌کردن فقط مسیر ارسال
+    // گزارش‌های بعدی را تغییر می‌دهد.
 }
 
 function v2raystore_reportEnsureTopic($eventKey){
@@ -18956,6 +18954,8 @@ function v2raystore_reportSendMessage($title, $body, $keyboard = null, $eventKey
     if($eventKey !== null){
         $threadId = v2raystore_reportEnsureTopic($eventKey);
         if($threadId > 0) $payload['message_thread_id'] = $threadId;
+        elseif(v2raystore_reportForumEnabled() && v2raystore_reportTopicEnabled(v2raystore_reportTopicKeyForEvent($eventKey)))
+            $payload['text'] = "⚠️ <b>دسترسی تاپیک ندارم</b>\nربات دسترسی ساخت/مدیریت تاپیک را ندارد؛ این گزارش در جنرال گروه ارسال شد.\n\n" . $payload['text'];
     }
 
     $res = bot('sendMessage', $payload);
@@ -19555,7 +19555,10 @@ function v2raystore_reportDetailItems(){
 
 function v2raystore_reportSetting($key, $default = 'on'){
     global $botState;
-    $value = $botState[$key] ?? $default;
+    if(array_key_exists($key, $botState)) $value = $botState[$key];
+    elseif(strpos((string)$key, 'storeReportDetail_') === 0 || strpos((string)$key, 'storeReportStat_') === 0) $value = 'off';
+    elseif(strpos((string)$key, 'storeReportEvent_') === 0 && $key !== 'storeReportEvent_daily_stats') $value = 'off';
+    else $value = $default;
     return ((string)$value === 'on') ? 'on' : 'off';
 }
 
@@ -19565,8 +19568,8 @@ function v2raystore_reportIsEnabled($key, $default = 'on'){
 
 function v2raystore_reportTime(){
     global $botState;
-    $time = trim((string)($botState['storeReportDailyTime'] ?? '21:00'));
-    if(!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $time)) $time = '21:00';
+    $time = trim((string)($botState['storeReportDailyTime'] ?? '23:59'));
+    if(!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $time)) $time = '23:59';
     return $time;
 }
 
@@ -19644,6 +19647,7 @@ function v2raystore_liveStatsSnapshot($forDaily = false){
         'plans_total' => ['📋 تعداد پلن‌ها', $q("SELECT COUNT(*) AS v FROM `server_plans`"), ''],
         'total_income' => ['🏦 درآمد قطعی کل', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome() : 0, ' تومان'],
         'agent_income' => ['🤝 درآمد فروش نماینده‌ها', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, true) : 0, ' تومان'],
+        'user_income' => ['👤 درآمد کاربران', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, false) : 0, ' تومان'],
         'today_income' => ['💰 درآمد امروز', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['today'] ?? strtotime('today'))) : 0, ' تومان'],
         'week_income' => ['🗓 درآمد هفته', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['week'] ?? strtotime('-7 days'))) : 0, ' تومان'],
         'month_income' => ['📆 درآمد ماه', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? strtotime(date('Y-m-01 00:00:00')))) : 0, ' تومان'],
@@ -19677,10 +19681,19 @@ function v2raystore_reportEvent($title, $body, $keyboard = null, $eventKey = nul
 }
 
 function v2raystore_buildDailyChannelStatsText($manual = false){
-    $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time()) : date('Y/m/d H:i');
+    $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time(), '', 'Asia/Tehran', 'en') : (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y/m/d H:i');
     $title = $manual ? '📊 <b>ارسال دستی آمار کانال</b>' : '📊 <b>گزارش روزانه آمار ربات</b>';
-    $stats = v2raystore_liveStatsSnapshot(true);
-    if(trim($stats) === '') $stats = "\n\nهیچ آیتم آماری برای ارسال فعال نیست.";
+    $periods = v2raystore_statsPeriodStarts();
+    $agent = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, true) : 0;
+    $users = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, false, 0, true) : 0;
+    $today = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['today'] ?? 0)) : 0;
+    $month = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? 0)) : 0;
+    $monthDate = function_exists('jdate') ? jdate('j/n/Y', time(), '', 'Asia/Tehran', 'fa') : (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('d/m/Y');
+    $stats = "\n\n📊 <b>آمار روزانه ربات</b>" .
+        "\n🤝 درآمد فروش نماینده‌ها: <b>" . number_format($agent) . " تومان</b>" .
+        "\n👤 درآمد کاربران: <b>" . number_format($users) . " تومان</b>" .
+        "\n💰 درآمد امروز: <b>" . number_format($today) . " تومان</b>" .
+        "\n📆 درآمد ماه تا <b>" . v2raystore_h($monthDate) . "</b>: <b>" . number_format($month) . " تومان</b>";
     return $title . "\n\n🕒 زمان گزارش: <b>" . v2raystore_h($nowTxt) . "</b>" . $stats;
 }
 
@@ -19702,14 +19715,15 @@ function v2raystore_sendDailyChannelStats($manual = false){
 }
 
 function v2raystore_processDailyChannelStats($force = false){
-    if(!$force && !v2raystore_reportIsEnabled('storeReportDailyState', 'off')) return false;
-    $today = date('Y-m-d');
+    if(!$force && !v2raystore_reportIsEnabled('storeReportDailyState', 'on')) return false;
+    $tehranNow = new DateTime('now', new DateTimeZone('Asia/Tehran'));
+    $today = $tehranNow->format('Y-m-d');
     $time = v2raystore_reportTime();
     global $botState;
     $last = (string)($botState['storeReportLastDailyDate'] ?? '');
     if(!$force){
         if($last === $today) return false;
-        if(date('H:i') < $time) return false;
+        if($tehranNow->format('H:i') < $time) return false;
     }
     $sent = v2raystore_sendDailyChannelStats($force);
     if($sent && !$force) setSettings('storeReportLastDailyDate', $today);
@@ -19717,7 +19731,7 @@ function v2raystore_processDailyChannelStats($force = false){
 }
 
 function v2raystore_getReportSettingsMenuText(){
-    $dailyState = v2raystore_reportIsEnabled('storeReportDailyState', 'off') ? 'روشن ✅' : 'خاموش ❌';
+    $dailyState = v2raystore_reportIsEnabled('storeReportDailyState', 'on') ? 'روشن ✅' : 'خاموش ❌';
     $forumState = v2raystore_reportForumEnabled() ? 'فعال ✅' : 'غیرفعال ❌';
     $botDbState = v2raystore_backupBotDbEnabled() ? 'روشن ✅' : 'خاموش ❌';
     $time = v2raystore_reportTime();
@@ -19753,12 +19767,9 @@ function v2raystore_getReportSettingsMenuKeys(){
         ['text'=>'📌 تنظیم گروه/کانال گزارش', 'callback_data'=>'setReportGroupChat', 'style'=>'primary'],
         ['text'=>(v2raystore_reportForumEnabled() ? 'خاموش کردن تاپیک‌ها ❌' : 'فعال‌سازی تاپیک‌ها ✅'), 'callback_data'=>'toggleReportForumTopics', 'style'=> v2raystore_reportForumEnabled() ? 'danger' : 'success']
     ];
+    $rows[] = [[ 'text'=>'🧵 ساخت/ترمیم تاپیک‌های انتخاب‌شده', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary' ]];
     $rows[] = [
-        ['text'=>'🧵 ساخت/ترمیم تاپیک‌ها', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary'],
-        ['text'=>'🗑 حذف همه تاپیک‌ها', 'callback_data'=>'deleteAllReportForumTopics', 'style'=>'danger']
-    ];
-    $rows[] = [
-        ['text'=>(v2raystore_reportIsEnabled('storeReportDailyState', 'off') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success'],
+        ['text'=>(v2raystore_reportIsEnabled('storeReportDailyState', 'on') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success'],
         ['text'=>'🕘 ساعت آمار', 'callback_data'=>'setDailyChannelStatsTime', 'style'=>'primary']
     ];
     $rows[] = [
@@ -19779,26 +19790,26 @@ function v2raystore_getReportSettingsMenuKeys(){
         ['text'=>'📦 اجرای بکاپ الان', 'callback_data'=>'runReportDbBackupsNow', 'style'=>'success']
     ];
 
-    $rows[] = [[ 'text'=>'🔔 نوع اعلان‌هایی که به گزارش بروند', 'callback_data'=>'v2raystore', 'style'=>'primary' ]];
-    foreach(v2raystore_reportEventItems() as $key => $title){
-        $state = v2raystore_reportIsEnabled(v2raystore_reportEventKey($key), 'on') ? '✅' : '❌';
-        $rows[] = [[ 'text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportEvent_' . $key, 'style'=>'primary' ]];
-    }
-    $rows[] = [[ 'text'=>'🧩 جزئیات داخل پیام‌های اعلان', 'callback_data'=>'v2raystore', 'style'=>'primary' ]];
-    foreach(v2raystore_reportDetailItems() as $key => $title){
-        $state = v2raystore_reportDetailEnabled($key, 'on') ? '✅' : '❌';
-        $rows[] = [[ 'text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportDetail_' . $key, 'style'=>'primary' ]];
-    }
-    $rows[] = [[ 'text'=>'📊 آیتم‌های داخل آمار روزانه/دستی', 'callback_data'=>'v2raystore', 'style'=>'primary' ]];
-    $pair = [];
-    foreach(v2raystore_reportStatItems() as $key => $title){
-        $state = v2raystore_reportIsEnabled(v2raystore_reportStatKey($key), 'on') ? '✅' : '❌';
-        $pair[] = ['text'=>$state . ' ' . $title, 'callback_data'=>'toggleReportStat_' . $key, 'style'=>'primary'];
-        if(count($pair) == 2){ $rows[] = $pair; $pair = []; }
-    }
-    if(count($pair) > 0) $rows[] = $pair;
+    $rows[] = [[ 'text'=>'🧵 انتخاب و مدیریت تاپیک‌ها', 'callback_data'=>'reportTopicSelectionMenu', 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'🔔 انتخاب اعلان‌ها', 'callback_data'=>'reportEventSelectionMenu', 'style'=>'primary' ], [ 'text'=>'🧩 جزئیات اعلان‌ها', 'callback_data'=>'reportDetailSelectionMenu', 'style'=>'primary' ]];
+    $rows[] = [[ 'text'=>'📊 انتخاب آیتم‌های آمار', 'callback_data'=>'reportStatSelectionMenu', 'style'=>'primary' ]];
     $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'adminReportsMenu', 'style'=>'primary' ]];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_getReportSelectionMenuKeys($type){
+    $rows = [];
+    if($type === 'topic'){
+        foreach(v2raystore_reportTopicItems() as $key=>$info) $rows[] = [['text'=>(v2raystore_reportTopicEnabled($key)?'✅ ':'❌ ') . $info['title'], 'callback_data'=>'toggleReportTopic_'.$key]];
+    }elseif($type === 'event'){
+        foreach(v2raystore_reportEventItems() as $key=>$title) $rows[] = [['text'=>(v2raystore_reportIsEnabled(v2raystore_reportEventKey($key),'on')?'✅ ':'❌ ') . $title, 'callback_data'=>'toggleReportEvent_'.$key]];
+    }elseif($type === 'detail'){
+        foreach(v2raystore_reportDetailItems() as $key=>$title) $rows[] = [['text'=>(v2raystore_reportDetailEnabled($key,'on')?'✅ ':'❌ ') . $title, 'callback_data'=>'toggleReportDetail_'.$key]];
+    }else{
+        foreach(v2raystore_reportStatItems() as $key=>$title) $rows[] = [['text'=>(v2raystore_reportIsEnabled(v2raystore_reportStatKey($key),'on')?'✅ ':'❌ ') . $title, 'callback_data'=>'toggleReportStat_'.$key]];
+    }
+    $rows[] = [['text'=>'⬅️ بازگشت به تنظیمات گزارش','callback_data'=>'reportChannelSettingsMenu']];
+    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
 function v2raystore_reportPrivateKeyboard($userId, $extraRows = []){
