@@ -2455,8 +2455,20 @@ function v2raystore_prepareRenewPlanInboundSync($serverId, $plan, $order, $serve
         return ['ok'=>false, 'applicable'=>true, 'message'=>'شناسه Client برای Sync Inbound پیدا نشد.'];
     }
 
-    $clientResp = v2raystore_sanaeiRequestJson($serverInfo, '/panel/api/clients/get/' . rawurlencode($email), 'GET');
+    $clientEndpoint = '/panel/api/clients/get/' . rawurlencode($email);
+    $clientResp = v2raystore_sanaeiRequestJson($serverInfo, $clientEndpoint, 'GET');
+    // بعضی نسخه‌های Sanaei/3x-ui همین endpoint را فقط با POST پاسخ می‌دهند.
     if(!is_array($clientResp) || (isset($clientResp['success']) && empty($clientResp['success']))){
+        $postResp = v2raystore_sanaeiRequestJson($serverInfo, $clientEndpoint, 'POST');
+        if(is_array($postResp) && (!isset($postResp['success']) || !empty($postResp['success']))) $clientResp = $postResp;
+    }
+    $clientReadFailed = !is_array($clientResp) || (isset($clientResp['success']) && empty($clientResp['success']));
+    // در حالت تک‌Inbound، اگر API خواندن Client در نسخهٔ پنل پاسخ نداد، تمدید
+    // نباید بی‌دلیل متوقف شود؛ Inbound ثبت‌شدهٔ سفارش قبلی fallback امن است.
+    if($clientReadFailed && count($desiredIds) === 1 && $oldInbound > 0){
+        $currentIds = [$oldInbound];
+        $clientResp = ['success'=>true, 'obj'=>['inboundIds'=>$currentIds]];
+    }elseif($clientReadFailed){
         return ['ok'=>false, 'applicable'=>true, 'message'=>'خواندن Inboundهای فعلی Client از پنل ناموفق بود.'];
     }
     $obj = $clientResp['obj'] ?? $clientResp;
