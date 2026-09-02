@@ -7812,6 +7812,44 @@ function v2raystore_getReceiptVisualHash($fileId = ''){
     return (string)($fp['visual'] ?? '');
 }
 
+/* تنظیمات بررسی فیش تکراری. خاموش‌کردن فقط تشخیص/ثبت اثرانگشت را متوقف
+   می‌کند و هیچ اثری روی ثبت سفارش یا ارسال رسید برای ادمین ندارد. */
+function v2raystore_receiptCheckSettings(){
+    global $botState;
+    $enabled = (($botState['receiptDuplicateCheckState'] ?? 'on') !== 'off');
+    $days = intval($botState['receiptDuplicateRetentionDays'] ?? 90);
+    if($days < 1) $days = 90;
+    if($days > 3650) $days = 3650;
+    return ['enabled'=>$enabled, 'days'=>$days];
+}
+
+function v2raystore_receiptCheckMenuText(){
+    $s = v2raystore_receiptCheckSettings();
+    return "🧾 <b>بررسی فیش‌های تکراری</b>\n\n" .
+        "وضعیت بررسی: <b>" . ($s['enabled'] ? '🟢 روشن' : '🔴 خاموش') . "</b>\n" .
+        "مدت نگهداری سوابق: <b>" . intval($s['days']) . " روز</b>\n\n" .
+        "در حالت خاموش، رسید و سفارش بدون اختلال ثبت می‌شوند و فقط هشدار فیش تکراری ارسال نمی‌شود.\n" .
+        "سوابق هر رسید، دقیقاً پس از سپری‌شدن مدت تعیین‌شده از تاریخ همان رسید حذف می‌شود.";
+}
+
+function v2raystore_receiptCheckMenuKeys(){
+    $s = v2raystore_receiptCheckSettings();
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>($s['enabled'] ? '🟢 بررسی روشن' : '🔴 بررسی خاموش'), 'callback_data'=>'toggleReceiptDuplicateCheck']],
+        [['text'=>'📅 تغییر مدت نگهداری (' . intval($s['days']) . ' روز)', 'callback_data'=>'setReceiptRetentionDays']],
+        [['text'=>'⬅️ بازگشت به امکانات سرویس','callback_data'=>'botSettingsService']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
+function v2raystore_cleanupReceiptFingerprints($now = null){
+    global $connection;
+    $now = ($now === null) ? time() : intval($now);
+    if(($now % 300) >= 2 || !isset($connection) || !$connection) return;
+    $settings = v2raystore_receiptCheckSettings();
+    $days = max(1, min(3650, intval($settings['days'] ?? 90)));
+    @($connection->query("DELETE FROM `receipt_fingerprints` WHERE `created_at` < " . intval($now - ($days * 86400)) . " LIMIT 1000"));
+}
+
 function v2raystore_ensureReceiptFingerprintsTable(){
     global $connection;
     static $ready = null;
@@ -7917,8 +7955,7 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
         $stmt->close();
     }
 
-    // نگهداری فقط ۹۰ روز از شناسه‌ها؛ عکس‌ها اصلاً روی سرور ذخیره نمی‌شوند.
-    if(($now % 300) < 2) @$connection->query("DELETE FROM `receipt_fingerprints` WHERE `created_at` < " . intval($now - (90 * 86400)) . " LIMIT 1000");
+    v2raystore_cleanupReceiptFingerprints($now);
 
     if(!$previous && !empty($matches)) $previous = reset($matches);
     if(!$previous) return ['duplicate'=>false];
@@ -12286,6 +12323,7 @@ function getBotServiceSettingKeys(){
         [['text'=>'⚙️ تنظیم هزینه و محدودیت تغییر لوکیشن','callback_data'=>'switchLocationSettings']],
         [['text'=>v2raystore_adminToggleLabel($s,'changeProtocolState'),'callback_data'=>'changeBotchangeProtocolState'], ['text'=>'تغییر پروتکل','callback_data'=>'v2raystore']],
         [['text'=>$cooldownLabel,'callback_data'=>'orderCooldownSettings'], ['text'=>'فاصله ثبت سفارش جدید','callback_data'=>'v2raystore']],
+        [['text'=>(function_exists('v2raystore_receiptCheckSettings') && v2raystore_receiptCheckSettings()['enabled'] ? '🟢 روشن' : '🔴 خاموش'),'callback_data'=>'receiptDuplicateSettings'], ['text'=>'بررسی فیش تکراری','callback_data'=>'v2raystore']],
         [['text'=>'⬅️ بازگشت','callback_data'=>'botSettings']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
@@ -21253,7 +21291,9 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
         $photoInfo = v2raystore_getBestPhotoInfo();
         $fileUniqueId = trim((string)($photoInfo['file_unique_id'] ?? ''));
     }
-    if(($contentHash === '' || $visualHash === '') && function_exists('v2raystore_getReceiptFingerprints')){
+    $receiptSettings = function_exists('v2raystore_receiptCheckSettings') ? v2raystore_receiptCheckSettings() : ['enabled'=>true,'days'=>90];
+    if(function_exists('v2raystore_cleanupReceiptFingerprints')) v2raystore_cleanupReceiptFingerprints();
+    if(!empty($receiptSettings['enabled']) && ($contentHash === '' || $visualHash === '') && function_exists('v2raystore_getReceiptFingerprints')){
         $fingerprints = function_exists('v2raystore_getReceiptFingerprints') ? v2raystore_getReceiptFingerprints($fileId) : [];
         if($contentHash === '') $contentHash = strtolower(trim((string)($fingerprints['sha256'] ?? '')));
         if($visualHash === '') $visualHash = strtolower(trim((string)($fingerprints['visual'] ?? '')));
@@ -21284,8 +21324,10 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
     $adminSend = v2raystore_sendAdminPaymentPhoto($hashId, $fileId, $msg, $keyboard, 'HTML', $uid);
 
     // تشخیص فقط برای هشدار است و هیچ‌وقت نتیجهٔ ثبت رسید/سفارش را تغییر نمی‌دهد.
-    $duplicate = v2raystore_registerReceiptFingerprint($hashId, $uid, $fileUniqueId, $contentHash, $visualHash);
-    if(!empty($duplicate['duplicate'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? []);
+    if(!empty($receiptSettings['enabled'])){
+        $duplicate = v2raystore_registerReceiptFingerprint($hashId, $uid, $fileUniqueId, $contentHash, $visualHash);
+        if(!empty($duplicate['duplicate'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? []);
+    }
 
     $type = (string)($pay['type'] ?? '');
     if($type === 'INCREASE_WALLET') $userMessage = $mainValues['order_increase_sent'] ?? '✅ رسید شارژ کیف پول شما ثبت شد و برای ادمین ارسال شد.';

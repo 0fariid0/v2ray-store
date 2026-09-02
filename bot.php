@@ -1946,6 +1946,34 @@ if(($userInfo['step'] ?? '') === 'setOrderCooldownMinutes' && ($text ?? '') !== 
     sendMessage(v2raystore_orderCooldownMenuText(), v2raystore_orderCooldownMenuKeys(), 'HTML');
     exit();
 }
+if(($data ?? '') === 'receiptDuplicateSettings' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    editText($message_id, v2raystore_receiptCheckMenuText(), v2raystore_receiptCheckMenuKeys(), 'HTML');
+    exit();
+}
+if(($data ?? '') === 'toggleReceiptDuplicateCheck' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $s = v2raystore_receiptCheckSettings();
+    setSettings('receiptDuplicateCheckState', $s['enabled'] ? 'off' : 'on');
+    editText($message_id, v2raystore_receiptCheckMenuText(), v2raystore_receiptCheckMenuKeys(), 'HTML');
+    exit();
+}
+if(($data ?? '') === 'setReceiptRetentionDays' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    sendMessage('📅 تعداد روز نگهداری سوابق فیش را ارسال کنید.\n\nمثال: <code>90</code>\nعدد مجاز: 1 تا 3650 روز', $cancelKey, 'HTML');
+    setUser('setReceiptRetentionDays');
+    exit();
+}
+if(($userInfo['step'] ?? '') === 'setReceiptRetentionDays' && ($text ?? '') !== ($buttonValues['cancel'] ?? '') && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $value = trim((string)$text);
+    $value = strtr($value, ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9']);
+    if(!ctype_digit($value) || intval($value) < 1 || intval($value) > 3650){
+        sendMessage('❌ فقط عدد صحیح بین 1 تا 3650 روز وارد کنید.', $cancelKey, 'HTML');
+        exit();
+    }
+    setSettings('receiptDuplicateRetentionDays', intval($value));
+    setUser();
+    sendMessage('✅ مدت نگهداری سوابق فیش روی <b>' . intval($value) . ' روز</b> تنظیم شد.', $removeKeyboard, 'HTML');
+    sendMessage(v2raystore_receiptCheckMenuText(), v2raystore_receiptCheckMenuKeys(), 'HTML');
+    exit();
+}
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $changedBotKey = '';
     if($data!="botSettings"){
