@@ -81,6 +81,35 @@ if(($data ?? '') === 'rewardGiftNotice'){
     exit();
 }
 
+// مشاهدهٔ سفارش قبلی از هشدار فیش تکراری. به‌جای tg://openmessage که در بعضی
+// کلاینت‌های تلگرام کار نمی‌کند، پیام اصلی سفارش را در همین گفت‌وگو کپی می‌کند.
+if(preg_match('/^duplicateReceiptOrder(.+)$/', (string)($data ?? ''), $duplicateOrderMatch) && ($from_id == $admin || $v2raystoreIsAdminUser)){
+    $duplicateHash = trim((string)$duplicateOrderMatch[1]);
+    $targets = function_exists('v2raystore_getAdminPayMessages') ? v2raystore_getAdminPayMessages($duplicateHash) : [];
+    $targetChat = 0; $targetMessage = 0;
+    foreach($targets as $target){
+        if(intval($target[0] ?? 0) === intval($chat_id)){
+            $targetChat = intval($target[0]); $targetMessage = intval($target[1] ?? 0); break;
+        }
+    }
+    if($targetMessage <= 0 && !empty($targets)){
+        $targetChat = intval($targets[0][0] ?? 0); $targetMessage = intval($targets[0][1] ?? 0);
+    }
+    $copied = false;
+    if($targetChat != 0 && $targetMessage > 0){
+        $copy = @bot('copyMessage', ['chat_id'=>intval($chat_id), 'from_chat_id'=>$targetChat, 'message_id'=>$targetMessage]);
+        $copied = is_object($copy) && !empty($copy->ok);
+    }
+    if($copied) alert('پیام سفارش قبلی در همین گفت‌وگو ارسال شد.');
+    else{
+        $pay = function_exists('v2raystore_getPayByHash') ? v2raystore_getPayByHash($duplicateHash) : null;
+        $owner = $pay ? v2raystore_duplicateReceiptOwnerText(intval($pay['user_id'] ?? 0)) : 'نامشخص';
+        sendMessage("🧾 <b>سفارش قبلی</b>\n🔖 کد پرداخت: <code>" . htmlspecialchars($duplicateHash, ENT_QUOTES, 'UTF-8') . "</code>\n👤 صاحب رسید: " . $owner, null, 'HTML');
+        alert('پیام اصلی پیدا نشد؛ مشخصات سفارش ارسال شد.');
+    }
+    exit();
+}
+
 // لغو سفارش تأییدشده و رد رسید، هر دو قبل از اجرای نهایی نیاز به تأیید دوم دارند.
 if(preg_match('/^(?:autoCancelOrder|confirmCancelOrder)(.+)$/', (string)($data ?? ''), $cancelAskMatch) && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
     $hashId = trim($cancelAskMatch[1]);

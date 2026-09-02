@@ -7932,6 +7932,18 @@ function v2raystore_adminMessageLink($chatId, $messageId){
     return 'tg://openmessage?user_id=' . $chatId . '&message_id=' . $messageId;
 }
 
+function v2raystore_duplicateReceiptOwnerText($userId){
+    $userId = intval($userId);
+    $row = $userId > 0 ? v2raystore_getUserRowFresh($userId) : null;
+    $name = $row ? trim((string)($row['name'] ?? '')) : '';
+    $username = $row ? trim((string)($row['username'] ?? '')) : '';
+    $username = ltrim($username, '@');
+    if($name !== '' && $username !== '') return v2raystore_h($name) . ' (@' . v2raystore_h($username) . ')';
+    if($name !== '') return v2raystore_h($name);
+    if($username !== '') return '@' . v2raystore_h($username);
+    return 'نام ثبت نشده';
+}
+
 function v2raystore_warnDuplicateReceipt($duplicate, $messages = []){
     if(empty($duplicate['duplicate']) || !is_array($messages)) return;
     $oldHash = trim((string)($duplicate['pay_hash'] ?? ''));
@@ -7946,20 +7958,10 @@ function v2raystore_warnDuplicateReceipt($duplicate, $messages = []){
         if($hash === '') continue;
         $uid = intval($item['user_id'] ?? 0);
         $text .= "\n• 🧾 کد پرداخت: <code>" . v2raystore_h($hash) . "</code>";
-        if($uid > 0) $text .= "\n  👤 کاربر: <code>" . $uid . "</code>";
-        $target = v2raystore_getAdminPayMessages($hash);
-        $link = '';
-        foreach($messages as $current){
-            $currentChat = intval($current[0] ?? 0);
-            foreach($target as $oldMessage){
-                if(intval($oldMessage[0] ?? 0) === $currentChat){
-                    $link = v2raystore_adminMessageLink($currentChat, intval($oldMessage[1] ?? 0));
-                    break 2;
-                }
-            }
-        }
-        if($link === '' && !empty($target)) $link = v2raystore_adminMessageLink(intval($target[0][0] ?? 0), intval($target[0][1] ?? 0));
-        if($link !== '') $keyboard[] = [['text'=>'🔎 مشاهده سفارش ' . v2raystore_shortButtonText($hash, 18), 'url'=>$link]];
+        $text .= "\n  👤 صاحب رسید: " . v2raystore_duplicateReceiptOwnerText($uid);
+        // tg://openmessage در بسیاری از کلاینت‌ها توسط دکمهٔ URL مسدود می‌شود؛
+        // دکمهٔ callback سفارش قبلی را با copyMessage در همین گفت‌وگو بازمی‌فرستد.
+        $keyboard[] = [['text'=>'🔎 مشاهده سفارش ' . v2raystore_shortButtonText($hash, 18), 'callback_data'=>'duplicateReceiptOrder' . $hash]];
         $shown++;
         if($shown >= 30) break;
     }
