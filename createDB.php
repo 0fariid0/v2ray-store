@@ -165,10 +165,12 @@ $connection->query("CREATE TABLE IF NOT EXISTS `receipt_fingerprints` (
     `user_id` bigint(20) NOT NULL DEFAULT 0,
     `file_unique_id` varchar(191) NOT NULL,
     `content_hash` char(64) DEFAULT NULL,
+    `visual_hash` char(64) DEFAULT NULL,
     `created_at` int(11) NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     KEY `idx_receipt_unique_id` (`file_unique_id`),
     KEY `idx_receipt_content_hash` (`content_hash`),
+    KEY `idx_receipt_visual_hash` (`visual_hash`),
     KEY `idx_receipt_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
 

@@ -360,11 +360,13 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
     // هش محتوای عکس یک درخواست کوتاه به Telegram دارد؛ پاسخ وبهوک را قبل از
     // آن می‌بندیم تا این بررسی هرگز باعث retry یا اختلال در ثبت سفارش نشود.
     if(function_exists('farid_finishWebhookResponse')) farid_finishWebhookResponse();
-    $storeReceiptContentHash = function_exists('v2raystore_getReceiptContentHash')
-        ? v2raystore_getReceiptContentHash($storeReceiptFileId) : '';
+    $storeReceiptFingerprints = function_exists('v2raystore_getReceiptFingerprints')
+        ? v2raystore_getReceiptFingerprints($storeReceiptFileId) : [];
+    $storeReceiptContentHash = strtolower(trim((string)($storeReceiptFingerprints['sha256'] ?? '')));
+    $storeReceiptVisualHash = strtolower(trim((string)($storeReceiptFingerprints['visual'] ?? '')));
 
     if(function_exists('v2raystore_processCartToCartReceiptUpload')){
-        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId, $storeReceiptContentHash);
+        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId, $storeReceiptContentHash, $storeReceiptVisualHash);
         if(!empty($storeReceiptResult['ok'])){
             setUser();
             setUser('', 'temp');
