@@ -4908,17 +4908,20 @@ function v2raystore_botFeatureEnabled($key, $default = 'on'){
 function v2raystore_orderCooldownSettings(){
     global $botState;
     $enabled = (($botState['orderCooldownState'] ?? 'on') !== 'off');
+    // برای نماینده‌ها مستقل است و پیش‌فرض خاموش می‌ماند تا رفتار قبلی آن‌ها تغییر نکند.
+    $agentEnabled = (($botState['orderCooldownAgentState'] ?? 'off') !== 'off');
     $minutes = intval($botState['orderCooldownMinutes'] ?? 5);
     if($minutes < 1) $minutes = 5;
     if($minutes > 1440) $minutes = 1440;
-    return ['enabled'=>$enabled, 'minutes'=>$minutes];
+    return ['enabled'=>$enabled, 'agent_enabled'=>$agentEnabled, 'minutes'=>$minutes];
 }
 
-function v2raystore_orderCooldownCheck($userId, $isAdmin = false){
+function v2raystore_orderCooldownCheck($userId, $isAdmin = false, $isAgent = false){
     global $connection;
     $userId = intval($userId);
     $settings = v2raystore_orderCooldownSettings();
     if($userId <= 0 || $isAdmin || empty($settings['enabled'])) return ['ok'=>true, 'remaining'=>0];
+    if($isAgent && empty($settings['agent_enabled'])) return ['ok'=>true, 'remaining'=>0];
 
     $cutoff = time() - (intval($settings['minutes']) * 60);
     // sent_date فقط وقتی مقدار می‌گیرد که کاربر تصویر رسید را ثبت کرده باشد.
@@ -4945,11 +4948,13 @@ function v2raystore_orderCooldownFormatRemaining($seconds){
 function v2raystore_orderCooldownMenuText(){
     $s = v2raystore_orderCooldownSettings();
     $state = $s['enabled'] ? '🟢 روشن' : '🔴 خاموش';
+    $agentState = $s['agent_enabled'] ? '🟢 روشن' : '🔴 خاموش';
     return "⏱ <b>فاصله ثبت سفارش جدید</b>\n\n" .
         "وضعیت: <b>{$state}</b>\n" .
         "فاصله فعلی: <b>{$s['minutes']} دقیقه</b>\n\n" .
-        "بعد از اینکه کاربر رسید کارت‌به‌کارت را ارسال کرد، تا پایان این فاصله نمی‌تواند سفارش خرید جدید دیگری ثبت کند.\n" .
-        "پرداخت‌هایی که فقط ساخته شده‌اند و هنوز رسید ندارند، در این محدودیت حساب نمی‌شوند.";
+        "بعد از اینکه کاربر یا نماینده رسید کارت‌به‌کارت را ارسال کرد، تا پایان این فاصله نمی‌تواند سفارش خرید جدید دیگری ثبت کند.\n" .
+        "پرداخت‌هایی که فقط ساخته شده‌اند و هنوز رسید ندارند، در این محدودیت حساب نمی‌شوند.\n\n" .
+        "فاصله برای نماینده‌ها: <b>{$agentState}</b>";
 }
 
 function v2raystore_orderCooldownMenuKeys(){
@@ -4957,6 +4962,7 @@ function v2raystore_orderCooldownMenuKeys(){
     return json_encode(['inline_keyboard'=>[
         [['text'=>($s['enabled'] ? '🟢 روشن' : '🔴 خاموش'), 'callback_data'=>'toggleOrderCooldown', 'style'=>($s['enabled'] ? 'success' : 'warning')]],
         [['text'=>'⏱ تغییر فاصله (' . $s['minutes'] . ' دقیقه)', 'callback_data'=>'setOrderCooldownMinutes', 'style'=>'primary']],
+        [['text'=>($s['agent_enabled'] ? '🟢 نماینده‌ها: روشن' : '🔴 نماینده‌ها: خاموش'), 'callback_data'=>'toggleOrderCooldownAgents', 'style'=>($s['agent_enabled'] ? 'success' : 'warning')]],
         [['text'=>'⬅️ بازگشت به امکانات سرویس', 'callback_data'=>'botSettingsService', 'style'=>'primary']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
@@ -7241,9 +7247,9 @@ function v2raystore_salesStateBlockReason($kind = 'new', $agentContext = null){
     // خاموش بودن دکمه خرید فقط برای خرید کاربران عادی اعمال شود.
     // نماینده‌ها دکمه‌های خرید جداگانه خودشان را دارند.
     if(!$agentContext && $kind === 'new' && !v2raystore_userButtonVisible('buy_subscriptions', $state)) return 'buy_button_off';
-    if(!$agentContext && $kind === 'new' && function_exists('v2raystore_orderCooldownCheck')){
+    if($kind === 'new' && function_exists('v2raystore_orderCooldownCheck')){
         $uid = intval($GLOBALS['from_id'] ?? 0);
-        $gate = v2raystore_orderCooldownCheck($uid, false);
+        $gate = v2raystore_orderCooldownCheck($uid, false, (bool)$agentContext);
         if(empty($gate['ok'])) return 'order_cooldown:' . intval($gate['remaining'] ?? 0);
     }
     return '';
@@ -11992,7 +11998,7 @@ function getBotServiceSettingKeys(){
     $s = v2raystore_adminBotSettingsState();
     $renewSettings = function_exists('v2raystore_getRenewSettings') ? v2raystore_getRenewSettings() : ['mode'=>'reset','max_days'=>45];
     $renewMode = ($renewSettings['mode'] ?? 'reset') === 'add' ? 'افزایشی / سقف ۴۵ روز' : 'ریست کامل';
-    $cooldown = function_exists('v2raystore_orderCooldownSettings') ? v2raystore_orderCooldownSettings() : ['enabled'=>true, 'minutes'=>5];
+    $cooldown = function_exists('v2raystore_orderCooldownSettings') ? v2raystore_orderCooldownSettings() : ['enabled'=>true, 'agent_enabled'=>false, 'minutes'=>5];
     $cooldownLabel = ($cooldown['enabled'] ? '🟢 روشن' : '🔴 خاموش') . ' / ' . intval($cooldown['minutes']) . ' دقیقه';
     return json_encode(['inline_keyboard'=>[
         [['text'=>v2raystore_adminToggleLabel($s,'renewAccountState'),'callback_data'=>'changeBotrenewAccountState'], ['text'=>'تمدید سرویس','callback_data'=>'v2raystore']],

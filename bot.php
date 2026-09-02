@@ -1883,6 +1883,12 @@ if(($data ?? '') === 'toggleOrderCooldown' && ($from_id == $admin || (!empty($us
     editText($message_id, v2raystore_orderCooldownMenuText(), v2raystore_orderCooldownMenuKeys(), 'HTML');
     exit();
 }
+if(($data ?? '') === 'toggleOrderCooldownAgents' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
+    $s = v2raystore_orderCooldownSettings();
+    setSettings('orderCooldownAgentState', $s['agent_enabled'] ? 'off' : 'on');
+    editText($message_id, v2raystore_orderCooldownMenuText(), v2raystore_orderCooldownMenuKeys(), 'HTML');
+    exit();
+}
 if(($data ?? '') === 'setOrderCooldownMinutes' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
     sendMessage('⏱ تعداد دقیقه فاصله ثبت سفارش جدید را ارسال کنید.\n\nمثال: <code>5</code>\nعدد مجاز: 1 تا 1440 دقیقه', $cancelKey, 'HTML');
     setUser('setOrderCooldownMinutes');
@@ -3443,8 +3449,9 @@ if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy
     exit();
 }
 if(($data == "agentOneBuy" || $data=='buySubscription' || $data == "agentMuchBuy") && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true))){
-    if(function_exists('v2raystore_orderCooldownCheck') && $from_id != $admin && empty($userInfo['isAdmin']) && !(function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo))){
-        $cooldownGate = v2raystore_orderCooldownCheck($from_id, false);
+    if(function_exists('v2raystore_orderCooldownCheck') && $from_id != $admin && empty($userInfo['isAdmin'])){
+        $cooldownAgent = function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo);
+        $cooldownGate = v2raystore_orderCooldownCheck($from_id, false, $cooldownAgent);
         if(empty($cooldownGate['ok'])){
             alert('⏳ برای ثبت سفارش جدید باید ' . v2raystore_orderCooldownFormatRemaining($cooldownGate['remaining'] ?? 0) . ' صبر کنید؛ رسید سفارش قبلی ثبت شده است.', true);
             exit();
@@ -6050,8 +6057,9 @@ if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|active_config
     exit();
 }
 if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) && ($botState['sellState']=="on" || ($from_id == $admin || $userInfo['isAdmin'] == true)) ) {
-    if(function_exists('v2raystore_orderCooldownCheck') && $from_id != $admin && empty($userInfo['isAdmin']) && !(function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo))){
-        $cooldownGate = v2raystore_orderCooldownCheck($from_id, false);
+    if(function_exists('v2raystore_orderCooldownCheck') && $from_id != $admin && empty($userInfo['isAdmin'])){
+        $cooldownAgent = function_exists('v2raystore_isAgentUser') && v2raystore_isAgentUser($userInfo);
+        $cooldownGate = v2raystore_orderCooldownCheck($from_id, false, $cooldownAgent);
         if(empty($cooldownGate['ok'])){
             alert('⏳ برای ثبت سفارش جدید باید ' . v2raystore_orderCooldownFormatRemaining($cooldownGate['remaining'] ?? 0) . ' صبر کنید؛ رسید سفارش قبلی ثبت شده است.', true);
             exit();
