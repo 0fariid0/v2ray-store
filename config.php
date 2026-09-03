@@ -19775,7 +19775,10 @@ function v2raystore_getReportSettingsMenuKeys(){
         ['text'=>'📌 تنظیم گروه/کانال گزارش', 'callback_data'=>'setReportGroupChat', 'style'=>'primary'],
         ['text'=>(v2raystore_reportForumEnabled() ? 'خاموش کردن تاپیک‌ها ❌' : 'فعال‌سازی تاپیک‌ها ✅'), 'callback_data'=>'toggleReportForumTopics', 'style'=> v2raystore_reportForumEnabled() ? 'danger' : 'success']
     ];
-    $rows[] = [[ 'text'=>'🧵 ساخت/ترمیم تاپیک‌های انتخاب‌شده', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary' ]];
+    $rows[] = [
+        [ 'text'=>'🧵 ساخت/ترمیم انتخاب‌شده', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary' ],
+        [ 'text'=>'✍️ ثبت دستی تاپیک', 'callback_data'=>'setReportTopicManual', 'style'=>'primary' ]
+    ];
     $rows[] = [
         ['text'=>(v2raystore_reportIsEnabled('storeReportDailyState', 'on') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success']
     ];

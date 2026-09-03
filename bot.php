@@ -566,6 +566,43 @@ if(preg_match('/^report(Topic|Event|Detail|Stat)SelectionMenu$/', $data ?? '', $
     editText($message_id, '✅ موردهای فعال را انتخاب کنید؛ موارد غیرفعال حذف نمی‌شوند و تاپیک‌های موجود هم باقی می‌مانند.', v2raystore_getReportSelectionMenuKeys($type), 'HTML');
     exit();
 }
+if(($data ?? '') === 'setReportTopicManual' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    sendMessage("✍️ لینک تاپیک موجود را ارسال کنید.\n\nمثال:\n<code>https://t.me/c/3109006734/230</code>\n\nعدد آخر لینک، شناسهٔ تاپیک است.", $cancelKey, 'HTML');
+    setUser('setReportTopicManual');
+    exit();
+}
+if(($userInfo['step'] ?? '') === 'setReportTopicManual' && ($text ?? '') !== ($buttonValues['cancel'] ?? '') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $rawLink = trim((string)$text);
+    $rawLink = strtr($rawLink, ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9']);
+    $chatId = 0; $threadId = 0;
+    if(preg_match('~(?:https?://)?t\.me/c/(\d+)/(\d+)~i', $rawLink, $mm)){
+        $chatId = -100 . $mm[1]; $threadId = intval($mm[2]);
+    }elseif(preg_match('/^(-?\d+)\s*[,\s]+(\d+)$/', $rawLink, $mm)){
+        $chatId = intval($mm[1]); $threadId = intval($mm[2]);
+    }
+    if($chatId == 0 || $threadId <= 0){
+        sendMessage('❌ لینک معتبر نیست. نمونهٔ درست: <code>https://t.me/c/3109006734/230</code>', $cancelKey, 'HTML');
+        exit();
+    }
+    $rows = [];
+    foreach(v2raystore_reportTopicItems() as $key=>$info) $rows[] = [['text'=>$info['title'], 'callback_data'=>'manualReportTopic|' . $key . '|' . $chatId . '|' . $threadId]];
+    setUser('manualReportTopicChoice|' . $chatId . '|' . $threadId);
+    sendMessage('✅ لینک دریافت شد. این تاپیک را برای کدام دسته ثبت کنم؟', json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), 'HTML');
+    exit();
+}
+if(preg_match('/^manualReportTopic\|([a-z_]+)\|(-?\d+)\|(\d+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $topicKey = $m[1]; $chatId = $m[2]; $threadId = intval($m[3]);
+    if(!array_key_exists($topicKey, v2raystore_reportTopicItems()) || $threadId <= 0){ alert('اطلاعات تاپیک نامعتبر است.', true); exit(); }
+    $topics = v2raystore_reportTopicStore();
+    $topics[$topicKey] = $threadId;
+    setSettings('rewardChannel', $chatId);
+    setSettings('storeReportTopicState_' . $topicKey, 'on');
+    v2raystore_saveReportTopicStore($topics);
+    setUser();
+    alert('تاپیک موجود با موفقیت ثبت شد. تاپیک جدیدی ساخته نشد.');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
 if(preg_match('/^toggleReportTopic_(.+)$/', $data ?? '', $m) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $key = $m[1];
     if(array_key_exists($key, v2raystore_reportTopicItems())){
