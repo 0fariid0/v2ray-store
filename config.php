@@ -19779,6 +19779,7 @@ function v2raystore_getReportSettingsMenuKeys(){
         [ 'text'=>'🧵 ساخت/ترمیم انتخاب‌شده', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary' ],
         [ 'text'=>'✍️ ثبت دستی تاپیک', 'callback_data'=>'setReportTopicManual', 'style'=>'primary' ]
     ];
+    $rows[] = [[ 'text'=>'🧪 تست تاپیک‌های ثبت‌شده', 'callback_data'=>'testReportForumTopics', 'style'=>'primary' ]];
     $rows[] = [
         ['text'=>(v2raystore_reportIsEnabled('storeReportDailyState', 'on') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success']
     ];

@@ -633,6 +633,35 @@ if($data == 'rebuildReportForumTopics' && ($from_id == $admin || $userInfo['isAd
     editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
+if($data == 'testReportForumTopics' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $chat = v2raystore_getIncomeReportChatId();
+    $topics = v2raystore_reportTopicStore();
+    $items = v2raystore_reportTopicItems();
+    $ok = 0; $failed = 0; $details = [];
+    if($chat === null || trim((string)$chat) === ''){
+        alert('مقصد گزارش تنظیم نشده است.', true);
+        exit();
+    }
+    foreach($items as $topicKey => $info){
+        if(!v2raystore_reportTopicEnabled($topicKey)) continue;
+        $threadId = intval($topics[$topicKey] ?? 0);
+        if($threadId <= 0){ $failed++; $details[] = '❌ ' . $info['title'] . ': شناسه ثبت نشده'; continue; }
+        $res = bot('sendMessage', [
+            'chat_id'=>$chat,
+            'message_thread_id'=>$threadId,
+            'text'=>'🧪 تست تاپیک «' . $info['title'] . '»\n✅ این تاپیک در دسترس است و گزارش‌ها می‌توانند در آن ارسال شوند.',
+            'parse_mode'=>'HTML',
+            '_timeout'=>8,
+        ]);
+        if(is_object($res) && !empty($res->ok)){ $ok++; $details[] = '✅ ' . $info['title']; }
+        else { $failed++; $details[] = '❌ ' . $info['title'] . ': شناسه نامعتبر یا دسترسی ناکافی'; }
+    }
+    if($ok === 0 && $failed === 0) $details[] = 'ℹ️ هیچ تاپیک فعالی برای تست انتخاب نشده است.';
+    $summary = "🧪 <b>نتیجه تست تاپیک‌ها</b>\n\n" . implode("\n", $details) . "\n\n✅ موفق: {$ok}\n❌ ناموفق: {$failed}";
+    sendMessage($summary, $removeKeyboard, 'HTML');
+    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    exit();
+}
 if($data == 'reportBackupSettingsMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
     exit();
