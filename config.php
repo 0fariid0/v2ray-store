@@ -18877,7 +18877,7 @@ function v2raystore_reportCleanupLegacyTopics(){
     // گزارش‌های بعدی را تغییر می‌دهد.
 }
 
-function v2raystore_reportEnsureTopic($eventKey){
+function v2raystore_reportEnsureTopic($eventKey, $forceRebuild = false){
     v2raystore_reportCleanupLegacyTopics();
     $chat = v2raystore_getIncomeReportChatId();
     if($chat === null || trim((string)$chat) === '') return 0;
@@ -18891,7 +18891,8 @@ function v2raystore_reportEnsureTopic($eventKey){
     $items = v2raystore_reportTopicItems();
     $title = $items[$topicKey]['title'] ?? ('📌 ' . $topicKey);
     $topics = v2raystore_reportTopicStore();
-    $threadId = intval($topics[$topicKey] ?? 0);
+    $threadId = $forceRebuild ? 0 : intval($topics[$topicKey] ?? 0);
+    if($forceRebuild) unset($topics[$topicKey]);
     if($threadId > 0) return $threadId;
 
     $res = bot('createForumTopic', [

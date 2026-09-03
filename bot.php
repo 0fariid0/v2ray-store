@@ -584,10 +584,12 @@ if($data == 'rebuildReportForumTopics' && ($from_id == $admin || $userInfo['isAd
     if(!v2raystore_reportForumEnabled()) setSettings('storeReportForumState', 'on');
     $made = 0;
     foreach(v2raystore_reportTopicItems() as $topicKey => $info){
-        if(!v2raystore_reportTopicHasEnabledEvents($topicKey)) continue;
+        if(!v2raystore_reportTopicEnabled($topicKey)) continue;
         $events = $info['events'] ?? [];
         $eventKey = count($events) ? $events[0] : 'daily_stats';
-        $thread = v2raystore_reportEnsureTopic($eventKey);
+        // شناسهٔ ذخیره‌شده ممکن است مربوط به تاپیکی باشد که دستی حذف شده؛
+        // در ترمیم، شناسه کنار گذاشته و تاپیک انتخاب‌شده دوباره ساخته می‌شود.
+        $thread = v2raystore_reportEnsureTopic($eventKey, true);
         if($thread > 0) $made++;
     }
     alert($made > 0 ? 'تاپیک‌ها ساخته/ترمیم شدند.' : 'ساخت تاپیک ناموفق بود؛ گروه باید Forum باشد و ربات دسترسی مدیریت تاپیک داشته باشد.', $made <= 0);
