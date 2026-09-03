@@ -587,20 +587,23 @@ if($data == 'rebuildReportForumTopics' && ($from_id == $admin || $userInfo['isAd
         if(!v2raystore_reportTopicEnabled($topicKey)) continue;
         $events = $info['events'] ?? [];
         $eventKey = count($events) ? $events[0] : 'daily_stats';
-        // شناسهٔ ذخیره‌شده ممکن است مربوط به تاپیکی باشد که دستی حذف شده؛
-        // در ترمیم، شناسه کنار گذاشته و تاپیک انتخاب‌شده دوباره ساخته می‌شود.
-        $thread = v2raystore_reportEnsureTopic($eventKey, true);
+        // تاپیک موجود با editForumTopic اعتبارسنجی می‌شود و فقط در صورت
+        // حذف/نامعتبر بودن شناسه، تاپیک جدید ساخته خواهد شد.
+        $thread = v2raystore_reportEnsureTopic($eventKey);
         if($thread > 0) $made++;
     }
     alert($made > 0 ? 'تاپیک‌ها ساخته/ترمیم شدند.' : 'ساخت تاپیک ناموفق بود؛ گروه باید Forum باشد و ربات دسترسی مدیریت تاپیک داشته باشد.', $made <= 0);
     editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
     exit();
 }
+if($data == 'reportBackupSettingsMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    editText($message_id, v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
+    exit();
+}
 if($data == 'toggleReportBackupBotDb' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $new = v2raystore_backupBotDbEnabled() ? 'off' : 'on';
     setSettings('storeBackupBotDbState', $new);
-    if($new === 'off' && !v2raystore_anyPanelDbBackupEnabled()) v2raystore_reportDeleteTopic('database');
-    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
     exit();
 }
 if(($data == 'setReportBackupInterval' || $data == 'setReportBackupTime') && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -626,7 +629,7 @@ if(($userInfo['step'] ?? '') == 'setReportBackupInterval' && $text != $buttonVal
         sendMessage("✅ فاصله بکاپ دیتابیس روی <b>" . v2raystore_h($pretty) . "</b> تنظیم شد.
 
 از این لحظه، بکاپ بعدی بعد از همین فاصله اجرا می‌شود. برای ارسال فوری می‌توانید از گزینه <b>اجرای بکاپ الان</b> استفاده کنید.", $removeKeyboard, 'HTML');
-        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+        sendMessage(v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ مقدار وارد شده درست نیست. مثال: <code>30 دقیقه</code> یا <code>1 ساعت</code>
 حداقل مجاز ۱۰ دقیقه است.", null, 'HTML');
@@ -649,7 +652,7 @@ if(($userInfo['step'] ?? '') == 'setReportBackupItemDelay' && $text != $buttonVa
         setSettings('storeReportBackupItemDelaySeconds', $sec);
         setUser();
         sendMessage("✅ فاصله بین ارسال هر بکاپ روی <b>{$sec} ثانیه</b> تنظیم شد.", $removeKeyboard, 'HTML');
-        sendMessage(v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+        sendMessage(v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
     }else{
         sendMessage("❌ عدد باید بین ۰ تا ۳۰۰ ثانیه باشد.", null, 'HTML');
     }
@@ -658,13 +661,13 @@ if(($userInfo['step'] ?? '') == 'setReportBackupItemDelay' && $text != $buttonVa
 if($data == 'resetReportBackupSchedule' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setSettings('storeReportBackupLastTs', 0);
     alert('زمان‌بندی بکاپ ریست شد. در اولین اجرای کران، اگر بکاپ فعال باشد اجرا می‌شود.');
-    editText($message_id, v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'runReportDbBackupsNow' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     alert('بکاپ در حال اجراست؛ اگر دیتابیس بزرگ باشد کمی زمان می‌برد.');
     $res = v2raystore_runReportDatabaseBackups(true);
-    editText($message_id, ($res['ok'] ? "✅ " : "❌ ") . v2raystore_h($res['message'] ?? 'انجام شد') . "\n\n" . v2raystore_getReportSettingsMenuText(), v2raystore_getReportSettingsMenuKeys(), 'HTML');
+    editText($message_id, ($res['ok'] ? "✅ " : "❌ ") . v2raystore_h($res['message'] ?? 'انجام شد') . "\n\n" . v2raystore_getReportBackupSettingsMenuText(), v2raystore_getReportBackupSettingsMenuKeys(), 'HTML');
     exit();
 }
 if($data == 'reportPanelDbBackupMenu' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -676,7 +679,6 @@ if(preg_match('/^togglePanelDbBackup(\d+)$/', $data ?? '', $mm) && ($from_id == 
     $key = 'storePanelDbBackup_' . $sid;
     $new = v2raystore_panelDbBackupEnabled($sid) ? 'off' : 'on';
     setSettings($key, $new);
-    if($new === 'off' && !v2raystore_backupBotDbEnabled() && !v2raystore_anyPanelDbBackupEnabled()) v2raystore_reportDeleteTopic('database');
     editText($message_id, v2raystore_getReportPanelBackupMenuText(), v2raystore_getReportPanelBackupMenuKeys(), 'HTML');
     exit();
 }

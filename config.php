@@ -18891,9 +18891,15 @@ function v2raystore_reportEnsureTopic($eventKey, $forceRebuild = false){
     $items = v2raystore_reportTopicItems();
     $title = $items[$topicKey]['title'] ?? ('📌 ' . $topicKey);
     $topics = v2raystore_reportTopicStore();
-    $threadId = $forceRebuild ? 0 : intval($topics[$topicKey] ?? 0);
-    if($forceRebuild) unset($topics[$topicKey]);
-    if($threadId > 0) return $threadId;
+    $threadId = intval($topics[$topicKey] ?? 0);
+    if($threadId > 0){
+        // قبل از ساخت مجدد، وجود تاپیک ذخیره‌شده را با یک ویرایش بی‌تغییر
+        // بررسی می‌کنیم؛ در نتیجه تاپیک‌های موجود دوباره ساخته نمی‌شوند.
+        $check = bot('editForumTopic', ['chat_id'=>$chat, 'message_thread_id'=>$threadId, 'name'=>$title]);
+        if(is_object($check) && !empty($check->ok)) return $threadId;
+        unset($topics[$topicKey]);
+        v2raystore_saveReportTopicStore($topics);
+    }
 
     $res = bot('createForumTopic', [
         'chat_id' => $chat,
@@ -19777,25 +19783,40 @@ function v2raystore_getReportSettingsMenuKeys(){
         ['text'=>'📤 ارسال آمار الان', 'callback_data'=>'sendDailyChannelStatsNow', 'style'=>'success']
     ];
 
-    $rows[] = [[ 'text'=>'🗄 تنظیمات بکاپ دیتابیس', 'callback_data'=>'v2raystore', 'style'=>'primary' ]];
-    $rows[] = [
-        ['text'=>(v2raystore_backupBotDbEnabled() ? '✅ بکاپ دیتابیس ربات' : '❌ بکاپ دیتابیس ربات'), 'callback_data'=>'toggleReportBackupBotDb', 'style'=>'primary'],
-        ['text'=>'⏱ فاصله بکاپ', 'callback_data'=>'setReportBackupInterval', 'style'=>'primary']
-    ];
-    $rows[] = [
-        ['text'=>'⏳ فاصله بین ارسال‌ها', 'callback_data'=>'setReportBackupItemDelay', 'style'=>'primary'],
-        ['text'=>'🔄 ریست زمان‌بندی بکاپ', 'callback_data'=>'resetReportBackupSchedule', 'style'=>'primary']
-    ];
-    $rows[] = [
-        ['text'=>'🖥 بکاپ دیتابیس پنل‌ها', 'callback_data'=>'reportPanelDbBackupMenu', 'style'=>'primary'],
-        ['text'=>'📦 اجرای بکاپ الان', 'callback_data'=>'runReportDbBackupsNow', 'style'=>'success']
-    ];
+    $rows[] = [[ 'text'=>'🗄 تنظیمات بکاپ دیتابیس', 'callback_data'=>'reportBackupSettingsMenu', 'style'=>'primary' ]];
 
     $rows[] = [[ 'text'=>'🧵 انتخاب و مدیریت تاپیک‌ها', 'callback_data'=>'reportTopicSelectionMenu', 'style'=>'primary' ]];
     $rows[] = [[ 'text'=>'🔔 انتخاب اعلان‌ها', 'callback_data'=>'reportEventSelectionMenu', 'style'=>'primary' ], [ 'text'=>'🧩 جزئیات اعلان‌ها', 'callback_data'=>'reportDetailSelectionMenu', 'style'=>'primary' ]];
     $rows[] = [[ 'text'=>'📊 انتخاب آیتم‌های آمار', 'callback_data'=>'reportStatSelectionMenu', 'style'=>'primary' ]];
     $rows[] = [[ 'text'=>$buttonValues['back_button'] ?? '⬅️ بازگشت', 'callback_data'=>'adminReportsMenu', 'style'=>'primary' ]];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+}
+
+function v2raystore_getReportBackupSettingsMenuText(){
+    global $botState;
+    $botDbState = v2raystore_backupBotDbEnabled() ? 'روشن ✅' : 'خاموش ❌';
+    $interval = v2raystore_formatMinutesFa(v2raystore_reportBackupIntervalMinutes());
+    $delay = v2raystore_reportBackupItemDelaySeconds();
+    $lastTs = v2raystore_reportBackupLastTimestamp();
+    $nextTs = v2raystore_reportBackupNextTimestamp();
+    $last = $lastTs > 0 ? (function_exists('jdate') ? jdate('Y/m/d H:i', $lastTs) : date('Y/m/d H:i', $lastTs)) : 'ارسال نشده';
+    $next = $nextTs > 0 ? (function_exists('jdate') ? jdate('Y/m/d H:i', $nextTs) : date('Y/m/d H:i', $nextTs)) : 'در اولین اجرای کران';
+    return "🗄 <b>تنظیمات بکاپ دیتابیس</b>\n\n" .
+        "بکاپ دیتابیس ربات: <b>{$botDbState}</b>\n" .
+        "فاصله اجرای بکاپ: <b>" . v2raystore_h($interval) . "</b>\n" .
+        "فاصله بین ارسال‌ها: <b>{$delay} ثانیه</b>\n" .
+        "آخرین بکاپ: <b>" . v2raystore_h($last) . "</b>\n" .
+        "بکاپ بعدی: <b>" . v2raystore_h($next) . "</b>";
+}
+
+function v2raystore_getReportBackupSettingsMenuKeys(){
+    return json_encode(['inline_keyboard'=>[
+        [['text'=>(v2raystore_backupBotDbEnabled() ? '✅ بکاپ دیتابیس ربات' : '❌ بکاپ دیتابیس ربات'), 'callback_data'=>'toggleReportBackupBotDb']],
+        [['text'=>'⏱ فاصله بکاپ', 'callback_data'=>'setReportBackupInterval'], ['text'=>'⏳ فاصله بین ارسال‌ها', 'callback_data'=>'setReportBackupItemDelay']],
+        [['text'=>'🖥 بکاپ دیتابیس پنل‌ها', 'callback_data'=>'reportPanelDbBackupMenu'], ['text'=>'📦 اجرای بکاپ الان', 'callback_data'=>'runReportDbBackupsNow']],
+        [['text'=>'🔄 ریست زمان‌بندی بکاپ', 'callback_data'=>'resetReportBackupSchedule']],
+        [['text'=>'⬅️ بازگشت به تنظیمات گزارش', 'callback_data'=>'reportChannelSettingsMenu']]
+    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
 function v2raystore_getReportSelectionMenuKeys($type){
