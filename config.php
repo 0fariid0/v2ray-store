@@ -19557,7 +19557,6 @@ function v2raystore_reportSetting($key, $default = 'on'){
     global $botState;
     if(array_key_exists($key, $botState)) $value = $botState[$key];
     elseif(strpos((string)$key, 'storeReportDetail_') === 0 || strpos((string)$key, 'storeReportStat_') === 0) $value = 'off';
-    elseif(strpos((string)$key, 'storeReportEvent_') === 0 && $key !== 'storeReportEvent_daily_stats') $value = 'off';
     else $value = $default;
     return ((string)$value === 'on') ? 'on' : 'off';
 }
@@ -19567,10 +19566,7 @@ function v2raystore_reportIsEnabled($key, $default = 'on'){
 }
 
 function v2raystore_reportTime(){
-    global $botState;
-    $time = trim((string)($botState['storeReportDailyTime'] ?? '23:59'));
-    if(!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $time)) $time = '23:59';
-    return $time;
+    return '23:59';
 }
 
 function v2raystore_reportToggleSetting($key, $default = 'on'){
@@ -19647,7 +19643,7 @@ function v2raystore_liveStatsSnapshot($forDaily = false){
         'plans_total' => ['📋 تعداد پلن‌ها', $q("SELECT COUNT(*) AS v FROM `server_plans`"), ''],
         'total_income' => ['🏦 درآمد قطعی کل', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome() : 0, ' تومان'],
         'agent_income' => ['🤝 درآمد فروش نماینده‌ها', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, true) : 0, ' تومان'],
-        'user_income' => ['👤 درآمد کاربران', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, false) : 0, ' تومان'],
+        'user_income' => ['👤 درآمد کاربران', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, false, 0, true) : 0, ' تومان'],
         'today_income' => ['💰 درآمد امروز', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['today'] ?? strtotime('today'))) : 0, ' تومان'],
         'week_income' => ['🗓 درآمد هفته', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['week'] ?? strtotime('-7 days'))) : 0, ' تومان'],
         'month_income' => ['📆 درآمد ماه', function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? strtotime(date('Y-m-01 00:00:00')))) : 0, ' تومان'],
@@ -19681,12 +19677,13 @@ function v2raystore_reportEvent($title, $body, $keyboard = null, $eventKey = nul
 }
 
 function v2raystore_buildDailyChannelStatsText($manual = false){
-    $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time(), '', 'Asia/Tehran', 'en') : (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y/m/d H:i');
+    $nowTxt = function_exists('jdate') ? jdate('Y/m/d H:i', time(), '', 'Asia/Tehran', 'fa') : (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('Y/m/d H:i');
     $title = $manual ? '📊 <b>ارسال دستی آمار کانال</b>' : '📊 <b>گزارش روزانه آمار ربات</b>';
     $periods = v2raystore_statsPeriodStarts();
-    $agent = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, true) : 0;
-    $users = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(0, 0, false, 0, true) : 0;
-    $today = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['today'] ?? 0)) : 0;
+    $todayStart = intval($periods['today'] ?? 0);
+    $agent = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome($todayStart, 0, true) : 0;
+    $users = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome($todayStart, 0, false, 0, true) : 0;
+    $today = $agent + $users;
     $month = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? 0)) : 0;
     $monthDate = function_exists('jdate') ? jdate('j/n/Y', time(), '', 'Asia/Tehran', 'fa') : (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('d/m/Y');
     $stats = "\n\n📊 <b>آمار روزانه ربات</b>" .
@@ -19740,6 +19737,10 @@ function v2raystore_getReportSettingsMenuText(){
     $backupDelay = v2raystore_reportBackupItemDelaySeconds();
     $last = trim((string)($botState['storeReportLastDailyDate'] ?? ''));
     if($last === '') $last = 'ارسال نشده';
+    elseif(preg_match('/^\d{4}-\d{2}-\d{2}$/', $last)){
+        $lastTs = (new DateTime($last . ' 12:00:00', new DateTimeZone('Asia/Tehran')))->getTimestamp();
+        $last = function_exists('jdate') ? jdate('Y/m/d', $lastTs, '', 'Asia/Tehran', 'fa') : $last;
+    }
     $backupLastTs = v2raystore_reportBackupLastTimestamp();
     $backupLast = $backupLastTs > 0 ? (function_exists('jdate') ? jdate('Y/m/d H:i', $backupLastTs) : date('Y/m/d H:i', $backupLastTs)) : 'ارسال نشده';
     $backupNextTs = v2raystore_reportBackupNextTimestamp();
@@ -19769,8 +19770,7 @@ function v2raystore_getReportSettingsMenuKeys(){
     ];
     $rows[] = [[ 'text'=>'🧵 ساخت/ترمیم تاپیک‌های انتخاب‌شده', 'callback_data'=>'rebuildReportForumTopics', 'style'=>'primary' ]];
     $rows[] = [
-        ['text'=>(v2raystore_reportIsEnabled('storeReportDailyState', 'on') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success'],
-        ['text'=>'🕘 ساعت آمار', 'callback_data'=>'setDailyChannelStatsTime', 'style'=>'primary']
+        ['text'=>(v2raystore_reportIsEnabled('storeReportDailyState', 'on') ? 'خاموش کردن آمار روزانه ❌' : 'روشن کردن آمار روزانه ✅'), 'callback_data'=>'toggleDailyChannelStats', 'style'=>'success']
     ];
     $rows[] = [
         ['text'=>'📤 ارسال آمار الان', 'callback_data'=>'sendDailyChannelStatsNow', 'style'=>'success']
