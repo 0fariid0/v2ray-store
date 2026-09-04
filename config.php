@@ -7774,26 +7774,28 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
     $size = @filesize($tmp);
     $hash = ($ok && $size !== false && $size > 0 && $size <= (15 * 1024 * 1024)) ? (string)@hash_file('sha256', $tmp) : '';
     $visual = '';
-    // Perceptual hash catches the same picture when Telegram recompresses it
-    // differently for another account. It uses a tiny temporary thumbnail.
+    // dHash نسخه ۲ به لبه‌ها و نوشته‌های رسید (مبلغ، تاریخ و شماره پیگیری)
+    // حساس است؛ بنابراین رسیدهای متفاوت با قالب ثابت بانک، مشابه حساب نمی‌شوند.
     if($hash !== '' && function_exists('imagecreatefromstring') && function_exists('imagecreatetruecolor')){
         $raw = @file_get_contents($tmp);
         $src = ($raw !== false) ? @imagecreatefromstring($raw) : false;
         if($src){
-            $small = @imagecreatetruecolor(16, 16);
+            $small = @imagecreatetruecolor(33, 8);
             if($small){
-                @imagecopyresampled($small, $src, 0, 0, 0, 0, 16, 16, @imagesx($src), @imagesy($src));
-                $values = []; $sum = 0.0;
-                for($y=0; $y<16; $y++) for($x=0; $x<16; $x++){
-                    $rgb = @imagecolorat($small, $x, $y);
-                    $r = ($rgb >> 16) & 255; $g = ($rgb >> 8) & 255; $b = $rgb & 255;
-                    $gray = (0.299 * $r) + (0.587 * $g) + (0.114 * $b);
-                    $values[] = $gray; $sum += $gray;
+                @imagecopyresampled($small, $src, 0, 0, 0, 0, 33, 8, @imagesx($src), @imagesy($src));
+                $bits = [];
+                for($y=0; $y<8; $y++){
+                    for($x=0; $x<32; $x++){
+                        $rgb1 = @imagecolorat($small, $x, $y);
+                        $rgb2 = @imagecolorat($small, $x + 1, $y);
+                        $g1 = (0.299 * (($rgb1 >> 16) & 255)) + (0.587 * (($rgb1 >> 8) & 255)) + (0.114 * ($rgb1 & 255));
+                        $g2 = (0.299 * (($rgb2 >> 16) & 255)) + (0.587 * (($rgb2 >> 8) & 255)) + (0.114 * ($rgb2 & 255));
+                        $bits[] = ($g1 > $g2) ? 1 : 0;
+                    }
                 }
-                $avg = $sum / max(1, count($values));
-                for($i=0; $i<count($values); $i+=4){
+                for($i=0; $i<count($bits); $i+=4){
                     $n = 0;
-                    for($j=0; $j<4 && ($i+$j)<count($values); $j++) $n = ($n << 1) | (($values[$i+$j] >= $avg) ? 1 : 0);
+                    for($j=0; $j<4; $j++) $n = ($n << 1) | intval($bits[$i+$j] ?? 0);
                     $visual .= dechex($n);
                 }
                 @imagedestroy($small);
@@ -7868,6 +7870,7 @@ function v2raystore_ensureReceiptFingerprintsTable(){
         `file_unique_id` varchar(191) NOT NULL,
         `content_hash` char(64) DEFAULT NULL,
         `visual_hash` char(64) DEFAULT NULL,
+        `visual_version` tinyint(3) NOT NULL DEFAULT 2,
         `created_at` int(11) NOT NULL DEFAULT 0,
         PRIMARY KEY (`id`),
         KEY `idx_receipt_unique_id` (`file_unique_id`),
@@ -7886,6 +7889,11 @@ function v2raystore_ensureReceiptFingerprintsTable(){
         if($visualColumn && $visualColumn->num_rows === 0){
             @$connection->query("ALTER TABLE `receipt_fingerprints` ADD `visual_hash` char(64) DEFAULT NULL AFTER `content_hash`");
             @$connection->query("ALTER TABLE `receipt_fingerprints` ADD KEY `idx_receipt_visual_hash` (`visual_hash`)");
+        }
+        $visualVersionColumn = @$connection->query("SHOW COLUMNS FROM `receipt_fingerprints` LIKE 'visual_version'");
+        if($visualVersionColumn && $visualVersionColumn->num_rows === 0){
+            // رکوردهای قبلی نسخه ۱ هستند و برای مقایسهٔ ظاهری جدید استفاده نمی‌شوند.
+            @$connection->query("ALTER TABLE `receipt_fingerprints` ADD `visual_version` tinyint(3) NOT NULL DEFAULT 1 AFTER `visual_hash`");
         }
     }
     return $ready;
@@ -7921,7 +7929,7 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
         }
     }
     if(!$previous && $visualHash !== ''){
-        $stmt = @$connection->prepare("SELECT `pay_hash`,`user_id`,`created_at` FROM `receipt_fingerprints` WHERE `visual_hash` = ? AND `pay_hash` <> ? ORDER BY `id` ASC LIMIT 1");
+        $stmt = @$connection->prepare("SELECT `pay_hash`,`user_id`,`created_at` FROM `receipt_fingerprints` WHERE `visual_hash` = ? AND `visual_version` = 2 AND `pay_hash` <> ? ORDER BY `id` ASC LIMIT 1");
         if($stmt){
             $stmt->bind_param('ss', $visualHash, $payHash);
             $stmt->execute();
@@ -7937,7 +7945,8 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
     if($contentHash !== '') $matchQueries[] = ['content_hash', $contentHash];
     if($visualHash !== '') $matchQueries[] = ['visual_hash', $visualHash];
     foreach($matchQueries as $mq){
-        $stmt = @$connection->prepare("SELECT `pay_hash`,`user_id`,`created_at` FROM `receipt_fingerprints` WHERE `{$mq[0]}` = ? AND `pay_hash` <> ? ORDER BY `id` ASC LIMIT 50");
+        $visualClause = ($mq[0] === 'visual_hash') ? " AND `visual_version` = 2" : '';
+        $stmt = @$connection->prepare("SELECT `pay_hash`,`user_id`,`created_at` FROM `receipt_fingerprints` WHERE `{$mq[0]}` = ?{$visualClause} AND `pay_hash` <> ? ORDER BY `id` ASC LIMIT 50");
         if(!$stmt) continue;
         $stmt->bind_param('ss', $mq[1], $payHash);
         $stmt->execute();
@@ -7954,9 +7963,10 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
     }
 
     $now = time();
-    $stmt = @$connection->prepare("INSERT INTO `receipt_fingerprints` (`pay_hash`,`user_id`,`file_unique_id`,`content_hash`,`visual_hash`,`created_at`) VALUES (?,?,?,?,?,?)");
+    $stmt = @$connection->prepare("INSERT INTO `receipt_fingerprints` (`pay_hash`,`user_id`,`file_unique_id`,`content_hash`,`visual_hash`,`visual_version`,`created_at`) VALUES (?,?,?,?,?,?,?)");
     if($stmt){
-        $stmt->bind_param('sisssi', $payHash, $userId, $fileUniqueId, $contentHash, $visualHash, $now);
+        $visualVersion = 2;
+        $stmt->bind_param('sisssii', $payHash, $userId, $fileUniqueId, $contentHash, $visualHash, $visualVersion, $now);
         @$stmt->execute();
         $stmt->close();
     }

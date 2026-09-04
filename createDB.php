@@ -166,6 +166,7 @@ $connection->query("CREATE TABLE IF NOT EXISTS `receipt_fingerprints` (
     `file_unique_id` varchar(191) NOT NULL,
     `content_hash` char(64) DEFAULT NULL,
     `visual_hash` char(64) DEFAULT NULL,
+    `visual_version` tinyint(3) NOT NULL DEFAULT 2,
     `created_at` int(11) NOT NULL DEFAULT 0,
     PRIMARY KEY (`id`),
     KEY `idx_receipt_unique_id` (`file_unique_id`),
