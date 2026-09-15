@@ -20081,23 +20081,59 @@ function v2raystore_reportPaymentRows($from, $until){
     $from = intval($from);
     $until = intval($until);
     if($from <= 0 || $until <= $from) return [];
-    $productWhere = function_exists('v2raystore_statsProductWhere')
-        ? v2raystore_statsProductWhere()
-        : "(`state` IN ('paid','approved'))";
+    $productTypeWhere = function_exists('v2raystore_statsProductTypeWhere')
+        ? v2raystore_statsProductTypeWhere()
+        : "(`type` = 'BUY_SUB' OR `type` IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR `type` LIKE 'INCREASE_VOLUME_%' OR `type` LIKE 'INCREASE_DAY_%')";
     $rows = [];
     $stmt = @$connection->prepare(
-        "SELECT `price`, `request_date` FROM `pays`
-         WHERE {$productWhere} AND `request_date` >= ? AND `request_date` < ?
-         ORDER BY `request_date` ASC, `id` ASC"
+        "SELECT `price`, `type`, `state`, `payment_method`, `request_date`,
+                CASE
+                    WHEN `state` IN ('declined','auto_cancelled','cancelled_by_user') AND COALESCE(`cancelled_date`,0) > 0 THEN `cancelled_date`
+                    ELSE `request_date`
+                END AS `event_date`
+         FROM `pays`
+         WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
+           AND (
+                (`state` IN ('declined','auto_cancelled','cancelled_by_user')
+                 AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) >= ?
+                 AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) < ?)
+                OR
+                (`state` IN ('paid','approved','paid_with_wallet')
+                 AND `request_date` >= ? AND `request_date` < ?)
+           )
+         ORDER BY `event_date` ASC, `id` ASC"
     );
     if(!$stmt) return [];
-    $stmt->bind_param('ii', $from, $until);
+    $stmt->bind_param('iiii', $from, $until, $from, $until);
     if($stmt->execute()){
         $result = $stmt->get_result();
-        while($row = $result->fetch_assoc()) $rows[] = [
-            'price'=>intval($row['price'] ?? 0),
-            'request_date'=>intval($row['request_date'] ?? 0)
-        ];
+        while($row = $result->fetch_assoc()){
+            $type = (string)($row['type'] ?? '');
+            $state = (string)($row['state'] ?? '');
+            $method = (string)($row['payment_method'] ?? '');
+            $isCancelled = in_array($state, ['declined','auto_cancelled','cancelled_by_user'], true);
+            $isWalletCharge = ($type === 'INCREASE_WALLET');
+            $isWalletPurchase = !$isWalletCharge && ($method === 'wallet' || $state === 'paid_with_wallet');
+            $label = '';
+            $countsInTotal = false;
+            if($isCancelled){
+                $label = '❌ لغو شده';
+            }elseif($isWalletCharge){
+                $label = '💰 شارژ کیف پول';
+                $countsInTotal = true;
+            }elseif($isWalletPurchase){
+                $label = '👛 خرید از کیف پول';
+            }else{
+                $countsInTotal = true;
+            }
+            $rows[] = [
+                'price'=>intval($row['price'] ?? 0),
+                'request_date'=>intval($row['request_date'] ?? 0),
+                'event_date'=>intval($row['event_date'] ?? $row['request_date'] ?? 0),
+                'label'=>$label,
+                'counts_in_total'=>$countsInTotal
+            ];
+        }
     }
     $stmt->close();
     return $rows;
@@ -20155,6 +20191,7 @@ function v2raystore_sendMonthlyIncomeSummary($year, $month){
     $days = [];
     $monthTotal = 0;
     foreach($rows as $row){
+        if(empty($row['counts_in_total'])) continue;
         $timestamp = intval($row['request_date'] ?? 0);
         if($timestamp <= 0) continue;
         $dayKey = function_exists('jdate') ? jdate('Y-m-d', $timestamp, '', 'Asia/Tehran', 'en') : date('Y-m-d', $timestamp);
@@ -20183,14 +20220,16 @@ function v2raystore_sendDayPaymentDetails($year, $month, $day){
     $label = v2raystore_reportDayLabel($bounds['from']);
     $text = "🧾 <b>ریز تراکنش‌های " . v2raystore_h($label) . "</b>\n\n";
     if(count($rows) === 0){
-        $text .= "برای این روز پرداخت موفقی ثبت نشده است.";
+        $text .= "برای این روز تراکنش نهایی‌شده‌ای ثبت نشده است.";
         return v2raystore_sendReportText($text);
     }
     $total = 0;
     foreach($rows as $row){
         $price = intval($row['price'] ?? 0);
-        $total += $price;
-        $text .= number_format($price) . " تومان\n";
+        if(!empty($row['counts_in_total'])) $total += $price;
+        $text .= number_format($price) . " تومان";
+        if(trim((string)($row['label'] ?? '')) !== '') $text .= " — " . $row['label'];
+        $text .= "\n";
     }
     $text .= "\n💰 <b>جمع کل پرداخت‌های روز: " . number_format($total) . " تومان</b>";
     return v2raystore_sendReportText($text);
@@ -20257,7 +20296,7 @@ function v2raystore_getMonthlyReportDaysKeys($year, $month){
     $days = [];
     if($bounds){
         foreach(v2raystore_reportPaymentRows($bounds['from'], min($bounds['until'], time())) as $row){
-            $timestamp = intval($row['request_date'] ?? 0);
+            $timestamp = intval($row['event_date'] ?? $row['request_date'] ?? 0);
             if($timestamp <= 0) continue;
             $key = function_exists('jdate') ? jdate('Y-m-d', $timestamp, '', 'Asia/Tehran', 'en') : date('Y-m-d', $timestamp);
             if(!isset($days[$key])) $days[$key] = ['day'=>intval(function_exists('jdate') ? jdate('j', $timestamp, '', 'Asia/Tehran', 'en') : date('d', $timestamp)), 'label'=>v2raystore_reportDayLabel($timestamp)];
