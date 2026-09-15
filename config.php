@@ -4807,7 +4807,9 @@ function v2raystore_rewardInspectOrderQuota($order){
                         $statTotal = intval($stat->total ?? 0);
                         break;
                     }
-                    $total = $statTotal > 0 ? $statTotal : $clientTotal;
+                    // totalGB خود Client منبع اصلی quota است؛ clientStats.total ممکن
+                    // است مقدار قدیمی پلن را نگه دارد و باعث Snapshot اشتباه شود.
+                    $total = $clientTotal > 0 ? $clientTotal : $statTotal;
                 }else{
                     $total = intval($row->total ?? 0);
                 }
@@ -17756,14 +17758,16 @@ function editMarzbanConfig($server_id,$info){
     $volume = $configInfo->data_limit;
     $configState = $configInfo->status;
 
-    if(isset($info['plus_day'])) $expireTime += (86400 * $info['plus_day']);
+    if(array_key_exists('expire', $info)) $expireTime = max(0, intval($info['expire']));
+    elseif(isset($info['plus_day'])) $expireTime += (86400 * $info['plus_day']);
     elseif(isset($info['days'])){
         $expireTime = time() + (86400 * $info['days']);
         $configState = "active";
     }
     if(!empty($info['force_active'])) $configState = "active";
     
-    if(isset($info['plus_volume'])) $volume += $info['plus_volume'] * 1073741824;
+    if(array_key_exists('data_limit', $info)) $volume = max(0, intval($info['data_limit']));
+    elseif(isset($info['plus_volume'])) $volume += $info['plus_volume'] * 1073741824;
     elseif(isset($info['volume'])){
         $volume = $info['volume'] * 1073741824;
         $response = resetMarzbanTraffic($server_id, $remark, $token);
@@ -19923,6 +19927,7 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
          WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
            AND (
                 (`state` IN ('declined','auto_cancelled','cancelled_by_user')
+                 AND COALESCE(`sent_date`,0) > 0
                  AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) >= ?
                  AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) < ?)
                 OR
@@ -20095,6 +20100,7 @@ function v2raystore_reportPaymentRows($from, $until){
          WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
            AND (
                 (`state` IN ('declined','auto_cancelled','cancelled_by_user')
+                 AND COALESCE(`sent_date`,0) > 0
                  AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) >= ?
                  AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) < ?)
                 OR
@@ -22728,11 +22734,35 @@ function v2raystore_renewSnapshotFromOrder($order){
             $stmt->close();
         }
     }
-    $volumeGb = floatval($plan['volume'] ?? 0);
+    // حجم پلن الزاماً حجم واقعی فعلی سرویس نیست؛ ممکن است کاربر قبلاً حجم اضافه
+    // کرده باشد. برای برگشت تمدید باید quota واقعی پنل قبل از تمدید ذخیره شود.
+    $fallbackVolumeGb = floatval($plan['volume'] ?? 0);
+    $totalBytes = (int)floor($fallbackVolumeGb * 1073741824);
+    $volumeSource = 'plan_fallback';
+    if(function_exists('v2raystore_rewardInspectOrderQuota')){
+        $quota = v2raystore_rewardInspectOrderQuota($order);
+        if(is_array($quota) && !empty($quota['ok'])){
+            $totalBytes = max(0, intval($quota['total_bytes'] ?? 0));
+            $volumeSource = 'panel';
+        }
+    }
+
+    $expireDate = intval($order['expire_date'] ?? 0);
+    $expireSource = 'database';
+    if(function_exists('v2raystore_getOrderRemainingSummary')){
+        $live = v2raystore_getOrderRemainingSummary($order);
+        if(is_array($live) && array_key_exists('expire_date', $live)){
+            $expireDate = intval($live['expire_date'] ?? $expireDate);
+            $expireSource = 'panel';
+        }
+    }
+
+    $volumeGb = $totalBytes / 1073741824;
     return [
+        'snapshot_version' => ($volumeSource === 'panel' ? 2 : 1),
         'order_id' => intval($order['id'] ?? 0),
         'fileid' => $fileid,
-        'expire_date' => intval($order['expire_date'] ?? 0),
+        'expire_date' => $expireDate,
         'server_id' => intval($order['server_id'] ?? 0),
         'inbound_id' => intval($order['inbound_id'] ?? 0),
         'uuid' => (string)($order['uuid'] ?? ''),
@@ -22740,7 +22770,9 @@ function v2raystore_renewSnapshotFromOrder($order){
         'link' => (string)($order['link'] ?? ''),
         'amount' => intval($order['amount'] ?? 0),
         'volume_gb' => $volumeGb,
-        'volume_bytes' => (int)floor($volumeGb * 1073741824),
+        'volume_bytes' => $totalBytes,
+        'volume_source' => $volumeSource,
+        'expire_source' => $expireSource,
         'plan_days' => intval($plan['days'] ?? 0),
         'created_at' => time()
     ];
@@ -22751,7 +22783,10 @@ function v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order){
     $hashId = trim((string)$hashId);
     if($hashId === '') return [];
     $meta = v2raystore_renewMetaFromPay($payInfo);
-    if(empty($meta['renew_snapshot']) || !is_array($meta['renew_snapshot'])){
+    $storedVersion = intval($meta['renew_snapshot']['snapshot_version'] ?? 0);
+    // Snapshotهای قدیمی حجم را از پلن می‌گرفتند. تا وقتی تمدید هنوز اجرا نشده،
+    // آن‌ها را با وضعیت واقعی پنل جایگزین می‌کنیم.
+    if(empty($meta['renew_snapshot']) || !is_array($meta['renew_snapshot']) || $storedVersion < 2){
         $meta['renew_snapshot'] = v2raystore_renewSnapshotFromOrder($order);
         $encoded = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $stmt = $connection->prepare("UPDATE `pays` SET `description` = ? WHERE `hash_id` = ? LIMIT 1");
@@ -22762,6 +22797,36 @@ function v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order){
         }
     }
     return $meta['renew_snapshot'];
+}
+
+function v2raystore_storeRenewEffectOnPay($hashId, $mode, $volumeGb, $appliedDays){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return false;
+    $stmt = $connection->prepare("SELECT `description` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $hashId);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    if(!$row) return false;
+    $meta = json_decode((string)($row['description'] ?? ''), true);
+    if(!is_array($meta)) $meta = [];
+    $meta['renew_effect'] = [
+        'version'=>1,
+        'mode'=>($mode === 'add' ? 'add' : 'reset'),
+        'volume_gb'=>floatval($volumeGb),
+        'volume_bytes'=>(int)floor(max(0, floatval($volumeGb)) * 1073741824),
+        'applied_days'=>max(0, intval($appliedDays)),
+        'stored_at'=>time()
+    ];
+    $encoded = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $stmt = $connection->prepare("UPDATE `pays` SET `description` = ? WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('ss', $encoded, $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
 }
 
 function v2raystore_restorePanelServiceExact($snapshot){
@@ -22831,6 +22896,37 @@ function v2raystore_cancelApprovedRenewPay($pay, $reason){
         return ['ok'=>false, 'message'=>'نسخه قبل از تمدید برای این پرداخت ذخیره نشده است؛ برگشت امن ممکن نیست.'];
     }
     $orderId = intval($snapshot['order_id']);
+
+    // در تمدید افزایشی فقط همان حجم و روزی که این تمدید اضافه کرده کم می‌شود.
+    // این کار افزایش‌های دیگری را که بعداً روی سرویس انجام شده‌اند حفظ می‌کند.
+    $effect = $meta['renew_effect'] ?? null;
+    if(is_array($effect) && ($effect['mode'] ?? '') === 'add'){
+        $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ? LIMIT 1");
+        if($stmt){
+            $stmt->bind_param('i', $orderId);
+            $stmt->execute();
+            $currentOrder = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if($currentOrder){
+                if(function_exists('v2raystore_rewardInspectOrderQuota')){
+                    $currentQuota = v2raystore_rewardInspectOrderQuota($currentOrder);
+                    if(is_array($currentQuota) && !empty($currentQuota['ok'])){
+                        $currentBytes = max(0, intval($currentQuota['total_bytes'] ?? 0));
+                        $addedBytes = max(0, intval($effect['volume_bytes'] ?? 0));
+                        $snapshot['volume_bytes'] = max(0, $currentBytes - $addedBytes);
+                        $snapshot['volume_gb'] = $snapshot['volume_bytes'] / 1073741824;
+                    }
+                }
+                if(function_exists('v2raystore_getOrderRemainingSummary')){
+                    $currentTime = v2raystore_getOrderRemainingSummary($currentOrder);
+                    if(is_array($currentTime) && intval($currentTime['expire_date'] ?? 0) > 0){
+                        $addedSeconds = max(0, intval($effect['applied_days'] ?? 0)) * 86400;
+                        $snapshot['expire_date'] = max(0, intval($currentTime['expire_date']) - $addedSeconds);
+                    }
+                }
+            }
+        }
+    }
 
     $restore = v2raystore_restorePanelServiceExact($snapshot);
     if(empty($restore['ok'])) return $restore;
@@ -22988,7 +23084,11 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     }
 
     // Snapshot must be stored before changing panel/database so admin can cancel an automatic renewal safely.
-    v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order);
+    $renewSnapshot = v2raystore_storeRenewSnapshotOnPay($hashId, $payInfo, $order);
+    if(!is_array($renewSnapshot) || ($renewSnapshot['volume_source'] ?? '') !== 'panel'){
+        if(function_exists('v2raystore_rollbackRenewPlanInboundSync')) v2raystore_rollbackRenewPlanInboundSync($renewInboundSync);
+        return $fail('حجم واقعی سرویس از پنل خوانده نشد؛ برای جلوگیری از برگشت اشتباه، تمدید انجام نشد. دوباره تلاش کنید.');
+    }
 
     $renewSettings = v2raystore_getRenewSettings();
     $resetMode = ($renewSettings['mode'] === 'reset');
@@ -23019,6 +23119,11 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
         $newExpire = $baseExpire + ($appliedDays * 86400);
         $maxExpire = $now + (intval($renewSettings['max_days']) * 86400);
         if($newExpire > $maxExpire) $newExpire = $maxExpire;
+    }
+
+    if(!v2raystore_storeRenewEffectOnPay($hashId, $resetMode ? 'reset' : 'add', $volume, $appliedDays)){
+        if(function_exists('v2raystore_rollbackRenewPlanInboundSync')) v2raystore_rollbackRenewPlanInboundSync($renewInboundSync);
+        return $fail('ثبت اطلاعات لازم برای لغو امن تمدید ناموفق بود؛ تمدید انجام نشد.');
     }
 
     if($serverType == 'marzban'){
