@@ -7061,8 +7061,13 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
             alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
             exit();
         }
+        if(function_exists('v2raystore_markWalletPayment')) v2raystore_markWalletPayment($hashId);
         $result = v2raystore_approveSentOrderByHash($hashId, false);
-        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if(!$result['ok']){
+            if(function_exists('v2raystore_clearWalletPayment')) v2raystore_clearWalletPayment($hashId);
+            alert($result['message'], true);
+            exit();
+        }
         if($price > 0){
             $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
             $stmt->bind_param("ii", $price, $from_id);
@@ -7804,8 +7809,13 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
             exit();
         }
+        if(function_exists('v2raystore_markWalletPayment')) v2raystore_markWalletPayment($hashId);
         $result = v2raystore_approveSentOrderByHash($hashId, false);
-        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if(!$result['ok']){
+            if(function_exists('v2raystore_clearWalletPayment')) v2raystore_clearWalletPayment($hashId);
+            alert($result['message'], true);
+            exit();
+        }
         if($price > 0){
             $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
             $stmt->bind_param("ii", $price, $from_id);
@@ -13726,8 +13736,10 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
         exit;
     }
 
+    if(function_exists('v2raystore_markWalletPayment')) v2raystore_markWalletPayment($match[1]);
     $result = function_exists('v2raystore_approveRenewAccountPayByHash') ? v2raystore_approveRenewAccountPayByHash($match[1], false) : ['ok'=>false, 'message'=>'تابع تمدید در دسترس نیست.'];
     if(!$result['ok']){
+        if(function_exists('v2raystore_clearWalletPayment')) v2raystore_clearWalletPayment($match[1]);
         alert($result['message'], true);
         exit();
     }
@@ -14600,8 +14612,13 @@ if(preg_match('/payIncraseDayWithWallet(.*)/', $data,$match)){
             alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
             exit();
         }
+        if(function_exists('v2raystore_markWalletPayment')) v2raystore_markWalletPayment($hashId);
         $result = v2raystore_approveIncreaseDayPayByHash($hashId, false);
-        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if(!$result['ok']){
+            if(function_exists('v2raystore_clearWalletPayment')) v2raystore_clearWalletPayment($hashId);
+            alert($result['message'], true);
+            exit();
+        }
         if($price > 0){
             $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
             $stmt->bind_param("ii", $price, $from_id);
@@ -14949,8 +14966,13 @@ if(preg_match('/payIncraseWithWallet(.*)/', $data,$match)){
             alert("💡موجودی کیف پول (".number_format($userwallet)." تومان) کافی نیست لطفاً به مقدار ".number_format($needamount)." تومان شارژ کنید ", true);
             exit();
         }
+        if(function_exists('v2raystore_markWalletPayment')) v2raystore_markWalletPayment($hashId);
         $result = v2raystore_approveIncreaseVolumePayByHash($hashId, false);
-        if(!$result['ok']){ alert($result['message'], true); exit(); }
+        if(!$result['ok']){
+            if(function_exists('v2raystore_clearWalletPayment')) v2raystore_clearWalletPayment($hashId);
+            alert($result['message'], true);
+            exit();
+        }
         if($price > 0){
             $stmt = $connection->prepare("UPDATE `users` SET `wallet` = GREATEST(`wallet` - ?, 0) WHERE `userid` = ?");
             $stmt->bind_param("ii", $price, $from_id);

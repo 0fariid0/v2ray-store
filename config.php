@@ -540,8 +540,10 @@ function v2raystore_ensureProfessionalStatsSchema(){
     global $connection;
     if(!isset($connection) || !($connection instanceof mysqli)) return;
     $columns = [
+        'payment_method' => "ALTER TABLE `pays` ADD `payment_method` varchar(30) NOT NULL DEFAULT '' AFTER `state`",
         'agent_bought' => "ALTER TABLE `pays` ADD `agent_bought` int(1) NOT NULL DEFAULT 0 AFTER `state`",
-        'agent_count' => "ALTER TABLE `pays` ADD `agent_count` int(255) NOT NULL DEFAULT 0 AFTER `agent_bought`"
+        'agent_count' => "ALTER TABLE `pays` ADD `agent_count` int(255) NOT NULL DEFAULT 0 AFTER `agent_bought`",
+        'cancelled_date' => "ALTER TABLE `pays` ADD `cancelled_date` int(255) NOT NULL DEFAULT 0 AFTER `cancel_reason`"
     ];
     foreach($columns as $column => $query){
         $exists = @($connection->query("SHOW COLUMNS FROM `pays` LIKE '$column'"));
@@ -559,6 +561,34 @@ function v2raystore_ensureProfessionalStatsSchema(){
     }
 }
 v2raystore_ensureProfessionalStatsSchema();
+}
+
+if(!function_exists('v2raystore_markWalletPayment')){
+function v2raystore_markWalletPayment($hashId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return false;
+    $stmt = @$connection->prepare("UPDATE `pays` SET `payment_method` = 'wallet' WHERE `hash_id` = ? LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
+}
+
+if(!function_exists('v2raystore_clearWalletPayment')){
+function v2raystore_clearWalletPayment($hashId){
+    global $connection;
+    $hashId = trim((string)$hashId);
+    if($hashId === '') return false;
+    $stmt = @$connection->prepare("UPDATE `pays` SET `payment_method` = '' WHERE `hash_id` = ? AND `state` NOT IN ('approved','paid','paid_with_wallet') LIMIT 1");
+    if(!$stmt) return false;
+    $stmt->bind_param('s', $hashId);
+    $ok = $stmt->execute();
+    $stmt->close();
+    return $ok;
+}
 }
 
 if(!function_exists('v2raystore_statsCol')){
@@ -585,8 +615,37 @@ function v2raystore_statsBuyWhere($alias = ''){
 
 if(!function_exists('v2raystore_statsProductWhere')){
 function v2raystore_statsProductWhere($alias = ''){
+    return "(" . v2raystore_statsPaidWhere($alias) . " AND " . v2raystore_statsProductTypeWhere($alias) . ")";
+}
+}
+
+if(!function_exists('v2raystore_statsProductTypeWhere')){
+function v2raystore_statsProductTypeWhere($alias = ''){
     $type = v2raystore_statsCol('type', $alias);
-    return "(" . v2raystore_statsPaidWhere($alias) . " AND ($type = 'BUY_SUB' OR $type IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR $type LIKE 'INCREASE_VOLUME_%' OR $type LIKE 'INCREASE_DAY_%'))";
+    return "($type = 'BUY_SUB' OR $type IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR $type LIKE 'INCREASE_VOLUME_%' OR $type LIKE 'INCREASE_DAY_%')";
+}
+}
+
+if(!function_exists('v2raystore_statsCashWhere')){
+function v2raystore_statsCashWhere($alias = ''){
+    $type = v2raystore_statsCol('type', $alias);
+    $state = v2raystore_statsCol('state', $alias);
+    $method = v2raystore_statsCol('payment_method', $alias);
+    return "(" . v2raystore_statsPaidWhere($alias) . " AND ($type = 'INCREASE_WALLET' OR " . v2raystore_statsProductTypeWhere($alias) . ") AND COALESCE($method,'') <> 'wallet' AND $state <> 'paid_with_wallet')";
+}
+}
+
+if(!function_exists('v2raystore_statsCashIncome')){
+function v2raystore_statsCashIncome($since = 0, $userId = 0, $agentOnly = false, $until = 0, $userOnly = false){
+    $where = v2raystore_statsCashWhere();
+    $types = '';
+    $params = [];
+    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
+    if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
+    elseif($userOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 0"; }
+    return intval(v2raystore_statsScalar("SELECT COALESCE(SUM(`price`),0) AS v FROM `pays` WHERE $where", $types, $params, 'v'));
 }
 }
 
@@ -8129,9 +8188,9 @@ function v2raystore_cancelPendingPayByUser($hashId, $userId){
     }
 
     $now = time();
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'cancelled_by_user', `approval_error` = NULL, `approval_error_date` = ? WHERE `hash_id` = ? AND `user_id` = ? AND `state` IN ('pending','sent')");
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'cancelled_by_user', `approval_error` = NULL, `approval_error_date` = ?, `cancelled_date` = ? WHERE `hash_id` = ? AND `user_id` = ? AND `state` IN ('pending','sent')");
     if(!$stmt) return ['ok'=>false, 'message'=>'خطای دیتابیس هنگام لغو پرداخت.'];
-    $stmt->bind_param('isi', $now, $hashId, $userId);
+    $stmt->bind_param('iisi', $now, $now, $hashId, $userId);
     $stmt->execute();
     $affected = $stmt->affected_rows;
     $stmt->close();
@@ -19836,10 +19895,10 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
     $todayStart = intval($periods['today'] ?? 0);
     $tehranToday = new DateTime('today', new DateTimeZone('Asia/Tehran'));
     $tomorrowStart = (clone $tehranToday)->modify('+1 day')->getTimestamp();
-    $agent = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome($todayStart, 0, true) : 0;
-    $users = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome($todayStart, 0, false, 0, true) : 0;
+    $agent = function_exists('v2raystore_statsCashIncome') ? v2raystore_statsCashIncome($todayStart, 0, true) : 0;
+    $users = function_exists('v2raystore_statsCashIncome') ? v2raystore_statsCashIncome($todayStart, 0, false, 0, true) : 0;
     $today = $agent + $users;
-    $month = function_exists('v2raystore_statsProductIncome') ? v2raystore_statsProductIncome(intval($periods['month'] ?? 0)) : 0;
+    $month = function_exists('v2raystore_statsCashIncome') ? v2raystore_statsCashIncome(intval($periods['month'] ?? 0)) : 0;
     $monthDate = function_exists('jdate') ? jdate('j/n/Y', time(), '', 'Asia/Tehran', 'fa') : (new DateTime('now', new DateTimeZone('Asia/Tehran')))->format('d/m/Y');
     $stats = "\n\n📊 <b>آمار روزانه ربات</b>" .
         "\n🤝 درآمد فروش نماینده‌ها: <b>" . number_format($agent) . " تومان</b>" .
@@ -19847,26 +19906,59 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
         "\n💰 درآمد امروز: <b>" . number_format($today) . " تومان</b>" .
         "\n📆 درآمد ماه تا <b>" . v2raystore_h($monthDate) . "</b>: <b>" . number_format($month) . " تومان</b>";
 
-    // Only successful product payments are shown. Cancelled/declined payments
-    // are excluded by the same predicate used for the income totals above.
+    // دفتر روزانه شامل پرداخت نقدی موفق، شارژ کیف پول، خرید از کیف پول و لغوهاست.
+    // فقط پرداخت نقدی موفق و شارژ کیف پول به جمع درآمد اضافه می‌شوند.
     $payments = [];
     $paymentTotal = 0;
-    $productWhere = function_exists('v2raystore_statsProductWhere')
-        ? v2raystore_statsProductWhere()
-        : "(`state` IN ('paid','approved'))";
+    $productTypeWhere = function_exists('v2raystore_statsProductTypeWhere')
+        ? v2raystore_statsProductTypeWhere()
+        : "(`type` = 'BUY_SUB' OR `type` IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR `type` LIKE 'INCREASE_VOLUME_%' OR `type` LIKE 'INCREASE_DAY_%')";
     $stmt = @$connection->prepare(
-        "SELECT `price` FROM `pays`
-         WHERE {$productWhere} AND `request_date` >= ? AND `request_date` < ?
-         ORDER BY `request_date` ASC, `id` ASC"
+        "SELECT `price`, `type`, `state`, `payment_method`,
+                CASE
+                    WHEN `state` IN ('declined','auto_cancelled','cancelled_by_user') AND COALESCE(`cancelled_date`,0) > 0 THEN `cancelled_date`
+                    ELSE `request_date`
+                END AS `event_date`
+         FROM `pays`
+         WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
+           AND (
+                (`state` IN ('declined','auto_cancelled','cancelled_by_user')
+                 AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) >= ?
+                 AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) < ?)
+                OR
+                (`state` IN ('paid','approved','paid_with_wallet')
+                 AND `request_date` >= ? AND `request_date` < ?)
+           )
+         ORDER BY `event_date` ASC, `id` ASC"
     );
     if($stmt){
-        $stmt->bind_param('ii', $todayStart, $tomorrowStart);
+        $stmt->bind_param('iiii', $todayStart, $tomorrowStart, $todayStart, $tomorrowStart);
         if($stmt->execute()){
             $result = $stmt->get_result();
             while($row = $result->fetch_assoc()){
                 $price = intval($row['price'] ?? 0);
-                $payments[] = $price;
-                $paymentTotal += $price;
+                $type = (string)($row['type'] ?? '');
+                $state = (string)($row['state'] ?? '');
+                $method = (string)($row['payment_method'] ?? '');
+                $isCancelled = in_array($state, ['declined','auto_cancelled','cancelled_by_user'], true);
+                $isWalletCharge = ($type === 'INCREASE_WALLET');
+                $isWalletPurchase = !$isWalletCharge && ($method === 'wallet' || $state === 'paid_with_wallet');
+
+                $label = '';
+                $countsInTotal = false;
+                if($isCancelled){
+                    $label = '❌ لغو شده';
+                }elseif($isWalletCharge){
+                    $label = '💰 شارژ کیف پول';
+                    $countsInTotal = true;
+                }elseif($isWalletPurchase){
+                    $label = '👛 خرید از کیف پول';
+                }else{
+                    $countsInTotal = true;
+                }
+
+                $payments[] = ['price'=>$price, 'label'=>$label];
+                if($countsInTotal) $paymentTotal += $price;
             }
         }
         $stmt->close();
@@ -19874,15 +19966,19 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
 
     $detail = "\n\n🧾 <b>ریز تراکنش‌های امروز</b>";
     if(count($payments) > 0){
-        $detail .= "\nجمع کل این <b>" . number_format(count($payments)) . " پرداخت</b>:\n\n";
-        foreach($payments as $price) $detail .= number_format($price) . " تومان\n";
+        $detail .= "\nجمع کل این <b>" . number_format(count($payments)) . " تراکنش</b>:\n\n";
+        foreach($payments as $payment){
+            $detail .= number_format(intval($payment['price'] ?? 0)) . " تومان";
+            if(trim((string)($payment['label'] ?? '')) !== '') $detail .= " — " . $payment['label'];
+            $detail .= "\n";
+        }
         $endDate = function_exists('jdate')
             ? jdate('j F', $todayStart, '', 'Asia/Tehran', 'fa')
             : $tehranToday->format('d/m');
         $detail .= "\n<b>پایان " . v2raystore_h($endDate) . "</b>";
         $detail .= "\n💰 جمع کل پرداخت‌ها: <b>" . number_format($paymentTotal) . " تومان</b>";
     }else{
-        $detail .= "\nامروز پرداخت موفقی ثبت نشده است.";
+        $detail .= "\nامروز تراکنش نهایی‌شده‌ای ثبت نشده است.";
     }
 
     return $title . "\n\n🕒 زمان گزارش: <b>" . v2raystore_h($nowTxt) . "</b>" . $stats . $detail;
@@ -22498,9 +22594,10 @@ function v2raystore_declinePayByHash($hashId, $reason = ''){
     }
 
     $reason = trim((string)$reason);
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined', `cancel_reason` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent','processing','auto_processing','approved','0','paid_with_wallet')");
+    $cancelledDate = time();
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined', `cancel_reason` = ?, `cancelled_date` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent','processing','auto_processing','approved','0','paid_with_wallet')");
     if(!$stmt) return ['ok'=>false, 'message'=>'ثبت رد سفارش ناموفق بود.'];
-    $stmt->bind_param('ss', $reason, $hashId);
+    $stmt->bind_param('sis', $reason, $cancelledDate, $hashId);
     $stmt->execute();
     $changed = $stmt->affected_rows;
     $stmt->close();
@@ -22711,8 +22808,9 @@ function v2raystore_cancelApprovedRenewPay($pay, $reason){
     if(!$ok) return ['ok'=>false, 'message'=>'برگشت اطلاعات سفارش در دیتابیس ناموفق بود.'];
 
     $reason = trim((string)$reason);
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ? WHERE `hash_id` = ? LIMIT 1");
-    if($stmt){ $stmt->bind_param('ss', $reason, $hashId); $stmt->execute(); $stmt->close(); }
+    $cancelledDate = time();
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ?, `cancelled_date` = ? WHERE `hash_id` = ? LIMIT 1");
+    if($stmt){ $stmt->bind_param('sis', $reason, $cancelledDate, $hashId); $stmt->execute(); $stmt->close(); }
 
     $uid = intval($pay['user_id'] ?? 0);
     if($uid > 0){
@@ -24009,8 +24107,9 @@ function v2raystore_cancelAutoApprovedPay($hashId, $reason){
         }
         $deleted++;
     }
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ? WHERE `hash_id` = ?");
-    if($stmt){ $stmt->bind_param('ss', $reason, $hashId); $stmt->execute(); $stmt->close(); }
+    $cancelledDate = time();
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'auto_cancelled', `cancel_reason` = ?, `cancelled_date` = ? WHERE `hash_id` = ?");
+    if($stmt){ $stmt->bind_param('sis', $reason, $cancelledDate, $hashId); $stmt->execute(); $stmt->close(); }
     $uid = intval($pay['user_id']);
     sendMessage("❌ سفارش شما توسط مدیریت لغو شد.\n\n📝 دلیل لغو:\n" . $reason, null, 'HTML', $uid);
     return ['ok'=>true, 'message'=>"$deleted سفارش حذف شد.", 'deleted'=>$deleted, 'user_id'=>$uid];
