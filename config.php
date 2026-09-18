@@ -19930,6 +19930,13 @@ function v2raystore_reportTransactionTimingText($row){
     return '🕒 ' . v2raystore_reportClockText($requestDate);
 }
 
+function v2raystore_reportFaDigits($value){
+    return strtr((string)$value, [
+        '0'=>'۰', '1'=>'۱', '2'=>'۲', '3'=>'۳', '4'=>'۴',
+        '5'=>'۵', '6'=>'۶', '7'=>'۷', '8'=>'۸', '9'=>'۹', ','=>'٬'
+    ]);
+}
+
 function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = false){
     if(!is_array($row)) return '';
     $price = number_format(intval($row['price'] ?? 0));
@@ -19939,29 +19946,33 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
     $eventDate = intval($row['event_date'] ?? ($eventKind === 'cancellation' ? $cancelledDate : $requestDate));
     if($eventDate <= 0) $eventDate = $requestDate;
 
-    $parts = [v2raystore_reportClockText($eventDate), $price];
+    // شروع خط با متن فارسی و استفاده از اعداد فارسی، از به‌هم‌ریختگی RTL در تلگرام جلوگیری می‌کند.
+    $parts = [
+        '🕒 ساعت ' . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
+        v2raystore_reportFaDigits($price) . ' تومان'
+    ];
     $label = trim((string)($row['label'] ?? ''));
     if(!empty($row['is_cancelled'])){
-        $cancelLabel = '❌ لغو';
+        $cancelLabel = '❌ لغو شده';
         $differentDay = $cancelledDate > 0
             && v2raystore_reportTehranDateKey($requestDate) !== v2raystore_reportTehranDateKey($cancelledDate);
         if($eventKind === 'cancellation' && $differentDay){
-            $cancelLabel .= ' ← ' . v2raystore_reportDateTimeText($requestDate);
+            $cancelLabel .= '؛ تاریخ سفارش: ' . v2raystore_reportFaDigits(v2raystore_reportDateTimeText($requestDate));
         }
         $parts[] = $cancelLabel;
     }elseif($label === '💰 شارژ کیف پول'){
-        $parts[] = '💰 شارژ کیف‌پول';
+        $parts[] = '💰 شارژ کیف پول';
     }elseif($label === '👛 خرید از کیف پول'){
-        $parts[] = '👛 خرید کیف‌پول';
+        $parts[] = '👛 خرید از کیف پول';
     }elseif($label !== ''){
         $parts[] = $label;
     }
 
     if($includePaymentCode){
         $hashId = trim((string)($row['hash_id'] ?? ''));
-        if($hashId !== '') $parts[] = '<code>' . v2raystore_h($hashId) . '</code>';
+        if($hashId !== '') $parts[] = 'کد پرداخت: <code>' . v2raystore_h($hashId) . '</code>';
     }
-    return implode(' | ', $parts);
+    return implode(' — ', $parts);
 }
 
 function v2raystore_buildDailyChannelStatsText($manual = false){
@@ -20053,7 +20064,6 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
 
     $detail = "\n\n🧾 <b>ریز تراکنش‌های امروز</b>";
     if(count($payments) > 0){
-        $detail .= "\n<i>ساعت | مبلغ (تومان) | وضعیت</i>";
         $detail .= "\nجمع: <b>" . number_format(count($payments)) . " تراکنش</b>\n\n";
         foreach($payments as $payment){
             $detail .= v2raystore_reportCompactTransactionLine($payment, false) . "\n";
@@ -20337,9 +20347,7 @@ function v2raystore_sendDayPaymentDetails($year, $month, $day, $includePaymentCo
     if(!$bounds) return false;
     $rows = v2raystore_reportPaymentRows($bounds['from'], $bounds['until']);
     $label = v2raystore_reportDayLabel($bounds['from']);
-    $columns = $includePaymentCode ? 'ساعت | مبلغ | وضعیت | کد پرداخت' : 'ساعت | مبلغ | وضعیت';
-    $text = "🧾 <b>ریز تراکنش‌های " . v2raystore_h($label) . "</b>\n" .
-            "<i>" . v2raystore_h($columns) . " — مبالغ به تومان</i>\n\n";
+    $text = "🧾 <b>ریز تراکنش‌های " . v2raystore_h($label) . "</b>\n\n";
     if(count($rows) === 0){
         $text .= "برای این روز تراکنش نهایی‌شده‌ای ثبت نشده است.";
         return v2raystore_sendReportText($text);
