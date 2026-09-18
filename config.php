@@ -19948,12 +19948,12 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
 
     // شروع خط با متن فارسی و استفاده از اعداد فارسی، از به‌هم‌ریختگی RTL در تلگرام جلوگیری می‌کند.
     $parts = [
-        '🕒 ساعت ' . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
+        'ساعت ' . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
         v2raystore_reportFaDigits($price) . ' تومان'
     ];
     $label = trim((string)($row['label'] ?? ''));
     if(!empty($row['is_cancelled'])){
-        $cancelLabel = '❌ لغو شده';
+        $cancelLabel = 'لغو شده';
         $differentDay = $cancelledDate > 0
             && v2raystore_reportTehranDateKey($requestDate) !== v2raystore_reportTehranDateKey($cancelledDate);
         if($eventKind === 'cancellation' && $differentDay){
@@ -19961,16 +19961,16 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
         }
         $parts[] = $cancelLabel;
     }elseif($label === '💰 شارژ کیف پول'){
-        $parts[] = '💰 شارژ کیف پول';
+        $parts[] = 'شارژ کیف پول';
     }elseif($label === '👛 خرید از کیف پول'){
-        $parts[] = '👛 خرید از کیف پول';
+        $parts[] = 'خرید از کیف پول';
     }elseif($label !== ''){
         $parts[] = $label;
     }
 
     if($includePaymentCode){
         $hashId = trim((string)($row['hash_id'] ?? ''));
-        if($hashId !== '') $parts[] = 'کد پرداخت: <code>' . v2raystore_h($hashId) . '</code>';
+        if($hashId !== '') $parts[] = '<code>' . v2raystore_h($hashId) . '</code>';
     }
     return implode(' — ', $parts);
 }
