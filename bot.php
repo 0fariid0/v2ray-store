@@ -927,8 +927,16 @@ if(preg_match('/^monthlyReportDay_(\d{4})_(\d{1,2})_(\d{1,2})$/', $data, $match)
     $year = intval($match[1]);
     $month = intval($match[2]);
     $day = intval($match[3]);
+    editText($message_id, v2raystore_getDayPaymentFormatText($year, $month, $day), v2raystore_getDayPaymentFormatKeys($year, $month, $day), 'HTML');
+    exit();
+}
+if(preg_match('/^monthlyReportDayFormat_(with|without)_(\d{4})_(\d{1,2})_(\d{1,2})$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+    $includePaymentCode = ($match[1] === 'with');
+    $year = intval($match[2]);
+    $month = intval($match[3]);
+    $day = intval($match[4]);
     $sent = function_exists('v2raystore_sendDayPaymentDetails')
-        ? v2raystore_sendDayPaymentDetails($year, $month, $day)
+        ? v2raystore_sendDayPaymentDetails($year, $month, $day, $includePaymentCode)
         : false;
     alert($sent ? 'ریز تراکنش‌های روز ارسال شد.' : 'ارسال ریز تراکنش‌های روز ناموفق بود.', !$sent);
     editText($message_id, v2raystore_getMonthlyReportDaysText($year, $month), v2raystore_getMonthlyReportDaysKeys($year, $month), 'HTML');
