@@ -2,6 +2,7 @@
 include_once __DIR__ . "/settings/values.php";
 include_once __DIR__ . '/settings/jdf.php';
 include_once __DIR__ . '/baseInfo.php';
+require_once __DIR__ . '/settings/adminNavigation.php';
 
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
@@ -3626,7 +3627,7 @@ function farid_getBroadcastTargetKeyboard($mode = 'message'){
     $rows[] = [['text'=>'📆 ۳۰ روز بدون خرید', 'callback_data'=>$prefix.'no_purchase_30', 'style'=>'primary']];
     $rows[] = [['text'=>'🚪 خارج‌شده از کانال', 'callback_data'=>$prefix.'left_channel', 'style'=>'warning']];
     $rows[] = [['text'=>'⚠️ کانفیگ غیرفعال', 'callback_data'=>$prefix.'inactive_config', 'style'=>'warning']];
-    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']];
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminBroadcastMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -3717,7 +3718,7 @@ function farid_getBroadcastStatusKeyboard($sendId = 0){
     }else{
         $rows[] = [['text'=>'🔄 بروزرسانی وضعیت', 'callback_data'=>'broadcastQueueStatus', 'style'=>'primary']];
     }
-    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminMessagesMenu']];
+    $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminBroadcastMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -5729,7 +5730,7 @@ function v2raystore_getNewMemberAccessMenuKeys(){
             ['text'=>'🧹 حذف کد ورود', 'callback_data'=>'clearBuyersAccessCode', 'style'=>'danger'],
             ['text'=>'🚪 معافیت جوین اجباری کانال', 'callback_data'=>'joinExemptMenu', 'style'=>'primary']
         ],
-        [['text'=>'🔙 برگشت به مدیریت', 'callback_data'=>'adminUsersMenu', 'style'=>'primary']]
+        [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminAccessMenu', 'style'=>'primary']]
     ]);
 }
 
@@ -5764,7 +5765,7 @@ function v2raystore_getJoinExemptMenuKeys(){
             ['text'=>'➖ حذف معافیت کاربر', 'callback_data'=>'removeJoinExemptUser', 'style'=>'danger']
         ],
         [['text'=>'📋 لیست کاربران معاف', 'callback_data'=>'joinExemptList', 'style'=>'primary']],
-        [['text'=>'🔙 برگشت', 'callback_data'=>'newMemberAccessMenu', 'style'=>'primary']]
+        [['text'=>'🔙 برگشت', 'callback_data'=>'adminAccessMenu', 'style'=>'primary']]
     ]);
 }
 
@@ -7535,7 +7536,7 @@ function v2raystore_getUserButtonSettingsKeys(){
         ['text'=>'✅ نمایش همه', 'callback_data'=>'setAllUserButtons_on', 'style'=>'success'],
         ['text'=>'❌ مخفی کردن همه', 'callback_data'=>'setAllUserButtons_off', 'style'=>'danger']
     ];
-    $keys[] = [['text'=>'🔙 برگشت به تنظیمات', 'callback_data'=>'adminSettingsMenu', 'style'=>'primary']];
+    $keys[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'adminAppearanceMenu', 'style'=>'primary']];
     return v2raystore_inlineKeyboardJson($keys);
 }
 
@@ -10825,6 +10826,7 @@ function bot($method, $datas = []){
 function sendMessage($txt, $key = null, $parse ="MarkDown", $ci= null, $msg = null){
     global $from_id;
     $ci = $ci??$from_id;
+    $key = v2raystore_adjustAdminBackMarkup($key, $ci);
     $key = v2raystore_styleReplyMarkup($key);
     return bot('sendMessage',[
         'chat_id'=>$ci,
@@ -10838,6 +10840,7 @@ function editKeys($keys = null, $msgId = null, $ci = null){
     global $from_id,$message_id;
     $ci = $ci??$from_id;
     $msgId = $msgId??$message_id;
+    $keys = v2raystore_adjustAdminBackMarkup($keys, $ci);
     $keys = v2raystore_styleReplyMarkup($keys);
    
     bot('editMessageReplyMarkup',[
@@ -10849,6 +10852,7 @@ function editKeys($keys = null, $msgId = null, $ci = null){
 function editText($msgId, $txt, $key = null, $parse = null, $ci = null){
     global $from_id;
     $ci = $ci??$from_id;
+    $key = v2raystore_adjustAdminBackMarkup($key, $ci);
     $key = v2raystore_styleReplyMarkup($key);
 
     return bot('editMessageText', [
@@ -11141,6 +11145,12 @@ $stmt->execute();
 $uinfo = $stmt->get_result();
 $userInfo = $uinfo->fetch_assoc();
 $stmt->close();
+if(isset($update) && (isset($update->message) || isset($update->callback_query))
+    && (int)$from_id !== (int)$admin && empty($userInfo['isAdmin'])
+    && v2raystore_isSilentBlocked($from_id)){
+    exit;
+}
+
 if(isset($from_id) && $from_id > 0 && function_exists('v2raystore_updateCurrentTelegramUserInfo')){
     $userInfo = v2raystore_updateCurrentTelegramUserInfo($from_id, $first_name ?? '', $last_name ?? '', $username ?? '', is_array($userInfo) ? $userInfo : []);
 }
@@ -11714,7 +11724,7 @@ function getRejectedAgentList(){
             
             $keys[] = [['text'=>"✅",'callback_data'=>"releaseRejectedAgent" . $userId],['text'=>$fullName,'callback_data'=>"v2raystore"],['text'=>$userId,'callback_data'=>"v2raystore"]];
         }
-        $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminUsersMenu"]];
+        $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminAgentsMenu"]];
         return json_encode(['inline_keyboard'=>$keys]);
     }else return null;
 }
@@ -11803,12 +11813,12 @@ function getAgentsList($offset = 0){
     $keys = array();
     if($agentList->num_rows == 0 && $offset == 0){
         $keys[] = [['text'=>'➕ افزودن نماینده دستی', 'callback_data'=>'addAgentManual', 'style'=>'success']];
-        $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminUsersMenu"]];
+        $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminAgentsMenu"]];
         return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
     }
     
     if($offset == 0) $keys[] = [['text'=>'➕ افزودن نماینده دستی', 'callback_data'=>'addAgentManual', 'style'=>'success']];
-    $keys[] = [['text'=>"حذف",'callback_data'=>"v2raystore"],['text'=>"قیمت/تخفیف",'callback_data'=>"v2raystore"],['text'=>"تاریخ نمایندگی",'callback_data'=>"v2raystore"],['text'=>"اسم نماینده",'callback_data'=>"v2raystore"],['text'=>"آیدی عددی",'callback_data'=>"v2raystore"]];
+
     if($agentList->num_rows > 0){
         while($row = $agentList->fetch_assoc()){
             $userId = $row['userid'];
@@ -11818,7 +11828,11 @@ function getAgentsList($offset = 0){
             $fullName = $userDetail->first_name . " " . $userDetail->last_name;
             $joinedDate = jdate("Y-m-d H:i",$row['agent_date']);
 
-            $keys[] = [['text'=>"❌",'callback_data'=>"removeAgent" . $userId],['text'=>"⚙️",'callback_data'=>"agentPercentDetails" . $userId],['text'=>$joinedDate,'callback_data'=>"v2raystore"],['text'=>$fullName,'callback_data'=>"agentDetails" . $userId],['text'=>$userId,'callback_data'=>"agentDetails" . $userId]];
+            $keys[] = [['text'=>'👤 ' . (trim($fullName) ?: $userId) . ' | ' . $userId, 'callback_data'=>'agentDetails' . $userId]];
+            $keys[] = [
+                ['text'=>'⚙️ قیمت و تحویل', 'callback_data'=>'agentPercentDetails' . $userId],
+                ['text'=>'❌ حذف نمایندگی', 'callback_data'=>'removeAgent' . $userId]
+            ];
         }
     }
     if($offset == 0 && $limit <= $agentList->num_rows)
@@ -11835,7 +11849,7 @@ function getAgentsList($offset = 0){
             ['text'=>" «« صفحه قبلی ««",'callback_data'=>"nextAgentList" . ($offset - $limit)]
             ];
             
-    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminUsersMenu"]];
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminAgentsMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function getAgentDiscounts($agentId){
@@ -12111,7 +12125,7 @@ function getServerListKeys($offset = 0){
 
 
     $keys = array();
-    $keys[] = [['text'=>"وضعیت",'callback_data'=>"v2raystore"],['text'=>"تنظیمات",'callback_data'=>"v2raystore"],['text'=>"نوعیت",'callback_data'=>"v2raystore"],['text'=>"سرور",'callback_data'=>"v2raystore"]];
+
     if($cats->num_rows == 0){
         $keys[] = [['text'=>"سروری یافت نشد",'callback_data'=>"v2raystore"]];
     }else {
@@ -12146,7 +12160,11 @@ function getServerListKeys($offset = 0){
                     $serverType = "مرزبان";
                     break;
             }
-            $keys[] = [['text'=>$state,'callback_data'=>'toggleServerState' . $id . "_" . $offset],['text'=>"⚙️",'callback_data'=>"showServerSettings" . $id . "_" . $offset],['text'=>$serverType??" ",'callback_data'=>"v2raystore"],['text'=>$cname,'callback_data'=>"v2raystore"]];
+            $keys[] = [['text'=>'🖥 ' . $cname . ' | ' . ($serverType ?? ''), 'callback_data'=>'showServerSettings' . $id . '_' . $offset]];
+            $keys[] = [
+                ['text'=>'وضعیت: ' . $state, 'callback_data'=>'toggleServerState' . $id . '_' . $offset],
+                ['text'=>'⚙️ تنظیمات سرور', 'callback_data'=>'showServerSettings' . $id . '_' . $offset]
+            ];
         } 
     }
     if($offset == 0 && $cats->num_rows >= $limit){
@@ -12206,7 +12224,7 @@ function getCategoriesKeys($offset = 0){
     }
     
     $keys[] = [['text'=>'➕ افزودن دسته جدید','callback_data'=>"addNewCategory"]];
-    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminSalesMenu"]];
+    $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminCatalogMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 function v2raystore_adminPaymentState(){
@@ -12230,7 +12248,7 @@ function getGateWaysKeys(){
             ['text'=>'🔌 روشن/خاموش روش‌های پرداخت', 'callback_data'=>'paymentMethodsSettings'],
             ['text'=>'📢 کانال گزارش و کانال قفل', 'callback_data'=>'paymentChannelsSettings']
         ],
-        [['text'=>'⬅️ بازگشت به پرداخت و درآمد', 'callback_data'=>'adminPaymentsMenu']]
+        [['text'=>'⬅️ بازگشت به پرداخت و درآمد', 'callback_data'=>'adminPaymentMethodsMenu']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
@@ -12396,7 +12414,7 @@ function getGateWaysLegacyKeys(){
             ['text'=>$lockChannel,'callback_data'=>'editLockChannel'],
             ['text'=>"کانال قفل",'callback_data'=>'v2raystore']
             ],
-        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminSalesMenu"]]
+        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminPaymentMethodsMenu"]]
         ]]);
 
 }
@@ -12942,7 +12960,7 @@ function getMainMenuButtonsKeys(){
         $keys[] = [['text'=>"دکمه ای یافت نشد ❕",'callback_data'=>"v2raystore"]];
     }
     $keys[] = [['text'=>"افزودن دکمه جدید ➕",'callback_data'=>"addNewMainButton"]];
-    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminSettingsMenu"]];
+    $keys[] = [['text'=>$buttonValues['back_button'],'callback_data'=>"adminAppearanceMenu"]];
     return json_encode(['inline_keyboard'=>$keys]);
 }
 
@@ -13606,7 +13624,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
             $keyboard[] = [['text' => $buttonValues['change_config_location'] ?? '🌎 تغییر لوکیشن', 'callback_data' => "switchLocation{$id}", 'style'=>'primary']];
         }
     
-        $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminReportsMenu"]];
+        $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminConfigsMenu"]];
         return ["keyboard"=>v2raystore_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }
@@ -14052,6 +14070,7 @@ function checkStep($table){
 }
 function setUser($value = 'none', $field = 'step'){
     global $connection, $from_id, $username, $first_name, $admin, $botState;
+    v2raystore_captureFormOrigin($value, $field);
 
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=?");
     $stmt->bind_param("i", $from_id);

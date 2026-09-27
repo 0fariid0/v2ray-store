@@ -60,6 +60,8 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
+v2raystore_handleAdminNavigation();
+v2raystore_handleUserBlocking();
 if(v2raystore_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
@@ -1827,33 +1829,6 @@ if(preg_match('/^sendMessageToUser(\d+)/',$userInfo['step'],$match) && ($from_id
     setUser();
 }
 
-if(preg_match('/^admin(Main|Quick|Reports|Configs|Sales|Payments|Users|Messages|Content|Settings)Menu$/', $data ?? '', $adminMenuMatch) && ($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
-    $adminMenuMap = [
-        'Main' => ['title' => $mainValues['reached_main_menu'] ?? 'مدیریت ربات', 'keys' => 'getAdminKeysPlus'],
-        'Quick' => ['title' => '⚡ دسترسی سریع مدیریت', 'keys' => 'getAdminQuickMenuKeys'],
-        'Reports' => ['title' => '📊 داشبورد و گزارش‌ها', 'keys' => 'getAdminReportsMenuKeys'],
-        'Configs' => ['title' => '🧾 سفارش‌ها و سرویس‌ها', 'keys' => 'getAdminConfigsMenuKeys'],
-        'Sales' => ['title' => '🖥 سرورها و پلن‌ها', 'keys' => 'getAdminSalesMenuKeys'],
-        'Payments' => ['title' => '💳 پرداخت، درآمد و جایزه', 'keys' => 'getAdminPaymentsMenuKeys'],
-        'Users' => ['title' => '👥 کاربران، نماینده‌ها و دسترسی‌ها', 'keys' => 'getAdminUsersMenuKeys'],
-        'Messages' => ['title' => '📨 پیام‌ها و پشتیبانی', 'keys' => 'getAdminMessagesMenuKeys'],
-        'Content' => ['title' => '📝 محتوا و آموزش‌ها', 'keys' => 'getAdminContentMenuKeys'],
-        'Settings' => ['title' => '⚙️ تنظیمات و ظاهر ربات', 'keys' => 'getAdminSettingsMenuKeys'],
-    ];
-    $menuName = $adminMenuMatch[1];
-    $menuInfo = $adminMenuMap[$menuName] ?? $adminMenuMap['Main'];
-    $keysFn = $menuInfo['keys'];
-    $textTitle = "<b>" . $menuInfo['title'] . "</b>
-
-";
-    if($menuName == 'Main'){
-        $textTitle = function_exists('v2raystore_adminDashboardText') ? v2raystore_adminDashboardText() : $menuInfo['title'];
-    }else{
-        $textTitle .= "مسیر: مدیریت ← {$menuInfo['title']}";
-    }
-    editText($message_id, $textTitle, function_exists($keysFn) ? $keysFn() : getAdminKeysPlus(), 'HTML');
-    exit();
-}
 if($data=='botReports' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id, "آمار ربات در این لحظه",getBotReportKeys());
 }
@@ -2816,7 +2791,7 @@ if(preg_match('/^addAgentManualDiscount_(\d+)$/', $userInfo['step'], $m) && $tex
     setUser();
     if($ok){
         sendMessage("✅ نماینده با موفقیت به‌صورت دستی اضافه شد.\n\nآیدی عددی: <code>$targetId</code>\nدرصد تخفیف عمومی: <code>$discountValue%</code>", $removeKeyboard, "HTML");
-        sendMessage("👤 پنل نمایندگی شما توسط مدیریت فعال شد.\n\nبرای مشاهده امکانات، از دکمه زیر استفاده کنید.", getMainKeys(), "HTML", $targetId);
+        sendMessage("👤 پنل نمایندگی شما توسط مدیریت فعال شد.\n\nبرای مشاهده امکانات، از دکمه زیر استفاده کنید.", v2raystore_mainKeysForRecipient($targetId), "HTML", $targetId);
         $keys = getAgentsList();
         if($keys != null) sendMessage($mainValues['agents_list'], $keys, "HTML");
     }else{
@@ -2841,7 +2816,7 @@ if(preg_match('/^removeAgent(\d+)/',$data,$match) && ($from_id == $admin || $use
     alert($mainValues['agent_deleted_successfuly']);
     $keys = getAgentsList();
     if($keys != null) editKeys($keys);
-    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>"adminUsersMenu"]]]]));
+    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>"adminAgentsMenu"]]]]));
 }
 if(preg_match('/^agentPercentDetails(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
@@ -5011,7 +4986,7 @@ if($data == "updateConfigsMenu" && ($from_id == $admin || $userInfo['isAdmin'] =
 
         [['text'=>"🚀 شروع / ادامه",'callback_data'=>"updateConfigsRun", 'style'=>'success'], ['text'=>"📊 وضعیت",'callback_data'=>"updateConfigsStatus", 'style'=>'primary']],
         [['text'=>"⛔️ توقف عملیات",'callback_data'=>"updateConfigsStop", 'style'=>'danger']],
-        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminConfigsMenu"]],
+        [['text'=>$buttonValues['back_button'],'callback_data'=>"adminConfigUpdateMenu"]],
     ]], JSON_UNESCAPED_UNICODE);
 
     $txt = "♻️ پنل مدیریت به‌روزرسانی و ارسال کانفیگ‌ها\n\n".
@@ -5060,7 +5035,7 @@ if($userInfo['step'] == 'manualAttachConfigLink' && $text != $buttonValues['canc
     setUser('', 'temp');
     setUser();
     if(!$ok){
-        sendMessage("❌ ثبت دستی انجام نشد:\n\n" . $result, json_encode(['inline_keyboard'=>[[['text'=>'↩️ تلاش دوباره','callback_data'=>'manualAttachConfig'], ['text'=>'⬅️ بازگشت','callback_data'=>'adminConfigsMenu']]]]), 'HTML');
+        sendMessage("❌ ثبت دستی انجام نشد:\n\n" . $result, json_encode(['inline_keyboard'=>[[['text'=>'↩️ تلاش دوباره','callback_data'=>'manualAttachConfig'], ['text'=>'⬅️ بازگشت','callback_data'=>'adminConfigCreateMenu']]]]), 'HTML');
         exit();
     }
     $msg = "✅ کانفیگ با موفقیت ثبت شد.\n\n" .
@@ -5070,7 +5045,7 @@ if($userInfo['step'] == 'manualAttachConfigLink' && $text != $buttonValues['canc
            "📡 سرور: <code>" . intval($result['server_id']) . "</code>\n" .
            "🔢 Inbound: <code>" . intval($result['inbound_id']) . "</code>";
     if(!empty($result['sub_link'])) $msg .= "\n\n🌐 subscription:\n<code>" . $result['sub_link'] . "</code>";
-    sendMessage($msg, json_encode(['inline_keyboard'=>[[['text'=>'➕ افزودن کانفیگ دیگر','callback_data'=>'manualAttachConfig']], [['text'=>'⬅️ بازگشت','callback_data'=>'adminConfigsMenu']]]]), 'HTML');
+    sendMessage($msg, json_encode(['inline_keyboard'=>[[['text'=>'➕ افزودن کانفیگ دیگر','callback_data'=>'manualAttachConfig']], [['text'=>'⬅️ بازگشت','callback_data'=>'adminConfigCreateMenu']]]]), 'HTML');
     exit();
 }
 
@@ -8402,7 +8377,7 @@ if(preg_match('/^agencyApprove(\d+)_(\d+)/',$userInfo['step'],$match) && $text !
         $stmt->bind_param("sii", $discount, $time, $match[1]);
         $stmt->execute();
         $stmt->close();
-        sendMessage($mainValues['agency_request_approved'], null,null,$match[1]);
+        sendMessage($mainValues['agency_request_approved'], v2raystore_mainKeysForRecipient($match[1]), null, $match[1]);
     }else sendMessage($mainValues['send_only_number']);
 }
 if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
@@ -9831,44 +9806,6 @@ if(preg_match('/^\/dlPic(\d+)/',$text,$match)){
         if($userid == $from_id || $from_id == $admin || $userInfo['isAdmin'] == true) sendPhoto($fileid, $caption);
     }
 }
-if($data == "banUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    delMessage();
-    sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید مسدود شود ارسال کنید.", $cancelKey);
-    setUser($data);
-}
-if($data=="unbanUser" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    delMessage();
-    sendMessage("لطفاً آیدی عددی کاربری را که می‌خواهید از حالت مسدود خارج شود ارسال کنید.", $cancelKey);
-    setUser($data);
-}
-if($userInfo['step'] == "banUser" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    if(is_numeric($text)){
-        
-        $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
-        $stmt->bind_param("i", $text);
-        $stmt->execute();
-        $usersList = $stmt->get_result();
-        $stmt->close();
-        
-        if($usersList->num_rows >0){
-            $userState = $usersList->fetch_assoc();
-            if($userState['step'] != "banned"){
-                $stmt = $connection->prepare("UPDATE `users` SET `step` = 'banned' WHERE `userid` = ?");
-                $stmt->bind_param("i", $text);
-                $stmt->execute();
-                $stmt->close();
-                
-                sendMessage("✅ کاربر مورد نظر با موفقیت مسدود شد.",$removeKeyboard);
-            }else{
-                sendMessage("ℹ️ این کاربر از قبل مسدود بوده است.",$removeKeyboard);
-            }
-        }else sendMessage("کاربری با این آیدی یافت نشد");
-        setUser();
-        sendMessage($mainValues['reached_main_menu'],getAdminKeysPlus());
-    }else{
-        sendMessage($mainValues['send_only_number']);
-    }
-}
 if($data=="mainMenuButtons" && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     editText($message_id,"مدیریت دکمه های صفحه اصلی",getMainMenuButtonsKeys());
 }
@@ -9908,33 +9845,6 @@ if(preg_match('/^setMainButtonAnswer(.*)/',$userInfo['step'],$match) && $text !=
     $stmt->close();
     
     sendMessage("مدیریت دکمه های صفحه اصلی",getMainMenuButtonsKeys());
-}
-if($userInfo['step'] == "unbanUser" && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
-    if(is_numeric($text)){
-        $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");
-        $stmt->bind_param("i", $text);
-        $stmt->execute();
-        $usersList = $stmt->get_result();
-        $stmt->close();
-
-        if($usersList->num_rows >0){
-            $userState = $usersList->fetch_assoc();
-            if($userState['step'] == "banned"){
-                $stmt = $connection->prepare("UPDATE `users` SET `step` = 'none' WHERE `userid` = ?");
-                $stmt->bind_param("i", $text);
-                $stmt->execute();
-                $stmt->close();
-
-                sendMessage("✅ کاربر مورد نظر با موفقیت از حالت مسدود خارج شد.",$removeKeyboard);
-            }else{
-                sendMessage("ℹ️ این کاربر در حال حاضر مسدود نیست.",$removeKeyboard);
-            }
-        }else sendMessage("کاربری با این آیدی یافت نشد");
-        setUser();
-        sendMessage($mainValues['reached_main_menu'],getAdminKeysPlus());
-    }else{
-        sendMessage($mainValues['send_only_number']);
-    }
 }
 if(preg_match("/^reply_(.*)/",$data,$match) and  ($from_id == $admin || $userInfo['isAdmin'] == true)){
     setUser("answer_" . $match[1]);
@@ -11353,7 +11263,7 @@ if($data == 'backplan' and ($from_id == $admin || $userInfo['isAdmin'] == true))
                     ];
     $keyboard[] = [['text'=>'➕ افزودن پلن حجمی','callback_data'=>"volumePlanSettings"],['text'=>'➕ افزودن پلن زمانی','callback_data'=>"dayPlanSettings"]];
     $keyboard[] = [['text' => "➕ افزودن پلن دلخواه", 'callback_data' => "editCustomPlan"]];
-    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminSalesMenu"]];
+    $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminCatalogMenu"]];
 
     $msg = ' ☑️ مدیریت پلن ها:';
     
@@ -16631,7 +16541,7 @@ function farid_inboundMoveMenuKeys($page = 0){
         if($page < $maxPage) $nav[] = ['text'=>'بعدی ➡️', 'callback_data'=>'inboundMoveSourcesPage_' . ($page + 1)];
         $rows[] = $nav;
     }
-    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigsMenu']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigUpdateMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -16793,7 +16703,7 @@ function farid_inboundMoveProgressKeys($job){
     }else{
         $rows[] = [['text'=>'🔁 عملیات جدید', 'callback_data'=>'inboundMoveMenu']];
     }
-    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigsMenu']];
+    $rows[] = [['text'=>$buttonValues['back_button'] ?? 'برگشت', 'callback_data'=>'adminConfigUpdateMenu']];
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
 }
 
@@ -16997,30 +16907,7 @@ function v2raystore_adminSectionBackRow(){
 }
 
 function getAdminKeysPlus(){
-    global $buttonValues;
-
-    // منوی اصلی مدیریت فقط دسته‌ها را نشان می‌دهد تا شلوغی کم شود.
-    $keys = [];
-    $keys[] = [
-        ['text'=>'📊 داشبورد و گزارش‌ها', 'callback_data'=>'adminReportsMenu'],
-        ['text'=>'🧾 سفارش‌ها و سرویس‌ها', 'callback_data'=>'adminConfigsMenu']
-    ];
-    $keys[] = [
-        ['text'=>'🖥 سرورها و پلن‌ها', 'callback_data'=>'adminSalesMenu'],
-        ['text'=>'💳 پرداخت، درآمد و جایزه', 'callback_data'=>'adminPaymentsMenu']
-    ];
-    $keys[] = [
-        ['text'=>'👥 کاربران و نماینده‌ها', 'callback_data'=>'adminUsersMenu'],
-        ['text'=>'📨 پیام‌ها و پشتیبانی', 'callback_data'=>'adminMessagesMenu']
-    ];
-    $keys[] = [
-        ['text'=>'📝 محتوا و آموزش‌ها', 'callback_data'=>'adminContentMenu'],
-        ['text'=>'⚙️ تنظیمات ربات', 'callback_data'=>'adminSettingsMenu']
-    ];
-    $keys[] = [['text'=>'⚡ دسترسی سریع مدیریت', 'callback_data'=>'adminQuickMenu']];
-    $keys[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'mainMenu']];
-
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Main');
 }
 
 function v2raystore_adminDashboardText(){
@@ -17044,167 +16931,39 @@ function v2raystore_adminDashboardText(){
 }
 
 function getAdminQuickMenuKeys(){
-    return json_encode(['inline_keyboard'=>[
-        [
-            ['text'=>'🔎 جستجوی کانفیگ', 'callback_data'=>'searchUsersConfig'],
-            ['text'=>'✉️ پیام به کاربر', 'callback_data'=>'messageToSpeceficUser']
-        ],
-        [
-            ['text'=>'♻️ آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu'],
-            ['text'=>'➕ افزودن کانفیگ', 'callback_data'=>'manualAttachConfig']
-        ],
-        [
-            ['text'=>'🖥 مدیریت سرورها', 'callback_data'=>'serversSetting'],
-            ['text'=>'📦 مدیریت پلن‌ها', 'callback_data'=>'backplan']
-        ],
-        [
-            ['text'=>'🧾 تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu'],
-            ['text'=>'📨 وضعیت صف پیام‌ها', 'callback_data'=>'broadcastQueueStatus']
-        ],
-        [v2raystore_adminSectionBackRow()[0]]
-    ]], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Quick');
 }
 
 function getAdminReportsMenuKeys(){
-    global $buttonValues;
-    $keys = [];
-    $keys[] = [
-        ['text'=>$buttonValues['bot_reports'] ?? 'آمار کلی ربات', 'callback_data'=>'botReports'],
-        ['text'=>$buttonValues['user_reports'] ?? 'گزارش کاربران', 'callback_data'=>'userReports']
-    ];
-    $keys[] = [
-        ['text'=>'📊 تنظیمات آمار کانال', 'callback_data'=>'reportChannelSettingsMenu']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Reports');
 }
 
 function getAdminConfigsMenuKeys(){
-    global $buttonValues;
-    $keys = [];
-    $keys[] = [['text'=>'🔎 جستجوی کاربر یا کانفیگ', 'callback_data'=>'searchUsersConfig']];
-    $keys[] = [
-        ['text'=>'➕ افزودن کانفیگ به کاربر', 'callback_data'=>'manualAttachConfig', 'style'=>'success'],
-        ['text'=>'♻️ مدیریت آپدیت کانفیگ‌ها', 'callback_data'=>'updateConfigsMenu']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['create_account'] ?? 'ساخت اکانت', 'callback_data'=>'createMultipleAccounts'],
-        ['text'=>'🗑 پاکسازی کانفیگ‌های تمام‌شده', 'callback_data'=>'cleanOldConfigsMenu']
-    ];
-    $keys[] = [
-        ['text'=>'🔁 تغییر اینباند کانفیگ‌ها', 'callback_data'=>'inboundMoveMenu'],
-        ['text'=>'🧪 مدیریت اکانت تست', 'callback_data'=>'testAccountManagement']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Configs');
 }
 
 function getAdminSalesMenuKeys(){
-    global $buttonValues;
-    $keys = [];
-    $keys[] = [
-        ['text'=>$buttonValues['server_settings'] ?? 'تنظیمات سرورها', 'callback_data'=>'serversSetting'],
-        ['text'=>$buttonValues['categories_settings'] ?? 'دسته‌بندی‌ها', 'callback_data'=>'categoriesSetting']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['plan_settings'] ?? 'پلن‌ها', 'callback_data'=>'backplan'],
-        ['text'=>$buttonValues['discount_settings'] ?? 'کد تخفیف', 'callback_data'=>'discount_codes']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Sales');
 }
 
 function getAdminPaymentsMenuKeys(){
-    global $buttonValues;
-    $rewardCfg = function_exists('v2raystore_getPurchaseRewardConfig') ? v2raystore_getPurchaseRewardConfig() : ['enabled'=>false];
-    $rewardState = !empty($rewardCfg['enabled']) ? '🟢' : '🔴';
-    $keys = [];
-    $keys[] = [
-        ['text'=>'🏦 حساب‌ها، درگاه‌ها و کانال‌ها', 'callback_data'=>'gateWays_Channels'],
-        ['text'=>'💳 کارت‌به‌کارت حرفه‌ای', 'callback_data'=>'proC2CMenu']
-    ];
-    $keys[] = [
-        ['text'=>$rewardState . ' 🎁 جایزه خرید و تمدید', 'callback_data'=>'rewardSettings'],
-        ['text'=>'⏱ تأیید خودکار سفارش', 'callback_data'=>'autoApproveOrdersMenu']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Payments');
 }
 
 function getAdminUsersMenuKeys(){
-    global $buttonValues, $from_id, $admin;
-    $keys = [];
-    $keys[] = [
-        ['text'=>'🔐 قفل و دسترسی اعضای جدید', 'callback_data'=>'newMemberAccessMenu'],
-        ['text'=>'🚪 معافیت جوین اجباری', 'callback_data'=>'joinExemptMenu']
-    ];
-    $keys[] = [
-        ['text'=>'🚪 پیام ترک کانال', 'callback_data'=>'proLeaveNoticeMenu'],
-        ['text'=>'👥 زیرمجموعه‌های کاربر', 'callback_data'=>'proReferralAsk']
-    ];
-    if($from_id == $admin){
-        $keys[] = [['text'=>$buttonValues['admins_list'] ?? 'فهرست مدیران', 'callback_data'=>'adminsList']];
-    }
-    $keys[] = [
-        ['text'=>$buttonValues['increase_wallet'] ?? 'افزایش موجودی', 'callback_data'=>'increaseUserWallet'],
-        ['text'=>$buttonValues['decrease_wallet'] ?? 'کاهش موجودی', 'callback_data'=>'decreaseUserWallet']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['ban_user'] ?? 'مسدود کردن کاربر', 'callback_data'=>'banUser'],
-        ['text'=>$buttonValues['unban_user'] ?? 'رفع مسدودی کاربر', 'callback_data'=>'unbanUser']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['agent_list'] ?? 'مدیریت نمایندگان', 'callback_data'=>'agentsList'],
-        ['text'=>'درخواست‌های رد شده', 'callback_data'=>'rejectedAgentList']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Users');
 }
 
 function getAdminMessagesMenuKeys(){
-    global $buttonValues;
-    $keys = [];
-    $keys[] = [['text'=>$buttonValues['message_to_user'] ?? '✉️ پیام به یک کاربر', 'callback_data'=>'messageToSpeceficUser']];
-    $keys[] = [
-        ['text'=>$buttonValues['tickets_list'] ?? 'تیکت‌ها', 'callback_data'=>'ticketsList'],
-        ['text'=>$buttonValues['message_to_all'] ?? 'ارسال پیام عمومی', 'callback_data'=>'message2All']
-    ];
-    $keys[] = [
-        ['text'=>$buttonValues['forward_to_all'] ?? 'فوروارد پیام عمومی', 'callback_data'=>'forwardToAll'],
-        ['text'=>'📊 وضعیت صف همگانی', 'callback_data'=>'broadcastQueueStatus']
-    ];
-    $keys[] = [
-        ['text'=>'📩 پیام اتمام/نزدیک اتمام', 'callback_data'=>'xuiMsgMenu'],
-        ['text'=>'📌 پیام‌های پین‌شده', 'callback_data'=>'broadcastPinsMenu']
-    ];
-    $keys[] = [
-        ['text'=>'📌 پین دستی متن/تصویر/فایل', 'callback_data'=>'proPinMenu'],
-        ['text'=>'🛠 متن خطایابی کانفیگ', 'callback_data'=>'editDiagAdminText']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Messages');
 }
 
 function getAdminContentMenuKeys(){
-    $keys = [];
-    $keys[] = [
-        ['text'=>'📝 متن خوش‌آمد و قوانین خرید', 'callback_data'=>'adminTextSettings'],
-        ['text'=>'📚 سوالات متداول و آموزش‌ها', 'callback_data'=>'adminHelpMenu']
-    ];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Content');
 }
 
 function getAdminSettingsMenuKeys(){
-    global $buttonValues;
-    $keys = [];
-    $keys[] = [
-        ['text'=>$buttonValues['bot_settings'] ?? 'تنظیمات ربات', 'callback_data'=>'botSettings'],
-        ['text'=>$buttonValues['main_button_settings'] ?? 'مدیریت دکمه‌های اصلی', 'callback_data'=>'mainMenuButtons']
-    ];
-    $keys[] = [['text'=>'🎛 تنظیمات دکمه‌های کاربر', 'callback_data'=>'userButtonSettings']];
-    $keys[] = v2raystore_adminSectionBackRow();
-    return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
+    return v2raystore_adminMenuKeys('Settings');
 }
 
 function farid_attachUpdateConfigButton($keyboardJson, $orderId){
