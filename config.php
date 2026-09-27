@@ -13221,6 +13221,49 @@ function getPlanDetailsKeys($planId){
         return json_encode(['inline_keyboard'=>$keyboard]);
     }
 }
+// Read-only snapshot for the centralized clients API in newer 3x-ui panels.
+// Inbound clientStats is not authoritative for a client shared by several inbounds.
+function v2raystore_sanaeiNewDetailSnapshot($serverConfig, $order){
+    $email = trim((string)($order['remark'] ?? ''));
+    if($email === ''){
+        $email = trim((string)v2raystore_sanaeiNewFindClientEmail(
+            intval($order['server_id'] ?? 0), (string)($order['uuid'] ?? ''),
+            intval($order['inbound_id'] ?? 0), ''
+        ));
+    }
+    if($email === '') return null;
+    $endpoint = '/panel/api/clients/get/' . rawurlencode($email);
+    $response = v2raystore_sanaeiRequestJson($serverConfig, $endpoint, 'GET');
+    if(!is_array($response) || empty($response['success'])){
+        $response = v2raystore_sanaeiRequestJson($serverConfig, $endpoint, 'POST');
+    }
+    if(!is_array($response) || empty($response['success'])) return null;
+    $obj = v2raystore_decodeMaybeJson($response['obj'] ?? null, true);
+    if(is_object($obj)) $obj = (array)$obj;
+    if(!is_array($obj)) return null;
+    $client = v2raystore_decodeMaybeJson($obj['client'] ?? null, true);
+    if(is_object($client)) $client = (array)$client;
+    // An empty/malformed response must never become zero traffic or unlimited.
+    if(!is_array($client) || trim((string)($client['email'] ?? '')) !== $email) return null;
+    $total = $client['totalGB'] ?? ($client['total_gb'] ?? null);
+    $used = $obj['usedTraffic'] ?? ($obj['used_traffic'] ?? null);
+    $expiry = $client['expiryTime'] ?? ($client['expiry_time'] ?? null);
+    if(!is_numeric($total) || !is_numeric($used) || !is_numeric($expiry)
+        || $total < 0 || $used < 0 || !array_key_exists('enable', $client)) return null;
+    $enabled = filter_var($client['enable'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    if($enabled === null) return null;
+    $total = (int)$total;
+    $used = (int)$used;
+    $expireSeconds = v2raystore_panelExpiryToSeconds($expiry);
+    $enabled = $enabled && ($total === 0 || $used < $total)
+        && ($expireSeconds === 0 || $expireSeconds > time());
+    return [
+        'leftgb' => $total === 0 ? 'نامحدود' : (round(max(0, $total - $used) / 1073741824, 2) . ' GB'),
+        'enabled' => $enabled,
+        'expire_date' => $expireSeconds,
+    ];
+}
+
 function getUserOrderDetailKeys($id, $offset = 0){
     global $connection, $botState, $mainValues, $buttonValues, $botUrl, $from_id, $admin, $userInfo;
     $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=?");
@@ -13299,6 +13342,31 @@ function getUserOrderDetailKeys($id, $offset = 0){
             $usedTraffic = $info->used_traffic;
             
             $leftgb = round( ($total - $usedTraffic) / 1073741824, 2) . " GB";
+        }elseif($serverType === "sanaei_new"){
+            $detailSnapshot = v2raystore_sanaeiNewDetailSnapshot($serverConfig, $order);
+            $found = is_array($detailSnapshot);
+            $enable = $found ? $detailSnapshot['enabled'] : null;
+            $leftgb = $found ? $detailSnapshot['leftgb'] : '⚠️ دریافت نشد';
+            $netType = '';
+            $security = '';
+            if($found){
+                $order['expire_date'] = $detailSnapshot['expire_date'];
+                $expire_date = $order['expire_date'] > 0
+                    ? jdate("Y-m-d H:i", $order['expire_date']) : 'نامحدود / شروع پس از اتصال';
+            }
+            // Network metadata is only needed for legacy dedicated-inbound buttons.
+            if($inbound_id == 0){
+                foreach(v2raystore_panelListFromGetJson(getJson($server_id)) as $row){
+                    $settings = v2raystore_decodeMaybeJson($row->settings ?? '{}', true);
+                    foreach(($settings['clients'] ?? []) as $client){
+                        if(v2raystore_panelClientEmail($client) !== $remark) continue;
+                        $stream = v2raystore_decodeMaybeJson($row->streamSettings ?? '{}', true);
+                        $netType = $stream['network'] ?? '';
+                        $security = $stream['security'] ?? '';
+                        break 2;
+                    }
+                }
+            }
         }else{
             $response = getJson($server_id)->obj;
             if($inbound_id == 0) {
@@ -13520,7 +13588,18 @@ function getUserOrderDetailKeys($id, $offset = 0){
         $subLink = ($linkOptions['sub'] && $customerSubLink != "") ? "<code>" . $customerSubLink . "</code>" : "";
 
         
-        $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
+        if($serverType === 'sanaei_new' && $detailSnapshot === null){
+            // Do not offer a state toggle based on a failed read.
+            foreach($keyboard as &$keyRow){
+                $keyRow = array_values(array_filter($keyRow, function($key){
+                    return strpos((string)($key['callback_data'] ?? ''), 'changeUserConfigState') !== 0;
+                }));
+            }
+            unset($keyRow);
+            $enable = '⚠️ وضعیت قابل دریافت نیست';
+        }else{
+            $enable = $enable == true ? $buttonValues['active'] : $buttonValues['deactive'];
+        }
         $msg = v2raystore_buildConfigDetailsMessage($enable, $remark, $configLinks, $subLink, $configNote);
 
         if(($from_id == $admin || ($userInfo['isAdmin'] ?? false) == true)){
@@ -13611,6 +13690,31 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
                 
                 $leftgb = round( ($total - $usedTraffic) / 1073741824, 2) . " GB";
             } else $leftgb = "⚠️";
+        }elseif($serverType === "sanaei_new"){
+            $detailSnapshot = v2raystore_sanaeiNewDetailSnapshot($serverConfig, $order);
+            $found = is_array($detailSnapshot);
+            $enable = $found ? $detailSnapshot['enabled'] : null;
+            $leftgb = $found ? $detailSnapshot['leftgb'] : '⚠️ دریافت نشد';
+            $netType = '';
+            $security = '';
+            if($found){
+                $order['expire_date'] = $detailSnapshot['expire_date'];
+                $expire_date = $order['expire_date'] > 0
+                    ? jdate("Y-m-d H:i", $order['expire_date']) : 'نامحدود / شروع پس از اتصال';
+            }
+            // Network metadata is only needed for legacy dedicated-inbound buttons.
+            if($inbound_id == 0){
+                foreach(v2raystore_panelListFromGetJson(getJson($server_id)) as $row){
+                    $settings = v2raystore_decodeMaybeJson($row->settings ?? '{}', true);
+                    foreach(($settings['clients'] ?? []) as $client){
+                        if(v2raystore_panelClientEmail($client) !== $remark) continue;
+                        $stream = v2raystore_decodeMaybeJson($row->streamSettings ?? '{}', true);
+                        $netType = $stream['network'] ?? '';
+                        $security = $stream['security'] ?? '';
+                        break 2;
+                    }
+                }
+            }
         }else{
             $response = getJson($server_id)->obj;
             if($response){
@@ -13852,7 +13956,8 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
     
             }
             $enable = $enable == true? $buttonValues['active']:$buttonValues['deactive'];
-        }else $enable = $mainValues['config_doesnt_exist'];
+        }else $enable = ($serverType === 'sanaei_new')
+            ? '⚠️ وضعیت قابل دریافت نیست' : $mainValues['config_doesnt_exist'];
 
 
         $stmt= $connection->prepare("SELECT * FROM `server_info` WHERE `id`=?");
