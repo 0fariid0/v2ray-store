@@ -3384,7 +3384,7 @@ if($userInfo['step'] == "editRewardTime" && ($from_id == $admin || $userInfo['is
     }
     
     setSettings('rewaredTime', $text);
-    sendMessage('📊 آمار و گزارش‌ها',getAdminReportsMenuKeys());
+    sendMessage('📣 بازاریابی و گزارش درآمد',getBotMarketingSettingKeys());
     setUser();
     exit();
 }
