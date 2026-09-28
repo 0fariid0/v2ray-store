@@ -110,7 +110,7 @@ function v2raystore_adminMenuTree(){
         'Content'=>['📝 محتوا و آموزش','adminMainMenu',[
             ['📝 خوش‌آمد و قوانین خرید','adminTextSettings'],['📚 آموزش و سوالات','adminHelpMenu']]],
         'Settings'=>['⚙️ تنظیمات ربات','adminMainMenu',[
-            ['🔐 وضعیت و امنیت ربات','botSettingsAccess'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👮 مدیران ربات','adminsList']]],
+            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👮 مدیران ربات','adminsList']]],
         'Appearance'=>['🎛 ظاهر و دکمه‌ها','adminSettingsMenu',[
             ['➕ دکمه‌های سفارشی','mainMenuButtons'],['🎛 چیدمان دکمه‌ها','userButtonSettings']]],
         // Older messages with the old Quick callback remain usable.
