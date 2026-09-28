@@ -2105,6 +2105,7 @@ if(preg_match('/^setAllUserButtons_(on|off)$/', $data, $match) && ($from_id == $
 if(preg_match('/^botSettings(Sales|Service|Connections|Access|Marketing)$/', $data ?? '', $botSettingsSectionMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $sectionFunctions = [
         'Sales'=>'getBotSalesSettingKeys',
+        'AgentOptions'=>'v2raystore_agentOptionsKeys',
         'Service'=>'getBotServiceSettingKeys',
         'Connections'=>'getBotConnectionSettingKeys',
         'Access'=>'getBotAccessSettingKeys',
@@ -2202,6 +2203,7 @@ if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($f
     $section = $changedBotKey !== '' && function_exists('v2raystore_botSettingSectionForKey') ? v2raystore_botSettingSectionForKey($changedBotKey) : '';
     $sectionFn = [
         'Sales'=>'getBotSalesSettingKeys',
+        'AgentOptions'=>'v2raystore_agentOptionsKeys',
         'Service'=>'getBotServiceSettingKeys',
         'Connections'=>'getBotConnectionSettingKeys',
         'Access'=>'getBotAccessSettingKeys',
@@ -3382,7 +3384,7 @@ if($userInfo['step'] == "editRewardTime" && ($from_id == $admin || $userInfo['is
     }
     
     setSettings('rewaredTime', $text);
-    sendMessage($mainValues['change_bot_settings_message'],getBotMarketingSettingKeys());
+    sendMessage('📊 آمار و گزارش‌ها',getAdminReportsMenuKeys());
     setUser();
     exit();
 }
