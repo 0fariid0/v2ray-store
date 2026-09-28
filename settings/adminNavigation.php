@@ -40,69 +40,79 @@ function v2raystore_setUserBlockMode($userId, $mode){
     return v2raystore_setSettingValue('SILENT_BLOCK_' . $userId, '0');
 }
 
-// Each entry: title, parent, child buttons. One action per row; no decorative dead buttons.
+// Each entry: title, parent, child buttons. Related actions are paired in two columns; no decorative dead buttons.
 function v2raystore_adminMenuTree(){
     return [
         'Main'=>['🧭 مدیریت ربات', 'mainMenu', [
-            ['📊 آمار و گزارش‌ها','adminReportsMenu'], ['🧾 مدیریت سرویس‌ها','adminConfigsMenu'],
-            ['🖥 سرورها و پلن‌ها','adminSalesMenu'], ['💳 پرداخت و جایزه','adminPaymentsMenu'],
-            ['👥 کاربران و نمایندگان','adminUsersMenu'], ['📨 پیام‌ها و پشتیبانی','adminMessagesMenu'],
-            ['📝 محتوا و آموزش','adminContentMenu'], ['⚙️ تنظیمات ربات','adminSettingsMenu']]],
+            ['👤 مدیریت کاربر','adminUsersMenu'], ['🤝 مدیریت نمایندگی','adminAgentsMenu'],
+            ['🧾 مدیریت سرویس','adminConfigsMenu'], ['🖥 سرورها و پلن‌ها','adminSalesMenu'],
+            ['💳 پرداخت و جایزه','adminPaymentsMenu'], ['📊 آمار و گزارش‌ها','adminReportsMenu'],
+            ['📨 پیام و پشتیبانی','adminMessagesMenu'], ['📝 محتوا و آموزش','adminContentMenu'],
+            ['⚙️ تنظیمات ربات','adminSettingsMenu'], ['⚡ دسترسی سریع','adminQuickMenu']]],
         'Reports'=>['📊 آمار و گزارش‌ها','adminMainMenu',[
-            ['📈 آمار کلی ربات','botReports'],['👤 گزارش یک کاربر','userReports'],
-            ['📊 تنظیمات گزارش و آمار کانال','reportChannelSettingsMenu']]],
+            ['📈 آمار کلی ربات','botReports'],['📊 گزارش‌های کانال','reportChannelSettingsMenu'],
+            ['⏱ فاصله گزارش درآمد','editRewardTime']]],
         'Configs'=>['🧾 مدیریت سرویس‌ها','adminMainMenu',[
-            ['🔎 جستجوی کاربر یا کانفیگ','searchUsersConfig'],['➕ ساخت و ثبت سرویس','adminConfigCreateMenu'],
+            ['🔎 جستجوی کانفیگ','searchUsersConfig'],['➕ ساخت و ثبت سرویس','adminConfigCreateMenu'],
             ['♻️ بروزرسانی و انتقال','adminConfigUpdateMenu'],['🧪 اکانت‌های تست','testAccountManagement'],
-            ['🗑 پاکسازی سرویس‌های تمام‌شده','cleanOldConfigsMenu']]],
+            ['🗑 پاکسازی سرویس‌ها','cleanOldConfigsMenu'],['♻️ قوانین تمدید و سرویس','botSettingsService'],
+            ['🔗 لینک، ساب و تحویل','botSettingsConnections']]],
         'ConfigCreate'=>['➕ ساخت و ثبت سرویس','adminConfigsMenu',[
-            ['➕ ثبت کانفیگ موجود برای کاربر','manualAttachConfig'],['📦 ساخت چند اکانت','createMultipleAccounts']]],
+            ['➕ ثبت کانفیگ کاربر','manualAttachConfig'],['📦 ساخت چند اکانت','createMultipleAccounts']]],
         'ConfigUpdate'=>['♻️ بروزرسانی و انتقال','adminConfigsMenu',[
-            ['♻️ ارسال و بروزرسانی کانفیگ‌ها','updateConfigsMenu'],['🔁 انتقال بین اینباندها','inboundMoveMenu']]],
+            ['♻️ آپدیت کانفیگ‌ها','updateConfigsMenu'],['🔁 انتقال بین اینباندها','inboundMoveMenu']]],
         'Sales'=>['🖥 سرورها و پلن‌ها','adminMainMenu',[
             ['🖥 مدیریت سرورها','serversSetting'],['📦 پلن‌ها و دسته‌بندی‌ها','adminCatalogMenu'],
-            ['🏷 کدهای تخفیف','discount_codes']]],
+            ['🏷 کدهای تخفیف','discount_codes'],['🛒 تنظیمات فروش','botSettingsSales']]],
         'Catalog'=>['📦 پلن‌ها و دسته‌بندی‌ها','adminSalesMenu',[
             ['📦 مدیریت پلن‌ها','backplan'],['🗂 مدیریت دسته‌بندی‌ها','categoriesSetting']]],
         'Payments'=>['💳 پرداخت و جایزه','adminMainMenu',[
-            ['🏦 روش‌ها و اطلاعات پرداخت','adminPaymentMethodsMenu'],['⏱ تأیید خودکار سفارش','autoApproveOrdersMenu'],
+            ['🏦 روش‌های پرداخت','adminPaymentMethodsMenu'],['🧾 کنترل رسید و تأیید','adminPaymentChecksMenu'],
             ['🎁 جایزه خرید و تمدید','rewardSettings']]],
+        'PaymentChecks'=>['🧾 کنترل رسید و تأیید','adminPaymentsMenu',[
+            ['⏱ تأیید خودکار','autoApproveOrdersMenu'],['🧾 بررسی فیش تکراری','receiptDuplicateSettings']]],
         'PaymentMethods'=>['🏦 روش‌ها و اطلاعات پرداخت','adminPaymentsMenu',[
-            ['💳 حساب‌ها، درگاه‌ها و کانال‌ها','gateWays_Channels'],['💳 تنظیمات کارت‌به‌کارت','proC2CMenu']]],
-        'Users'=>['👥 کاربران و نمایندگان','adminMainMenu',[
-            ['👤 اطلاعات و زیرمجموعه‌ها','adminUserLookupMenu'],['💰 مدیریت کیف پول کاربران','adminWalletMenu'],
-            ['🚫 مسدودی و رفع مسدودی','adminBlocksMenu'],['🤝 مدیریت نمایندگی','adminAgentsMenu'],
-            ['🔐 قوانین ورود و عضویت','adminAccessMenu'],['👮 مدیران ربات','adminsList']]],
+            ['🏦 حساب‌ها و درگاه‌ها','gateWays_Channels'],['💳 تنظیمات کارت‌به‌کارت','proC2CMenu']]],
+        'Users'=>['👤 مدیریت کاربر','adminMainMenu',[
+            ['🔎 جستجوی کاربر','userReports'],['🚫 مسدودی کاربران','adminBlocksMenu'],
+            ['💰 کیف پول کاربر','adminWalletMenu'],['🎗 دعوت و زیرمجموعه','adminMarketingMenu'],
+            ['✉️ پیام به کاربر','messageToSpeceficUser'],['🔐 دسترسی و عضویت','adminAccessMenu']]],
+        'Marketing'=>['🎗 دعوت و زیرمجموعه','adminUsersMenu',[
+            ['👥 زیرمجموعه‌های کاربر','proReferralAsk'],['🎗 بنر و پورسانت','inviteSetting']]],
         'UserLookup'=>['👤 اطلاعات و زیرمجموعه‌ها','adminUsersMenu',[
             ['👤 گزارش یک کاربر','userReports'],['👥 زیرمجموعه‌های کاربر','proReferralAsk']]],
         'Wallet'=>['💰 مدیریت کیف پول کاربران','adminUsersMenu',[
             ['➕ افزایش موجودی','increaseUserWallet'],['➖ کاهش موجودی','decreaseUserWallet']]],
         'Blocks'=>['🚫 مسدودی و رفع مسدودی','adminUsersMenu',[
             ['🚫 مسدودسازی عادی','banUser'],['🔇 مسدودسازی بی‌صدا','silentBanUser'],
-            ['✅ رفع مسدودی عادی / بی‌صدا','unbanUser']]],
-        'Agents'=>['🤝 مدیریت نمایندگی','adminUsersMenu',[
-            ['👥 فهرست و تنظیمات نمایندگان','agentsList'],['➕ افزودن نماینده','addAgentManual'],
-            ['📋 درخواست‌های ردشده','rejectedAgentList']]],
+            ['✅ رفع مسدودی','unbanUser']]],
+        'Agents'=>['🤝 مدیریت نمایندگی','adminMainMenu',[
+            ['👥 فهرست نمایندگان','agentsList'],['➕ افزودن نماینده','addAgentManual'],
+            ['📋 درخواست‌های ردشده','rejectedAgentList'],['⚙️ تنظیمات نمایندگی','adminAgentOptionsMenu']]],
+        'AgentOptions'=>['⚙️ تنظیمات نمایندگی','adminAgentsMenu',[
+            ['نمایندگی','changeBotagencyState'],['فروش نماینده','changeBotagentSellState'],
+            ['مبنای تخفیف','changeBotagencyPlanDiscount']]],
         'Access'=>['🔐 قوانین ورود و عضویت','adminUsersMenu',[
-            ['🔑 دسترسی اعضای جدید','newMemberAccessMenu'],['🚪 معافیت عضویت اجباری','joinExemptMenu'],
-            ['📩 پیام ترک کانال','proLeaveNoticeMenu']]],
+            ['🔑 دسترسی اعضای جدید','newMemberAccessMenu'],['🚪 معافیت عضویت','joinExemptMenu'],
+            ['📱 تأیید شماره و ورود','botSettingsAccess']]],
         'Messages'=>['📨 پیام‌ها و پشتیبانی','adminMainMenu',[
-            ['✉️ پیام به یک کاربر','messageToSpeceficUser'],['📣 پیام‌های همگانی','adminBroadcastMenu'],
-            ['📌 پیام‌های پین‌شده','adminPinsMenu'],['🎫 تیکت و خطایابی','adminSupportMenu'],
-            ['⏳ اعلان حجم و انقضای سرویس','xuiMsgMenu']]],
+            ['📣 ارسال همگانی','adminBroadcastMenu'],['📌 مدیریت پین‌ها','adminPinsMenu'],
+            ['🎫 تیکت و خطایابی','adminSupportMenu'],['⏳ پیام‌های خودکار','adminNoticesMenu']]],
+        'Notices'=>['⏳ پیام‌های خودکار','adminMessagesMenu',[
+            ['⏳ اعلان حجم و انقضا','xuiMsgMenu'],['📩 پیام ترک کانال','proLeaveNoticeMenu']]],
         'Broadcast'=>['📣 پیام‌های همگانی','adminMessagesMenu',[
             ['📝 ارسال پیام همگانی','message2All'],['↪️ فوروارد همگانی','forwardToAll'],
             ['📊 وضعیت صف ارسال','broadcastQueueStatus']]],
         'Pins'=>['📌 پیام‌های پین‌شده','adminMessagesMenu',[
-            ['📌 فهرست پین‌های همگانی','broadcastPinsMenu'],['➕ پین متن، تصویر یا فایل','proPinMenu']]],
+            ['📌 فهرست پین‌ها','broadcastPinsMenu'],['➕ پین پیام و فایل','proPinMenu']]],
         'Support'=>['🎫 تیکت و خطایابی','adminMessagesMenu',[
             ['🎫 تیکت‌ها','ticketsList'],['🛠 متن راهنمای خطایابی','editDiagAdminText']]],
         'Content'=>['📝 محتوا و آموزش','adminMainMenu',[
-            ['📝 خوش‌آمد و قوانین خرید','adminTextSettings'],['📚 آموزش‌ها و سوالات متداول','adminHelpMenu']]],
+            ['📝 خوش‌آمد و قوانین خرید','adminTextSettings'],['📚 آموزش و سوالات','adminHelpMenu']]],
         'Settings'=>['⚙️ تنظیمات ربات','adminMainMenu',[
-            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu']]],
+            ['🔐 وضعیت و امنیت ربات','botSettingsAccess'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👮 مدیران ربات','adminsList']]],
         'Appearance'=>['🎛 ظاهر و دکمه‌ها','adminSettingsMenu',[
-            ['➕ دکمه‌های سفارشی صفحه اصلی','mainMenuButtons'],['🎛 ترتیب و نمایش دکمه‌های کاربر','userButtonSettings']]],
+            ['➕ دکمه‌های سفارشی','mainMenuButtons'],['🎛 چیدمان دکمه‌ها','userButtonSettings']]],
         // Older messages with the old Quick callback remain usable.
         'Quick'=>['⚡ دسترسی سریع','adminMainMenu',[
             ['🔎 جستجوی کانفیگ','searchUsersConfig'],['✉️ پیام به کاربر','messageToSpeceficUser'],
@@ -114,13 +124,24 @@ function v2raystore_adminMenuKeys($name){
     global $from_id, $admin;
     $tree = v2raystore_adminMenuTree();
     $entry = $tree[$name] ?? $tree['Main'];
-    $rows = [];
+    $buttons = [];
+    $agentStates = $name === 'AgentOptions' ? v2raystore_adminBotSettingsState() : [];
     foreach($entry[2] as [$title,$callback]){
         if($callback === 'adminsList' && (int)$from_id !== (int)$admin) continue;
-        $rows[] = [['text'=>$title,'callback_data'=>$callback]];
+        if($name === 'AgentOptions'){
+            $key = substr($callback, strlen('changeBot'));
+            $fallback = $key === 'agentSellState' ? ($agentStates['sellState'] ?? 'off') : 'off';
+            $on = ($agentStates[$key] ?? $fallback) === 'on';
+            $title .= ' · ' . ($key === 'agencyPlanDiscount' ? ($on ? 'پلن' : 'سرور') : ($on ? '🟢' : '🔴'));
+        }
+        $buttons[] = ['text'=>$title,'callback_data'=>$callback];
     }
-    $rows[] = [['text'=>'⬅️ بازگشت','callback_data'=>$entry[1]]];
-    if($name !== 'Main') $rows[] = [['text'=>'🏠 صفحه اصلی مدیریت','callback_data'=>'adminMainMenu']];
+    $rows = array_chunk($buttons, 2);
+    $navigation = [['text'=>'⬅️ بازگشت','callback_data'=>$entry[1]]];
+    if($name !== 'Main' && $entry[1] !== 'adminMainMenu'){
+        $navigation[] = ['text'=>'🏠 مدیریت','callback_data'=>'adminMainMenu'];
+    }
+    $rows[] = $navigation;
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
@@ -284,6 +305,8 @@ function v2raystore_adjustAdminBackMarkup($markup, $recipientId){
         || ((int)$from_id !== (int)$admin && empty($userInfo['isAdmin']))) return $markup;
     $decoded = is_string($markup) ? json_decode($markup,true) : $markup;
     if(!is_array($decoded) || !isset($decoded['inline_keyboard'])) return $markup;
+    // A complete category menu already owns its parent; never make its Back link point to itself.
+    if(v2raystore_adminMenuFromMarkup($decoded) !== '') return $markup;
     $tree = v2raystore_adminMenuTree();
     if(preg_match('/^admin([A-Za-z]+)Menu$/D',(string)($data ?? ''),$m) && isset($tree[$m[1]])) return $markup;
     $source = $update->callback_query->message->reply_markup ?? null;
@@ -360,4 +383,30 @@ function v2raystore_isAdminReadScreen($callback){
         'updateConfigsMenu','inboundMoveMenu'
     ], true)) return true;
     return (bool)preg_match('/^(?:(?:agentDetails|agentPercentDetails|nextAgentList|nextServerPage|plansList|planDetails|nextCategoryPage|testPlanDetails)[0-9]+|showServerSettings[0-9]+_[0-9]+|botSettings[A-Za-z]+)$/D', $callback);
+}
+
+function v2raystore_agentOptionsKeys(){
+    return v2raystore_adminMenuKeys('AgentOptions');
+}
+
+// Pack actual settings as two actionable buttons per row. Preserve callbacks.
+function v2raystore_compactSettingsKeys($markup){
+    $decoded = json_decode($markup, true);
+    if(!is_array($decoded) || !isset($decoded['inline_keyboard'])) return $markup;
+    $actions = []; $navigation = [];
+    foreach($decoded['inline_keyboard'] as $row){
+        $labels = []; $buttons = [];
+        foreach($row as $button){
+            if(($button['callback_data'] ?? '') === 'v2raystore') $labels[] = (string)$button['text'];
+            elseif(preg_match('/بازگشت|برگشت/u',(string)($button['text'] ?? ''))) $navigation[] = $button;
+            else $buttons[] = $button;
+        }
+        if(count($buttons) === 1 && $labels){
+            $buttons[0]['text'] = implode(' / ', $labels) . ' · ' . $buttons[0]['text'];
+        }
+        foreach($buttons as $button) $actions[] = $button;
+    }
+    $decoded['inline_keyboard'] = array_chunk($actions, 2);
+    foreach(array_chunk($navigation, 2) as $row) $decoded['inline_keyboard'][] = $row;
+    return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
