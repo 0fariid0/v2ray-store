@@ -11379,7 +11379,6 @@ function getMainKeys(){
         }
     }
     if(count($temp) > 0) array_push($mainKeys,$temp);
-    if(!$isAdminUser && v2seg_group($from_id)==='new') $mainKeys[]=[['text'=>'🎟 کد دسترسی','callback_data'=>'cgEnterLegacy']];
     if($isAdminUser) array_push($mainKeys,[['text'=>"مدیریت ربات ⚙️",'callback_data'=>"managePanel"]]);
     return v2seg_compactCustomerKeys(v2raystore_inlineKeyboardJson($mainKeys),$userInfo);
 }
