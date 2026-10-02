@@ -3994,6 +3994,7 @@ if(preg_match('/^createAccAmount(\d+)_(\d+)_(\d+)/',$userInfo['step'], $match) &
     if(!defined('IMAGE_HEIGHT')) define('IMAGE_HEIGHT',540);
     for($i = 1; $i<= $text; $i++){
         $uniqid = generateRandomString(42,$protocol); 
+        if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
         if($portType == "auto"){
             $port++;
         }else{
@@ -4446,6 +4447,7 @@ if(preg_match('/havePaiedWeSwap(.*)/',$data,$match)) {
             $remark = "{$srv_remark}-{$from_id}-{$rnd}";
         }
         if(!empty($description)) $remark = $description;
+        if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
         if($portType == "auto"){
             file_put_contents('settings/temp.txt',$port.'-'.$last_num);
         }else{
@@ -7172,6 +7174,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
     // $remark = "{$srv_remark}-{$from_id}-{$rnd}";
     $remark = $payInfo['description']; 
     
+    if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
     if($portType == "auto"){
         file_put_contents('settings/temp.txt',$port.'-'.$last_num);
     }else{
@@ -7600,6 +7603,7 @@ if(preg_match('/accCustom(.*)/',$data, $match) and $text != $buttonValues['cance
     // $remark = "{$srv_remark}-{$uid}-{$rnd}";
     $remark = $payInfo['description'];
     
+    if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
     if($portType == "auto"){
         file_put_contents('settings/temp.txt',$port.'-'.$last_num);
     }else{
@@ -7989,6 +7993,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
                 $remark = "{$srv_remark}-{$from_id}-{$rnd}";
             }
         
+            if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
             if($portType == "auto"){
                 file_put_contents('settings/temp.txt',$port.'-'.$last_num);
             }else{
@@ -8547,6 +8552,7 @@ if(preg_match('/accept(.*)/',$data, $match) and $text != $buttonValues['cancel']
                 $remark = "{$srv_remark}-{$uid}-{$rnd}";
             }
         
+            if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
             if($portType == "auto"){
                 file_put_contents('settings/temp.txt',$port.'-'.$last_num);
             }else{
@@ -10057,6 +10063,7 @@ if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
         }
     }
     
+    if(function_exists('v2seg_configRemark')) $remark = v2seg_configRemark($remark, (isset($uid) ? $uid : (isset($from_id) ? $from_id : 0)));
     if($portType == "auto"){
         file_put_contents('settings/temp.txt',$port.'-'.$last_num);
     }else{
