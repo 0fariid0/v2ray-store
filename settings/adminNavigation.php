@@ -8,7 +8,7 @@ function v2raystore_mainKeysForRecipient($recipientId){
     try {
         $from_id = (int)$recipientId;
         $userInfo = $recipient;
-        $botState = v2raystore_applyRoleSpecificStates(v2raystore_getBotStatesArray(true), $recipient);
+        $botState = v2seg_applyStates(v2raystore_applyRoleSpecificStates(v2raystore_getBotStatesArray(true), $recipient), $recipient);
         return getMainKeys();
     } finally {
         [$from_id, $userInfo, $botState] = $saved;
@@ -75,6 +75,7 @@ function v2raystore_adminMenuTree(){
             ['🏦 حساب‌ها و درگاه‌ها','gateWays_Channels'],['💳 تنظیمات کارت‌به‌کارت','proC2CMenu']]],
         'Users'=>['👤 مدیریت کاربر','adminMainMenu',[
             ['🔎 جستجوی کاربر','userReports'],['🚫 مسدودی کاربران','adminBlocksMenu'],
+            ['🆕 تنظیمات مشتریان جدید','customerGroupsMenu'],
             ['💰 کیف پول کاربر','adminWalletMenu'],['🎗 دعوت و زیرمجموعه','adminMarketingMenu'],
             ['✉️ پیام به کاربر','messageToSpeceficUser'],['🔐 دسترسی و عضویت','adminAccessMenu']]],
         'Marketing'=>['🎗 دعوت و زیرمجموعه','adminUsersMenu',[
@@ -110,7 +111,7 @@ function v2raystore_adminMenuTree(){
         'Content'=>['📝 محتوا و آموزش','adminMainMenu',[
             ['📝 خوش‌آمد و قوانین خرید','adminTextSettings'],['📚 آموزش و سوالات','adminHelpMenu']]],
         'Settings'=>['⚙️ تنظیمات ربات','adminMainMenu',[
-            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👮 مدیران ربات','adminsList']]],
+            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['🆕 مشتریان جدید','customerGroupsMenu'],['👮 مدیران ربات','adminsList']]],
         'Appearance'=>['🎛 ظاهر و دکمه‌ها','adminSettingsMenu',[
             ['➕ دکمه‌های سفارشی','mainMenuButtons'],['🎛 چیدمان دکمه‌ها','userButtonSettings']]],
         // Older messages with the old Quick callback remain usable.
@@ -346,6 +347,7 @@ function v2raystore_adjustAdminBackMarkup($markup, $recipientId){
 }
 
 function v2raystore_cancelMenuForStep($step){
+    if(strpos((string)$step,'cgInput_')===0) return 'Users';
     $groups = [
         'Blocks'=>'^(silentBanUser|banUser|unbanUser)',
         'Wallet'=>'^(increaseUserWallet|decreaseUserWallet|increaseWalletUser|decreaseWalletUser)',
@@ -377,7 +379,7 @@ function v2raystore_isAdminReadScreen($callback){
         'agentsList','rejectedAgentList','serversSetting','categoriesSetting','backplan',
         'discount_codes','botReports','gateWays_Channels','proC2CMenu','rewardSettings',
         'autoApproveOrdersMenu','newMemberAccessMenu','joinExemptMenu','proLeaveNoticeMenu',
-        'adminsList','broadcastQueueStatus','broadcastPinsMenu','proPinMenu','ticketsList',
+        'customerGroupsMenu','cgCode','adminsList','broadcastQueueStatus','broadcastPinsMenu','proPinMenu','ticketsList',
         'xuiMsgMenu','adminTextSettings','adminHelpMenu','botSettings','mainMenuButtons',
         'userButtonSettings','testAccountManagement','cleanOldConfigsMenu',
         'updateConfigsMenu','inboundMoveMenu'

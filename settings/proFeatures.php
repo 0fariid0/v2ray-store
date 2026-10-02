@@ -685,7 +685,8 @@ function v2raystore_pro_prepare_cart_to_cart_pay($hashId){
     $lines = [];
     $currentPrice = intval($pay['price'] ?? 0);
     $wallet = intval($userInfo['wallet'] ?? 0);
-    if($currentPrice > 0 && $wallet > 0 && $wallet < $currentPrice && intval($pay['wallet_used'] ?? 0) <= 0){
+    $groupWalletAllowed = v2seg_group($uid)==='legacy' || !empty(v2seg_settings()['wallet']);
+    if($groupWalletAllowed && $currentPrice > 0 && $wallet > 0 && $wallet < $currentPrice && intval($pay['wallet_used'] ?? 0) <= 0){
         $original = intval($pay['pay_amount_original'] ?? 0);
         if($original <= 0) $original = $currentPrice;
         $newPrice = $currentPrice - $wallet;
@@ -703,7 +704,7 @@ function v2raystore_pro_prepare_cart_to_cart_pay($hashId){
             }
         }
     }
-    if(v2raystore_pro_setting('CART_TO_CART_RANDOM_PRICE_STATE', 'off') === 'on'){
+    if(v2seg_group($uid)==='legacy' && v2raystore_pro_setting('CART_TO_CART_RANDOM_PRICE_STATE', 'off') === 'on'){
         $stmt = @$connection->prepare("SELECT `price`, `pay_amount_original` FROM `pays` WHERE `hash_id`=? AND `user_id`=? LIMIT 1");
         if($stmt){
             $stmt->bind_param('si', $hashId, $uid);
@@ -1000,7 +1001,7 @@ function v2raystore_pro_handle_bot_update(){
 گروه مخاطب را انتخاب کن. پیام ارسال‌شده برای هر کاربر بعد از ارسال، در همان چت پین می‌شود؛ اگر کاربر ربات را بلاک کرده باشد یا تلگرام اجازه پین ندهد، ارسال/پین آن کاربر رد می‌شود و صف ادامه پیدا می‌کند.", farid_getBroadcastTargetKeyboard('pin'), 'HTML');
         exit();
     }
-    if(preg_match('/^broadcastTargetPin_(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $data ?? '', $pinTargetMatch)){
+    if(preg_match('/^broadcastTargetPin_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config|(?:legacy|new)(?:_(?:active_config|no_config|no_purchase_30|inactive_config))?)$/', $data ?? '', $pinTargetMatch)){
         $target = farid_normalizeBroadcastTarget($pinTargetMatch[1]);
         $title = farid_getBroadcastTargetTitle($target);
         setUser('pinToAll|' . $target);
@@ -1011,7 +1012,7 @@ function v2raystore_pro_handle_bot_update(){
 برای جلوگیری از هنگ، شمارش مخاطبان داخل صف انجام می‌شود.", null, 'HTML');
         exit();
     }
-    if(preg_match('/^pinToAll\|(all|approved|buyers|access_code|no_config|no_purchase_30|left_channel|inactive_config)$/', $step, $pinStepMatch) && isset($text) && ($text !== ($buttonValues['cancel'] ?? 'لغو'))){
+    if(preg_match('/^pinToAll\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config|(?:legacy|new)(?:_(?:active_config|no_config|no_purchase_30|inactive_config))?)$/', $step, $pinStepMatch) && isset($text) && ($text !== ($buttonValues['cancel'] ?? 'لغو'))){
         $target = farid_normalizeBroadcastTarget($pinStepMatch[1]);
         $targetTitle = farid_getBroadcastTargetTitle($target);
         if(!empty($fileid)){
