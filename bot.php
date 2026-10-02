@@ -15912,7 +15912,7 @@ if(preg_match('/^copyHash(.*)/',$data,$match) && ($from_id == $admin || $userInf
 if($data == "managePanel" and (($from_id == $admin || $userInfo['isAdmin'] == true))){
     
     setUser();
-    $msg = function_exists('v2raystore_adminDashboardText') ? v2raystore_adminDashboardText() : ($mainValues['reached_main_menu'] ?? 'مدیریت ربات');
+    $msg = '👥 مدیریت کدام بخش را می‌خواهید باز کنید؟';
     editText($message_id, $msg, getAdminKeysPlus(), 'HTML');
     exit();
 }

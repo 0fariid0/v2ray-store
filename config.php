@@ -7726,7 +7726,7 @@ function v2raystore_getCartToCartAccountForUser($userId = null, $paymentKeys = n
 }
 
 function v2raystore_cartToCartAccountTitle($account){
-    if(($account['type'] ?? '') === 'new') return 'مشتریان جدید';
+    if(($account['type'] ?? '') === 'new') return 'حساب پرداخت';
     return (!empty($account['is_second'])) ? 'خرید دوم و بعدی' : 'خرید اول';
 }
 
@@ -8242,7 +8242,7 @@ function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = '
     global $mainValues, $userInfo;
     $pay = v2raystore_getPayByHash($hashId);
     if(!$pay || (int)$pay['user_id'] !== (int)($userInfo['userid'] ?? 0)){sendMessage('پرداخت متعلق به شما نیست.');return;}
-    if(v2seg_group($userInfo['userid']) === 'new' && trim(v2seg_settings()['card']) === ''){sendMessage('کارت مستقل مشتریان جدید هنوز تنظیم نشده است.');return;}
+    if(v2seg_group($userInfo['userid']) === 'new' && trim(v2seg_settings()['card']) === ''){sendMessage('اطلاعات پرداخت هنوز تنظیم نشده است.');return;}
     $proPayLine = function_exists('v2raystore_pro_prepare_cart_to_cart_pay') ? v2raystore_pro_prepare_cart_to_cart_pay($hashId) : '';
     $paymentKeys = v2raystore_getPaymentKeys();
     $account = v2raystore_getCartToCartAccountForUser($userInfo['userid'] ?? null, $paymentKeys);
@@ -11379,9 +11379,9 @@ function getMainKeys(){
         }
     }
     if(count($temp) > 0) array_push($mainKeys,$temp);
-    if(!$isAdminUser && v2seg_group($from_id)==='new') $mainKeys[]=[['text'=>'🎟 ورود مشتریان قدیمی','callback_data'=>'cgEnterLegacy']];
+    if(!$isAdminUser && v2seg_group($from_id)==='new') $mainKeys[]=[['text'=>'🎟 کد دسترسی','callback_data'=>'cgEnterLegacy']];
     if($isAdminUser) array_push($mainKeys,[['text'=>"مدیریت ربات ⚙️",'callback_data'=>"managePanel"]]);
-    return v2raystore_inlineKeyboardJson($mainKeys); 
+    return v2seg_compactCustomerKeys(v2raystore_inlineKeyboardJson($mainKeys),$userInfo);
 }
 function getAgentKeys(){
     global $buttonValues, $mainValues, $from_id, $userInfo, $connection;
