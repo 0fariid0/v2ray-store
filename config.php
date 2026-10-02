@@ -11260,6 +11260,7 @@ function getMainKeys(){
     $temp = array();
 
     $isAdminUser = ($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin'])));
+    if($isAdminUser && ($returnKeys=v2raystore_formReturnKeys())!==null)return $returnKeys;
     $addRow = function($buttons) use (&$mainKeys){
         $row = [];
         foreach($buttons as $btn){
@@ -11395,33 +11396,7 @@ function getAgentKeys(){
         [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]],
     ]]);
 }
-function getAdminKeys(){
-    global $buttonValues, $mainValues, $from_id, $admin;
-    
-    return json_encode(['inline_keyboard'=>[
-        [['text'=>$buttonValues['bot_reports'],'callback_data'=>"botReports"],['text'=>$buttonValues['message_to_user'],'callback_data'=>"messageToSpeceficUser"]],
-        [['text'=>$buttonValues['user_reports'],'callback_data'=>"userReports"]],
-        ($from_id == $admin?[['text'=>$buttonValues['admins_list'],'callback_data'=>"adminsList"]]:[]),
-        [['text'=>$buttonValues['increase_wallet'],'callback_data'=>"increaseUserWallet"],['text'=>$buttonValues['decrease_wallet'],'callback_data'=>"decreaseUserWallet"]],
-        [['text'=>$buttonValues['create_account'],'callback_data'=>"createMultipleAccounts"],
-        ['text'=>$buttonValues['gift_volume_day'],'callback_data'=>"giftVolumeAndDay"]],
-        [['text'=>$buttonValues['ban_user'],'callback_data'=>"banUser"],['text'=>$buttonValues['unban_user'],'callback_data'=>"unbanUser"]],
-        [['text'=>$buttonValues['search_admin_config'],'callback_data'=>"searchUsersConfig"]],
-        [['text'=>$buttonValues['server_settings'],'callback_data'=>"serversSetting"]],
-        [['text'=>$buttonValues['categories_settings'],'callback_data'=>"categoriesSetting"]],
-        [['text'=>$buttonValues['plan_settings'],'callback_data'=>"backplan"]],
-        [['text'=>$buttonValues['discount_settings'],'callback_data'=>"discount_codes"],['text'=>$buttonValues['main_button_settings'],'callback_data'=>"mainMenuButtons"]],
-        [['text'=>$buttonValues['gateways_settings'],'callback_data'=>"gateWays_Channels"],['text'=>$buttonValues['bot_settings'],'callback_data'=>'botSettings']],
-        [['text'=>$buttonValues['tickets_list'],'callback_data'=>"ticketsList"],['text'=>$buttonValues['message_to_all'],'callback_data'=>"message2All"]],
-        [['text'=>$buttonValues['forward_to_all'],'callback_data'=>"forwardToAll"]],
-        [
-            ['text'=>$buttonValues['agent_list'],'callback_data'=>"agentsList"],
-            ['text'=>'درخواست های رد شده','callback_data'=>"rejectedAgentList"]
-            ],
-        [['text'=>$buttonValues['back_to_main'],'callback_data'=>"mainMenu"]],
-    ]]);
-    
-}
+function getAdminKeys(){return v2raystore_adminMenuKeys('Main');}
 
 
 

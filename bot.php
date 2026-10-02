@@ -60,6 +60,7 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
+v2raystore_normalizeAdminCallback();
 v2seg_reportRoute();
 v2raystore_handleAdminNavigation();
 v2raystore_handleUserBlocking();
