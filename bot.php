@@ -62,6 +62,9 @@ if($robotState == "off" && $from_id != $admin){
 }
 v2raystore_handleAdminNavigation();
 v2raystore_handleUserBlocking();
+v2seg_admin();
+v2seg_gate();
+v2seg_guardSelection();
 if(v2raystore_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
@@ -1729,7 +1732,7 @@ if(strstr($text, "/start ")){
         if($inviterInfo->num_rows > 0){
             $first_name = !empty($first_name)?$first_name:" ";
             $username = !empty($username)?$username:" ";
-            if($uinfo->num_rows == 0){
+            if($uinfo->num_rows == 0 && empty($GLOBALS['v2seg_created_user'])){
                 $sql = "INSERT INTO `users` (`userid`, `name`, `username`, `refcode`, `wallet`, `date`, `refered_by`)
                                     VALUES (?,?,?, 0,0,?,?)";
                 $stmt = $connection->prepare($sql);
@@ -4930,7 +4933,7 @@ if(($data == 'message2All' || $data == 'startBroadcastMessage2All') && ($from_id
     exit();
 }
 
-if(preg_match('/^broadcastTargetMessage_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^broadcastTargetMessage_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config|(?:legacy|new)(?:_(?:active_config|no_config|no_purchase_30|inactive_config))?)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
     $title = farid_getBroadcastTargetTitle($target);
 
@@ -6221,7 +6224,7 @@ if($userInfo['step'] == "xuiMsgSendNear" && ($from_id == $admin || $userInfo['is
 
 
 
-if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^s2a(?:\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config|(?:legacy|new)(?:_(?:active_config|no_config|no_purchase_30|inactive_config))?))?$/', $userInfo['step'] ?? '', $broadcastStepMatch) && $text != $buttonValues['cancel'] && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($broadcastStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
 
@@ -6304,7 +6307,7 @@ if($data=="forwardToAll" && ($from_id == $admin || $userInfo['isAdmin'] == true)
     sendMessage("📤 فوروارد همگانی\n\nلطفاً مشخص کنید پیام فورواردی برای کدام گروه از کاربران ارسال شود.", farid_getBroadcastTargetKeyboard('forward'), 'HTML');
     exit();
 }
-if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config|(?:legacy|new)(?:_(?:active_config|no_config|no_purchase_30|inactive_config))?)$/', $data, $match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $target = farid_normalizeBroadcastTarget($match[1]);
     $title = farid_getBroadcastTargetTitle($target);
 
@@ -6317,7 +6320,7 @@ if(preg_match('/^broadcastTargetForward_(all|approved|buyers|access_code|active_
 شمارش مخاطبان داخل صف انجام می‌شود تا کلیک روی دکمه باعث هنگ نشود.", $cancelKey, 'HTML');
     exit();
 }
-if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
+if(preg_match('/^forwardToAll(?:\|(all|approved|buyers|access_code|active_config|no_config|no_purchase_30|left_channel|inactive_config|(?:legacy|new)(?:_(?:active_config|no_config|no_purchase_30|inactive_config))?))?$/', $userInfo['step'] ?? '', $forwardStepMatch) && ($from_id == $admin || $userInfo['isAdmin'] == true) && $text != $buttonValues['cancel']){
     $target = farid_normalizeBroadcastTarget($forwardStepMatch[1] ?? 'all');
     $targetTitle = farid_getBroadcastTargetTitle($target);
 
@@ -6394,7 +6397,7 @@ if(preg_match('/selectServer(?<serverId>\d+)_(?<buyType>\w+)/',$data, $match) &&
         while ($file = $respd->fetch_assoc()){
             $id = $file['id'];
             $name = $file['title'];
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0" . v2seg_planSql() . "");
             $stmt->bind_param("ii", $sid, $id);
             $stmt->execute();
             $rowcount = $stmt->get_result()->num_rows; 
@@ -6448,7 +6451,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
         }
     }
 
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and COALESCE(`price`,0) != 0 and `catid`=? and `active`=1 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `price` != 0 and COALESCE(`price`,0) != 0 and `catid`=? and `active`=1" . v2seg_planSql() . " order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -6465,6 +6468,7 @@ if(preg_match('/selectCategory(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\w+
             if($userInfo['is_agent'] == true && ($match['buyType'] == "one" || $match['buyType'] == "much" || preg_match('/^renew\d+$/', $match['buyType']))){
                 $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $id, $sid, $file['volume'] ?? 0, 1) : $price;
             }
+            $price = v2seg_price($price);
             $price = ($price == 0) ? 'رایگان' : number_format($price).' تومان ';
             $keyboard[] = ['text' => "$name - $price", 'callback_data' => "selectPlan{$id}_{$call_id}_{$match['buyType']}"];
         }
@@ -6484,7 +6488,7 @@ if(preg_match('/selectCustomPlan(?<categoryId>\d+)_(?<serverId>\d+)_(?<buyType>\
         alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
         exit();
     }
-    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0 order by `id` asc");
+    $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id`=? and `catid`=? and `active`=1 AND COALESCE(`price`,0) != 0" . v2seg_planSql() . " order by `id` asc");
     $stmt->bind_param("ii", $sid, $call_id);
     $stmt->execute();
     $respd = $stmt->get_result();
@@ -6517,7 +6521,7 @@ if(preg_match('/selectCustomePlan(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\w
             $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $match[1], $serverId, 0, 1) : $price;
         }
 	}
-	sendMessage(str_replace("VOLUME-PRICE", $price, $mainValues['customer_custome_plan_volume']),$cancelKey);
+	sendMessage(str_replace("VOLUME-PRICE", v2seg_price($price,null,false), $mainValues['customer_custome_plan_volume']),$cancelKey);
 	setUser("selectCustomPlanGB" . $match[1] . "_" . $match[2] . "_" . $match['buyType']);
 }
 if(preg_match('/selectCustomPlanGB(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\w+)/',$userInfo['step'], $match) && ($botState['sellState']=="on" ||$from_id == $admin) && $text != $buttonValues['cancel']){
@@ -6554,7 +6558,7 @@ if(preg_match('/selectCustomPlanGB(?<planId>\d+)_(?<categoryId>\d+)_(?<buyType>\
         }
 	}
     
-	sendMessage(str_replace("DAY-PRICE", $price, $mainValues['customer_custome_plan_day']));
+	sendMessage(str_replace("DAY-PRICE", v2seg_price($price,null,false), $mainValues['customer_custome_plan_day']));
 	setUser("selectCustomPlanDay" . $id . "_" . $match['categoryId'] . "_" . $text . "_" . $match['buyType']);
 }
 if((preg_match('/selectCustomPlanDay(?<planId>\d+)_(?<categoryId>\d+)_(?<accountCount>\d+)_(?<buyType>\w+)/',$userInfo['step'], $match)) && ($botState['sellState']=="on" ||$from_id == $admin) && $text != $buttonValues['cancel']){
@@ -6667,6 +6671,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         alert($mainValues['no_plan_available'] ?? 'پلن پیدا نشد.', true);
         exit();
     }
+    if(!v2seg_isAdmin() && !v2seg_planAllowed($respd['id'])){alert('این پلن برای گروه شما فعال نیست.',true);exit;}
     $planServerIdForSale = intval($respd['server_id'] ?? 0);
     if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($planServerIdForSale, $from_id, $userInfo ?? null, $match['buyType'] ?? '')){
         alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
@@ -6711,7 +6716,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
             $agentBought = true;
         }
         
-        $price =  ($volume * $gbPrice) + ($days * $dayPrice);
+        $price = v2seg_price(($volume * $gbPrice) + ($days * $dayPrice));
         $hash_id = RandomString();
         $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'BUY_SUB' AND `state` = 'pending'");
         $stmt->bind_param("i", $from_id);
@@ -6891,6 +6896,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
         alert($mainValues['no_plan_available'] ?? 'پلن پیدا نشد.', true);
         exit();
     }
+    if(!v2seg_isAdmin() && !v2seg_planAllowed($respd['id'])){alert('این پلن برای گروه شما فعال نیست.',true);exit;}
     $planServerIdForSale = intval($respd['server_id'] ?? 0);
     if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($planServerIdForSale, $from_id, $userInfo ?? null, $match['buyType'] ?? '')){
         alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
@@ -6916,6 +6922,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
 
         $agentBought = true;
     }
+    $price = v2seg_group()==='new' && isset($accountCount) && $accountCount>0 ? v2seg_price($price/$accountCount)*$accountCount : v2seg_price($price);
     if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewBuyMatch)){
         $renewOrderId = intval($renewBuyMatch[1]);
         $stmt = $connection->prepare("SELECT `id`, `userid`, `remark`, `status`, `server_id` FROM `orders_list` WHERE `id` = ? LIMIT 1");
@@ -9908,6 +9915,7 @@ if(preg_match('/^answer_(.*)/',$userInfo['step'],$match) and  $from_id ==$admin 
 }
 if(preg_match('/freeTrial(\d+)_(?<buyType>\w+)/',$data,$match)) {
     $id = intval($match[1]);
+    if(!v2seg_isAdmin() && !v2seg_planAllowed($id)){alert('این پلن برای گروه شما فعال نیست.',true);exit;}
     $testPlanForLimit = function_exists('v2raystore_getTestPlanById') ? v2raystore_getTestPlanById($id) : null;
     $__v2raystoreManagedTestPlan = is_array($testPlanForLimit);
  
@@ -10617,7 +10625,7 @@ if(preg_match('/sConfigRenew(\d+)/', $data,$match)){
     $remark = $configInfo['remark'];
 
     if(isset($configInfo['marzban'])){
-        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `custom_sni` LIKE '%inbounds%' AND `active` = 1 AND `price` != 0");
+        $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `custom_sni` LIKE '%inbounds%' AND `active` = 1 AND `price` != 0" . v2seg_planSql() . "");
         $stmt->bind_param("i", $server_id);
     }else{
         $response = getJson($server_id)->obj;
@@ -10632,7 +10640,7 @@ if(preg_match('/sConfigRenew(\d+)/', $data,$match)){
                     break;
                 }
             }
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `inbound_id` = 0 AND `protocol` = ? AND `active` = 1 AND `price` != 0 AND `rahgozar` = 0");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `inbound_id` = 0 AND `protocol` = ? AND `active` = 1 AND `price` != 0 AND `rahgozar` = 0" . v2seg_planSql() . "");
         }else{
             foreach($response as $row){
                 if($row->id == $inboundId) {
@@ -10642,7 +10650,7 @@ if(preg_match('/sConfigRenew(\d+)/', $data,$match)){
                     break;
                 }
             }
-            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `inbound_id` != 0 AND `protocol` = ? AND `active` = 1 AND `price` != 0 AND `rahgozar` = 0");
+            $stmt = $connection->prepare("SELECT * FROM `server_plans` WHERE `server_id` = ? AND `inbound_id` != 0 AND `protocol` = ? AND `active` = 1 AND `price` != 0 AND `rahgozar` = 0" . v2seg_planSql() . "");
         }
         $stmt->bind_param("is", $server_id, $protocol);
     }
@@ -10670,7 +10678,8 @@ if(preg_match('/sConfigRenew(\d+)/', $data,$match)){
                 $id = $file['id'];
                 $name = $file['title'];
                 $price = $file['price'];
-                $price = ($price == 0) ? 'رایگان' : number_format($price).' تومان ';
+                $price = v2seg_price($price);
+            $price = ($price == 0) ? 'رایگان' : number_format($price).' تومان ';
                 $keyboard[] = ['text' => "$name - $price", 'callback_data' => "sConfigRenewPlan{$id}_{$inboundId}"];
             }
         }
@@ -10703,6 +10712,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
         alert($mainValues['no_plan_available'] ?? 'پلن پیدا نشد.', true);
         exit();
     }
+    if(!v2seg_isAdmin() && !v2seg_planAllowed($respd['id'])){alert('این پلن برای گروه شما فعال نیست.',true);exit;}
     $planServerIdForSale = intval($respd['server_id'] ?? 0);
     if(function_exists('v2raystore_canUserBuyFromServer') && !v2raystore_canUserBuyFromServer($planServerIdForSale, $from_id, $userInfo ?? null, $match['buyType'] ?? '')){
         alert(function_exists('v2raystore_serverSaleClosedMessage') ? v2raystore_serverSaleClosedMessage() : 'فروش این سرور فعلاً بسته است.', true);
@@ -10719,7 +10729,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
     $desc = $respd['descr'];
 	$sid = $respd['server_id'];
 	$keyboard = array();
-    $price =  $respd['price'];
+    $price = v2seg_price($respd['price']);
     $token = base64_encode("{$from_id}.{$id}");
     
     $hash_id = RandomString();
@@ -13322,7 +13332,7 @@ if(preg_match('/^renewAccount(\d+)$/',$data,$match) && $text != $buttonValues['c
     $keyboard = [];
     while($cat = $cats->fetch_assoc()){
         $catId = intval($cat['id']);
-        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `server_plans` WHERE `server_id` = ? AND `catid` = ? AND `active` = 1 AND `price` != 0");
+        $stmt = $connection->prepare("SELECT COUNT(*) AS cnt FROM `server_plans` WHERE `server_id` = ? AND `catid` = ? AND `active` = 1 AND `price` != 0" . v2seg_planSql());
         $stmt->bind_param("ii", $currentServerId, $catId);
         $stmt->execute();
         $row = $stmt->get_result()->fetch_assoc();
@@ -13439,6 +13449,8 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
     if($agentBought == true){
         $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $fid, $serverId, $respd['volume'] ?? 0, 1) : $price;
     }
+    $price = v2seg_price($price);
+    if(!v2seg_planAllowed($fid)){alert('این پلن برای گروه شما فعال نیست.',true);exit;}
     if(!preg_match('/^discountRenew/', $userInfo['step'])){
         $hash_id = RandomString();
         $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'RENEW_ACCOUNT' AND `state` = 'pending'");
@@ -14366,6 +14378,7 @@ if(preg_match('/increaseADay(.*)/', $data, $match)){
         if($agentBought == true){
             $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], 0, 1) : $price;
         }
+        $price = v2seg_price($price);
         if($price == 0) $price = "رایگان";
         else $price = number_format($price) . " تومان";
         $keyboard[] = ['text' => "$title روز $price", 'callback_data' => "selectPlanDayIncrease{$match[1]}_$id"];
@@ -14398,6 +14411,7 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     }
     
     
+    $planprice = v2seg_price($planprice);
     $hash_id = RandomString();
     $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` LIKE '%INCREASE_DAY%' AND `state` = 'pending'");
     $stmt->bind_param("i", $from_id);
@@ -14680,6 +14694,7 @@ if(preg_match('/^increaseAVolume(.*)/', $data, $match)){
         if($agentBought == true){
             $price = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($price, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], $cat['volume'] ?? 0, 1) : $price;
         }
+        $price = v2seg_price($price);
         if($price == 0) $price = "رایگان";
         else $price = number_format($price) . ' تومان';
         
@@ -14712,6 +14727,7 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
         $planprice = function_exists('v2raystore_applyAgentPricing') ? v2raystore_applyAgentPricing($planprice, $userInfo, $orderInfo['fileid'], $orderInfo['server_id'], $plangb ?? 0, 1) : $planprice;
     }
 
+    $planprice = v2seg_price($planprice);
     $hash_id = RandomString();
     $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` LIKE '%INCREASE_VOLUME%' AND `state` = 'pending'");
     $stmt->bind_param("i", $from_id);

@@ -3,6 +3,7 @@ include_once __DIR__ . "/settings/values.php";
 include_once __DIR__ . '/settings/jdf.php';
 include_once __DIR__ . '/baseInfo.php';
 require_once __DIR__ . '/settings/adminNavigation.php';
+require_once __DIR__ . '/settings/customerGroups.php';
 
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
@@ -1875,6 +1876,7 @@ function v2raystore_getTestAccountMenuKeys($userId, $plans = null){
     $pair = [];
     foreach($plans as $plan){
         $planId = intval($plan['id'] ?? 0);
+        if(!$isTestAdmin && !v2seg_planAllowed($planId,$userId)) continue;
         $used = v2raystore_userTestUsageCountForPlan($userId, $plan);
         $title = v2raystore_testPlanDisplayTitle($plan, true);
         if($limit !== 0 && $used >= $limit) $title = '🔒 ' . $title;
@@ -3536,12 +3538,16 @@ function v2raystore_getSwitchPairToKeys($fromServerId, $deleteMode = false, $mod
 function farid_normalizeBroadcastTarget($target){
     $target = trim((string)$target);
     // targetهای قدیمی حفظ شده‌اند و گروه‌های حرفه‌ای جدید هم اضافه شده‌اند.
+    if(preg_match('/^(legacy|new)(?:_(active_config|no_config|no_purchase_30|inactive_config))?$/D',$target)) return $target;
     $allowed = ['all', 'approved', 'buyers', 'access_code', 'active_config', 'no_config', 'no_purchase_30', 'left_channel', 'inactive_config'];
     return in_array($target, $allowed, true) ? $target : 'all';
 }
 
 function farid_getBroadcastTargetTitle($target){
     $target = farid_normalizeBroadcastTarget($target);
+    if(preg_match('/^(legacy|new)(?:_(active_config|no_config|no_purchase_30|inactive_config))?$/D',$target,$m)){
+        return ($m[1]==='legacy'?'مشتریان قدیمی':'مشتریان جدید') . (isset($m[2])?' · '.farid_getBroadcastTargetTitle($m[2]):'');
+    }
     $titles = [
         'all' => 'همه کاربران ثبت‌شده در ربات',
         'approved' => 'کاربرانی که دسترسی فعال به ربات دارند',
@@ -3562,6 +3568,11 @@ function farid_getBroadcastTargetCondition($target, $userAlias = 'u'){
     $u = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$userAlias);
     if($u === '') $u = 'u';
     $adminId = intval($admin ?? 0);
+    if(preg_match('/^(legacy|new)(?:_(active_config|no_config|no_purchase_30|inactive_config))?$/D',$target,$m)){
+        $legacy = "EXISTS(SELECT 1 FROM v2_customer_groups cg WHERE cg.userid={$u}.userid AND cg.segment='legacy')";
+        $cohort = $m[1]==='legacy' ? $legacy : "NOT ($legacy)";
+        return "($cohort) AND (" . farid_getBroadcastTargetCondition($m[2]??'all',$u) . ')';
+    }
 
     $buyerCondition = "(EXISTS (SELECT 1 FROM `orders_list` o WHERE o.`userid` = {$u}.`userid` AND o.`status` = 1) OR EXISTS (SELECT 1 FROM `pays` p WHERE p.`user_id` = {$u}.`userid` AND p.`state` IN ('paid','approved')))";
     $accessCodeCondition = "(COALESCE({$u}.`access_code_used`, '') != '' AND COALESCE({$u}.`access_code_revoked`, 0) = 0)";
@@ -3589,7 +3600,9 @@ function farid_getBroadcastTargetCondition($target, $userAlias = 'u'){
             // این گزینه نباید همه کاربران قدیمی را حساب کند. مقدار پیش‌فرض approval_status در نصب‌های قدیمی
             // برای خیلی از کاربران approved است، بنابراین فقط approvalهایی حساب می‌شوند که واقعاً درخواست تایید داشته‌اند.
             // معیار دسترسی فعال: ادمین‌ها، خریداران قبلی، کاربران آزادشده با کد ورود، معافیت دسترسی، یا تایید دستی واقعی.
-            return "({$u}.`userid` = '{$adminId}' OR {$u}.`isAdmin` = 1 OR COALESCE({$u}.`access_exempt`, 0) = 1 OR $accessCodeCondition OR $buyerCondition OR $manualApprovalCondition)";
+            $legacy = "EXISTS(SELECT 1 FROM v2_customer_groups cg WHERE cg.userid={$u}.userid AND cg.segment='legacy')";
+            $newEnabled = !empty(v2seg_settings()['enabled']) ? '1=1' : '0=1';
+            return "({$u}.`userid` = '{$adminId}' OR {$u}.`isAdmin` = 1 OR (($legacy) AND (COALESCE({$u}.`access_exempt`, 0) = 1 OR $accessCodeCondition OR $buyerCondition OR $manualApprovalCondition)) OR (NOT ($legacy) AND ($newEnabled)))";
         case 'all':
         default:
             return "1=1";
@@ -3614,6 +3627,10 @@ function farid_getBroadcastTargetKeyboard($mode = 'message'){
     else $prefix = 'broadcastTargetMessage_';
 
     $rows = [
+        [['text'=>'👤 مشتریان قدیمی','callback_data'=>$prefix.'legacy'],['text'=>'🆕 مشتریان جدید','callback_data'=>$prefix.'new']],
+        [['text'=>'🔗 قدیمی با لینک فعال','callback_data'=>$prefix.'legacy_active_config'],['text'=>'🔗 جدید با لینک فعال','callback_data'=>$prefix.'new_active_config']],
+        [['text'=>'بدون لینک · قدیمی','callback_data'=>$prefix.'legacy_no_config'],['text'=>'بدون لینک · جدید','callback_data'=>$prefix.'new_no_config']],
+        [['text'=>'۳۰ روز بدون خرید · قدیمی','callback_data'=>$prefix.'legacy_no_purchase_30'],['text'=>'۳۰ روز بدون خرید · جدید','callback_data'=>$prefix.'new_no_purchase_30']],
         [['text'=>'🎯 انتخاب گروه مخاطب', 'callback_data'=>'v2raystore', 'style'=>'primary']],
         [['text'=>'🌍 همه کاربران', 'callback_data'=>$prefix.'all', 'style'=>'success']],
         [['text'=>'✅ دارای دسترسی', 'callback_data'=>$prefix.'approved', 'style'=>'primary'], ['text'=>'🛒 خریداران', 'callback_data'=>$prefix.'buyers', 'style'=>'primary']],
@@ -5832,6 +5849,8 @@ function v2raystore_referrerInstructionMessage($rejected = false){
 function v2raystore_handleNewMemberLock(){
     global $connection, $from_id, $admin, $userInfo, $botState, $text, $data, $first_name, $username;
 
+    // Customer groups gate owns admission of new customers; legacy rules remain intact.
+    if(v2seg_group($from_id) === 'new') return false;
     $mode = v2raystore_getNewMemberAccessMode($botState);
     if($mode === 'open') return false;
     if($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin']))) return false;
@@ -7322,6 +7341,7 @@ function v2raystore_salesStateBlockReason($kind = 'new', $agentContext = null){
         $sellState = $state['sellState'] ?? 'off';
     }
 
+    if(isset($GLOBALS['from_id']) && (int)$GLOBALS['from_id']>0 && v2seg_group()==='new' && empty(v2seg_settings()['sell'])) return 'sales_off';
     if($sellState !== 'on') return 'sales_off';
 
     // خاموش بودن دکمه خرید فقط برای خرید کاربران عادی اعمال شود.
@@ -7686,6 +7706,8 @@ function v2raystore_getCartToCartAccountForUser($userId = null, $paymentKeys = n
         else $userId = '';
     }
 
+    $newAccount = v2seg_account($userId);
+    if($newAccount !== null) return $newAccount;
     $primaryBank = trim((string)($paymentKeys['bankAccount'] ?? ''));
     $primaryHolder = trim((string)($paymentKeys['holderName'] ?? ''));
     $secondBank = trim((string)($paymentKeys['secondBankAccount'] ?? ($paymentKeys['bankAccount2'] ?? '')));
@@ -7704,6 +7726,7 @@ function v2raystore_getCartToCartAccountForUser($userId = null, $paymentKeys = n
 }
 
 function v2raystore_cartToCartAccountTitle($account){
+    if(($account['type'] ?? '') === 'new') return 'مشتریان جدید';
     return (!empty($account['is_second'])) ? 'خرید دوم و بعدی' : 'خرید اول';
 }
 
@@ -7716,6 +7739,10 @@ function v2raystore_markCardInfoChanged(){
 function v2raystore_cardContactRaw($paymentKeys = null){
     global $admin;
     if($paymentKeys === null) $paymentKeys = v2raystore_getPaymentKeys();
+    if(isset($GLOBALS['from_id']) && v2seg_group() === 'new') {
+        $raw = trim((string)v2seg_settings()['contact']);
+        return $raw !== '' ? $raw : (string)$admin;
+    }
     $raw = trim((string)($paymentKeys['cardContact'] ?? ''));
     return $raw !== '' ? $raw : (string)$admin;
 }
@@ -8213,6 +8240,9 @@ function v2raystore_cartToCartNoCardText($alreadyReceived = false, $paymentKeys 
 
 function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = 'HTML'){
     global $mainValues, $userInfo;
+    $pay = v2raystore_getPayByHash($hashId);
+    if(!$pay || (int)$pay['user_id'] !== (int)($userInfo['userid'] ?? 0)){sendMessage('پرداخت متعلق به شما نیست.');return;}
+    if(v2seg_group($userInfo['userid']) === 'new' && trim(v2seg_settings()['card']) === ''){sendMessage('کارت مستقل مشتریان جدید هنوز تنظیم نشده است.');return;}
     $proPayLine = function_exists('v2raystore_pro_prepare_cart_to_cart_pay') ? v2raystore_pro_prepare_cart_to_cart_pay($hashId) : '';
     $paymentKeys = v2raystore_getPaymentKeys();
     $account = v2raystore_getCartToCartAccountForUser($userInfo['userid'] ?? null, $paymentKeys);
@@ -11110,6 +11140,7 @@ function ip_in_range($ip, $range){
     return (($ip_decimal & $netmask_decimal) == ($range_decimal & $netmask_decimal));
 }
 
+v2seg_bootstrap();
 $time = time();
 $update = json_decode(file_get_contents("php://input"));
 if(isset($update->message)){
@@ -11189,7 +11220,7 @@ else $botState = array();
 $stmt->close();
 
 // اعمال تنظیمات جداگانه فروش و کیف پول برای نماینده‌ها بدون تغییر رفتار کاربران عادی.
-$botState = v2raystore_applyRoleSpecificStates($botState, $userInfo);
+$botState = v2seg_applyStates(v2raystore_applyRoleSpecificStates($botState, $userInfo), $userInfo);
 
 $channelLock = $botState['lockChannel'];
 $joniedState = v2raystore_getJoinedStateSafe($channelLock, $from_id);
@@ -11347,6 +11378,7 @@ function getMainKeys(){
         }
     }
     if(count($temp) > 0) array_push($mainKeys,$temp);
+    if(!$isAdminUser && v2seg_group($from_id)==='new') $mainKeys[]=[['text'=>'🎟 ورود مشتریان قدیمی','callback_data'=>'cgEnterLegacy']];
     if($isAdminUser) array_push($mainKeys,[['text'=>"مدیریت ربات ⚙️",'callback_data'=>"managePanel"]]);
     return v2raystore_inlineKeyboardJson($mainKeys); 
 }
@@ -12258,9 +12290,9 @@ function getPaymentCardsSettingsKeys(){
     global $admin;
     $p = v2raystore_getPaymentKeys();
     return json_encode(['inline_keyboard'=>[
-        [['text'=>(!empty($p['bankAccount'])?$p['bankAccount']:'—'),'callback_data'=>'changePaymentKeysbankAccount'], ['text'=>'شماره کارت اول','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['bankAccount'])?$p['bankAccount']:'—'),'callback_data'=>'changePaymentKeysbankAccount'], ['text'=>'کارت اول · مشتری قدیمی','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['holderName'])?$p['holderName']:'—'),'callback_data'=>'changePaymentKeysholderName'], ['text'=>'دارنده کارت اول','callback_data'=>'v2raystore']],
-        [['text'=>(!empty($p['secondBankAccount'])?$p['secondBankAccount']:(!empty($p['bankAccount2'])?$p['bankAccount2']:'—')),'callback_data'=>'changePaymentKeyssecondBankAccount'], ['text'=>'شماره کارت دوم','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['secondBankAccount'])?$p['secondBankAccount']:(!empty($p['bankAccount2'])?$p['bankAccount2']:'—')),'callback_data'=>'changePaymentKeyssecondBankAccount'], ['text'=>'کارت دوم · مشتری قدیمی','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['secondHolderName'])?$p['secondHolderName']:(!empty($p['holderName2'])?$p['holderName2']:'—')),'callback_data'=>'changePaymentKeyssecondHolderName'], ['text'=>'دارنده کارت دوم','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['cardContact'])?$p['cardContact']:(string)$admin),'callback_data'=>'changePaymentKeyscardContact'], ['text'=>'ادمین دریافت کارت','callback_data'=>'v2raystore']],
         [['text'=>'🔄 اعلام تغییر شماره کارت به کاربران','callback_data'=>'markCartToCartCardChanged']],
@@ -13237,6 +13269,7 @@ function getPlanDetailsKeys($planId){
             [['text'=>"✏️ ویرایش توضیحات",'callback_data'=>"v2raystoreplaneditdes$id"]],
             [['text'=>number_format($price) . " تومان",'callback_data'=>"v2raystoreplanrial$id"],['text'=>"💰 قیمت پلن",'callback_data'=>"v2raystore"]],
             [['text'=>$planActiveText,'callback_data'=>"v2raystoreplantoggleactive$id"],['text'=>"🔌 وضعیت فروش پلن",'callback_data'=>"v2raystore"]],
+            [['text'=>(v2seg_planFlags($id)['legacy_on'] ? '✅' : '❌').' مشتری قدیمی','callback_data'=>"cgPlan_{$id}_legacy_999999"],['text'=>(v2seg_planFlags($id)['new_on'] ? '✅' : '❌').' مشتری جدید','callback_data'=>"cgPlan_{$id}_new_999999"]],
             [['text'=>"♻️ دریافت لیست اکانت ها",'callback_data'=>"v2raystoreplanacclist$id"]],
             ($server_info['type'] == "marzban"?[['text'=>"انتخاب Host",'callback_data'=>"marzbanHostSettings" . $id]]:[]),
             [['text'=>"✂️ حذف",'callback_data'=>"v2raystoreplandelete$id"]],
@@ -22059,6 +22092,7 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     }
 
     $lines = ["🧾 <b>رسید پرداخت کارت‌به‌کارت</b>"];
+    $lines[] = "👥 گروه مشتری: <b>" . (v2seg_group($uid)==='legacy' ? 'قدیمی' : 'جدید') . "</b>";
     $lines[] = "📌 نوع: <b>" . v2raystore_h($typeTitle) . "</b>";
     if($user) $lines[] = v2raystore_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '');
     else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
