@@ -48,7 +48,7 @@ function v2seg_settings($fresh = false){
     $row = v2seg_one('SELECT payload FROM v2_customer_settings WHERE id=1');
     $s = json_decode($row['payload'] ?? '{}', true);
     return $GLOBALS['v2seg_settings'] = array_merge([
-        'enabled'=>false, 'percent'=>10, 'round'=>5000,
+        'enabled'=>false, 'legacy_enabled'=>true, 'percent'=>10, 'round'=>5000,
         'card'=>'', 'holder'=>'', 'contact'=>'', 'welcome'=>'',
         'sell'=>true, 'wallet'=>true, 'test'=>true, 'custom'=>true,
     ], is_array($s) ? $s : []);
@@ -104,7 +104,10 @@ function v2seg_planSql($alias='server_plans'){
     return " AND NOT EXISTS (SELECT 1 FROM v2_plan_audience va WHERE va.plan_id=$alias.id AND va.$column=0) ";
 }
 function v2seg_applyStates($state,$user){
-    if(!is_array($user) || empty($user['userid']) || v2seg_group($user['userid'])!=='new') return $state;
+    if(!is_array($user) || empty($user['userid']))return $state;
+    if(v2seg_group($user['userid'])==='legacy'){
+        return $state;
+    }
     $s=v2seg_settings();
     foreach(['sell'=>'sellState','wallet'=>'walletState','test'=>'testAccount','custom'=>'plandelkhahState'] as $key=>$flag){
         if(empty($s[$key])) $state[$flag]='off';
@@ -134,7 +137,7 @@ function v2seg_promote($uid,$code){
     $pay=v2seg_one("SELECT hash_id,state FROM pays WHERE user_id=? AND state IN ('pending','sent','processing','auto_processing') ORDER BY id DESC LIMIT 1",'i',[(int)$uid]);
     if($pay){
         $keys=($pay['state']==='pending') ? json_encode(['inline_keyboard'=>[[['text'=>'❌ لغو سفارش در انتظار','callback_data'=>'cancelPendingPay'.$pay['hash_id']]]]],JSON_UNESCAPED_UNICODE) : null;
-        sendMessage('ابتدا سفارش در انتظار را تکمیل یا لغو کنید؛ سپس کد ورود مشتریان قدیمی را دوباره بفرستید.',$keys); return 'pending';
+        sendMessage('ابتدا سفارش در انتظار را تکمیل یا لغو کنید؛ سپس کد دسترسی را دوباره بفرستید.',$keys); return 'pending';
     }
     $connection->begin_transaction();
     try {
@@ -164,14 +167,14 @@ function v2seg_gate(){
         if($result===true){
             $userInfo=v2raystore_getUserByTelegramId($from_id);
             $botState=v2raystore_applyRoleSpecificStates(v2raystore_getBotStatesArray(true),$userInfo);
-            sendMessage('✅ کد تأیید شد. از این پس قیمت‌ها و پرداخت‌های مشتریان قدیمی برای شما فعال است.',getMainKeys()); exit;
+            sendMessage('✅ کد تأیید شد. دسترسی شما فعال شد.',getMainKeys()); exit;
         }
     }
-    if(($data??'')==='cgEnterLegacy'){setUser('cgEnterLegacy');sendMessage('کد ورود مشتریان قدیمی را ارسال کنید.',$cancelKey);exit;}
+    if(($data??'')==='cgEnterLegacy'){setUser('cgEnterLegacy');sendMessage('کد دسترسی را ارسال کنید.',$cancelKey);exit;}
     $s=v2seg_settings();
     // Cancellation stays available when new-customer access is temporarily disabled.
     if(empty($s['enabled']) && !preg_match('/^cancelPendingPay/',(string)($data??''))){
-        $msg='🔒 پذیرش مشتریان جدید فعلاً غیرفعال است. اگر کد ورود مشتریان قدیمی دارید، همان کد را اینجا ارسال کنید.';
+        $msg='🔒 دسترسی فعلاً غیرفعال است. اگر کد دسترسی دارید، آن را اینجا ارسال کنید.';
         if(isset($update->callback_query)) alert($msg,true); else sendMessage($msg);
         exit;
     }
@@ -184,7 +187,7 @@ function v2seg_guardSelection(){
     if(isset($update->message->text) && ($text??'')===($buttonValues['cancel']??'لغو')) return;
     $input=isset($update->callback_query)?(string)($data??''):(string)($userInfo['step']??'');
     if(preg_match('/^(?:selectPlan|selectCustomePlan|selectCustomPlanGB|selectCustomPlanDay|enterCustomPlanName|enterAccountName|sConfigRenewPlan|freeTrial|freeCustomTrial)(\d+)/',$input,$m)){
-        if(!v2seg_planAllowed((int)$m[1])){alert('این پلن برای گروه مشتری شما فعال نیست.',true);sendMessage('لطفاً دوباره از منوی خرید پلن انتخاب کنید.',getMainKeys());setUser();exit;}
+        if(!v2seg_planAllowed((int)$m[1])){alert('این پلن در دسترس نیست.',true);sendMessage('لطفاً دوباره از منوی خرید پلن انتخاب کنید.',getMainKeys());setUser();exit;}
     }
     $hash=v2raystore_extractPaymentHashFromAction($input);
     if(preg_match('/^(?:increaseWalletWithCartToCart|requestCartToCartCard)(.+)$/',$input,$hm)) $hash=$hm[1];
@@ -201,10 +204,10 @@ function v2seg_guardSelection(){
     }
     if(v2seg_group()!=='new') return;
     $s=v2seg_settings();
-    if(empty($s['wallet']) && (strpos($input,'WithWallet')!==false || strpos($input,'increaseMyWallet')===0 || strpos($input,'increaseWallet')===0)){sendMessage('کیف پول برای مشتریان جدید غیرفعال است.');exit;}
-    if(empty($s['custom']) && preg_match('/^(?:selectCustom|selectCustome|enterCustom|freeCustom)/',$input)) {sendMessage('پلن دلخواه برای مشتریان جدید غیرفعال است.');exit;}
-    if(empty($s['test']) && preg_match('/^(getTestAccount|freeTrial)/',$input)){sendMessage('اکانت تست برای مشتریان جدید غیرفعال است.');exit;}
-    if(trim($s['card'])==='' && (strpos($input,'WithCartToCart')!==false || strpos($input,'requestCartToCartCard')===0)){sendMessage('پرداخت کارت‌به‌کارت مشتریان جدید هنوز تنظیم نشده است. لطفاً با پشتیبانی تماس بگیرید.');exit;}
+    if(empty($s['wallet']) && (strpos($input,'WithWallet')!==false || strpos($input,'increaseMyWallet')===0 || strpos($input,'increaseWallet')===0)){sendMessage('کیف پول فعلاً غیرفعال است.');exit;}
+    if(empty($s['custom']) && preg_match('/^(?:selectCustom|selectCustome|enterCustom|freeCustom)/',$input)) {sendMessage('پلن دلخواه فعلاً غیرفعال است.');exit;}
+    if(empty($s['test']) && preg_match('/^(getTestAccount|freeTrial)/',$input)){sendMessage('اکانت تست فعلاً غیرفعال است.');exit;}
+    if(trim($s['card'])==='' && (strpos($input,'WithCartToCart')!==false || strpos($input,'requestCartToCartCard')===0)){sendMessage('پرداخت کارت‌به‌کارت فعلاً در دسترس نیست. لطفاً با پشتیبانی تماس بگیرید.');exit;}
 }
 function v2seg_menuKeys(){
     $s=v2seg_settings();
@@ -256,8 +259,10 @@ function v2seg_admin(){
     if(preg_match('/^(?:cg|customerGroupsMenu)/',$cb)){setUser();$userInfo['step']='none';}
     if(v2seg_managementAction($cb)) exit;
     if($cb==='customerGroupsMenu') {setUser();editText($message_id,v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;}
-    if(preg_match('/^cgToggle_(enabled|sell|wallet|test|custom)$/',$cb,$m)){
-        $s=v2seg_settings(true);v2seg_save($m[1],empty($s[$m[1]]));editText($message_id,v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;
+    if(preg_match('/^cgToggle_(enabled|legacy_enabled|sell|wallet|test|custom)$/',$cb,$m)){
+        $s=v2seg_settings(true);v2seg_save($m[1],empty($s[$m[1]]));
+        if($m[1]==='legacy_enabled'){v2seg_managementAction('cgLegacySettings');exit;}
+        editText($message_id,v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;
     }
     if(in_array($cb,['cgCode','cgCodeGenerate','cgCodeClear'],true)){
         setUser();if($cb==='cgCodeGenerate')v2raystore_generateBuyersAccessCode();if($cb==='cgCodeClear')v2raystore_setBuyersAccessCode('');v2seg_showCode();exit;
@@ -415,15 +420,16 @@ function v2seg_managementAction($cb){
         editText($message_id,'📊 آمار گروه'.v2seg_statsText($m[1]),json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$m[1]]]]],JSON_UNESCAPED_UNICODE),'HTML');return true;
     }
     if(preg_match('/^cgManage_(legacy|new)$/D',$cb,$m)){
-        $g=$m[1];$b=function($text,$data){return ['text'=>$text,'callback_data'=>$data];};
-        $items=[
-            $b('⚙️ تنظیمات اختصاصی',$g==='new'?'customerGroupsMenu':'cgLegacySettings'),$b('📦 نمایش پلن‌ها','cgPlans_0_ctx_'.$g),
-            $b('📊 آمار همین گروه','cgStats_'.$g),$b('🧾 ریز تراکنش','monthlyReportMenu_day_cg_'.$g),
-            $b('📅 درآمد ماهانه','monthlyReportMenu_summary_cg_'.$g),$b('📨 پیام و فوروارد','cgBroadcast_'.$g),
-            $b('👥 فهرست مشتری‌ها','cgCustomers_'.$g.'_0'),$b('🎟 کد ورود قدیمی‌ها','cgCode_ctx_'.$g),
-            $b('👤 عملیات کاربر · مشترک','adminUserOperationsMenu_ucg_'.$g),$b('🔗 تنظیمات مشترک','cgCommon_'.$g)
-        ];$rows=array_chunk($items,2);$rows[] = [$b('⬅️ انتخاب گروه','adminUsersMenu'),$b('🏠 مدیریت','adminMainMenu')];
-        editText($message_id,'<b>'.v2seg_label($g)."</b>\n\nآمار و گزارش‌ها برای همین گروه است. پلن‌ها مشترک‌اند و نمایش آن‌ها برای هر گروه جدا تنظیم می‌شود. بخش‌های «مشترک» به همان تنظیمات اصلی متصل‌اند.",json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
+        $g=$m[1];$GLOBALS['v2seg_shared_context']=$g;
+        editText($message_id,'<b>'.v2seg_label($g)."</b>\n\n".(v2seg_adminGroupEnabled($g)?'بخش موردنظر را انتخاب کنید.':'حالت کامل این بخش خاموش است؛ منوی کوچک نمایش داده می‌شود. برای فعال‌کردن وارد تنظیمات همین بخش شوید.'),v2seg_dashboardKeys($g),'HTML');return true;
+    }
+    if(preg_match('/^cgNew(Reports|Payments)$/D',$cb,$m)){
+        $items=$m[1]==='Reports'?[
+            ['📊 آمار مشتریان جدید','cgStats_new'],['🧾 ریز تراکنش جدیدها','monthlyReportMenu_day_cg_new'],
+            ['📅 درآمد ماهانه جدیدها','monthlyReportMenu_summary_cg_new']
+        ]:[['💳 شماره کارت جدیدها','cgEdit_card'],['👤 دارنده کارت','cgEdit_holder'],['📩 پشتیبانی پرداخت','cgEdit_contact'],['💰 قیمت و امکانات','customerGroupsMenu']];
+        $rows=[];foreach($items as [$t,$d])$rows[]=['text'=>$t,'callback_data'=>$d];$rows=array_chunk($rows,2);$rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_new']];
+        editText($message_id,'🆕 مدیریت مشتریان جدید',json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));return true;
     }
     if(preg_match('/^cg(Common|Broadcast)_(legacy|new)$/D',$cb,$m) || $cb==='cgLegacySettings'){
         $g=$m[2]??'legacy';$kind=$m[1]??'Legacy';
@@ -431,12 +437,13 @@ function v2seg_managementAction($cb){
             ['✉️ پیام به همین گروه','broadcastTargetMessage_'.$g],['↪️ فوروارد به همین گروه','broadcastTargetForward_'.$g]
         ]:($kind==='Legacy'?[
             ['💳 کارت اول و دوم قدیمی‌ها','gateWays_Channels'],['💰 قیمت پایه و پلن‌ها','backplan'],
-            ['🔐 قوانین ورود قدیمی‌ها','adminAccessMenu'],['🎟 کد ورود قدیمی‌ها','cgCode_ctx_legacy']
+            ['🔐 قوانین ورود قدیمی‌ها','adminAccessMenu'],['🎟 کد ورود قدیمی‌ها','cgCode_ctx_legacy'],['📦 نمایش پلن برای هر گروه','cgPlans_0_ctx_legacy'],['📊 آمار مشتریان قدیمی','cgStats_legacy']
         ]:[
             ['⚙️ امکانات مشترک ربات','botSettings'],['🛒 فروش و تخفیف پایه','botSettingsSales'],
             ['🔗 تحویل و لینک‌ها','botSettingsConnections'],['♻️ تمدید و سرویس','botSettingsService'],
             ['📦 ساخت و ویرایش پلن‌ها','backplan'],['📊 تنظیمات کانال گزارش','reportChannelSettingsMenu']
         ]);
+        if($kind==='Legacy')array_unshift($items,[(v2seg_settings()['legacy_enabled']?'🟢':'🔴').' نمایش کامل امکانات قدیمی','cgToggle_legacy_enabled']);
         $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];$rows=array_chunk($buttons,2);
         $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
         editText($message_id,($kind==='Broadcast'?'📨 ارسال به '.v2seg_label($g):($kind==='Legacy'?'👤 تنظیمات مشتریان قدیمی؛ قیمت پایه و کارت اول و دوم برای قدیمی‌هاست.':'🔗 تنظیمات مشترک هر دو گروه؛ تغییر این گزینه‌ها روی هر دو گروه اثر دارد.')),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));return true;
@@ -451,4 +458,34 @@ function v2seg_managementAction($cb){
         editText($message_id,'<b>'.v2seg_label($g)."</b>\n\n".($lines?implode("\n",$lines):'کاربری ثبت نشده است.'),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
     }
     return false;
+}
+
+function v2seg_adminGroupEnabled($group){
+    $s=v2seg_settings();return !empty($s[$group==='legacy'?'legacy_enabled':'enabled']);
+}
+function v2seg_dashboardKeys($g){
+    $items=[];
+    if(v2seg_adminGroupEnabled($g)){
+        if($g==='legacy')$items=v2raystore_adminMenuTree()['LegacyDashboard'][2];
+        else $items=[
+            ['👤 مدیریت کاربر','adminUserOperationsMenu'],['🤝 مدیریت نمایندگی','adminAgentsMenu'],
+            ['🧾 مدیریت سرویس','adminConfigsMenu'],['💳 پرداخت مشتریان جدید','cgNewPayments'],
+            ['📊 آمار و گزارش‌ها','cgNewReports'],['📨 پیام و فوروارد','cgBroadcast_new'],
+            ['⚙️ تنظیمات مشتریان جدید','customerGroupsMenu'],['👥 فهرست مشتریان','cgCustomers_new_0']
+        ];
+    }else $items=[['👤 مدیریت کاربر','adminUserOperationsMenu'],['🧾 مدیریت سرویس','adminConfigsMenu'],['📊 آمار همین بخش','cgStats_'.$g]];
+    if($g==='legacy')$items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
+    elseif(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
+    $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];
+    $rows=array_chunk($buttons,2);$rows[]=[['text'=>'⬅️ انتخاب گروه','callback_data'=>'adminMainMenu']];
+    return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
+}
+function v2seg_compactCustomerKeys($keys,$user){
+    if(v2seg_group($user['userid']??0)!=='legacy' || !empty(v2seg_settings()['legacy_enabled']))return $keys;
+    $decoded=json_decode($keys,true);$rows=[];$buttons=[];
+    foreach($decoded['inline_keyboard']??[] as $row)foreach($row as $b){
+        if(in_array($b['callback_data']??'',['getTestAccount','buySubscription','agentOneBuy','agentMuchBuy','mySubscriptions','agentConfigsList','myInfo','managePanel'],true))$buttons[]=$b;
+    }
+    foreach(array_chunk($buttons,2) as $row)$rows[]=$row;
+    return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
 }

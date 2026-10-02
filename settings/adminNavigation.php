@@ -42,14 +42,17 @@ function v2raystore_setUserBlockMode($userId, $mode){
 
 // Each entry: title, parent, child buttons. Related actions are paired in two columns; no decorative dead buttons.
 function v2raystore_adminMenuTree(){
-    return [
-        'Main'=>['🧭 مدیریت ربات', 'mainMenu', [
-            ['👤 مدیریت کاربر','adminUsersMenu'], ['🤝 مدیریت نمایندگی','adminAgentsMenu'],
+    $tree = [
+        'Main'=>['👥 انتخاب بخش مدیریت','mainMenu',[[
+            '👤 مشتریان قدیمی','cgManage_legacy'],['🆕 مشتریان جدید','cgManage_new']]],
+        'LegacyDashboard'=>['🧭 مدیریت ربات', 'adminMainMenu', [
+            ['👤 مدیریت کاربر','adminUserOperationsMenu'], ['🤝 مدیریت نمایندگی','adminAgentsMenu'],
             ['🧾 مدیریت سرویس','adminConfigsMenu'], ['🖥 سرورها و پلن‌ها','adminSalesMenu'],
             ['💳 پرداخت و جایزه','adminPaymentsMenu'], ['📊 آمار و گزارش‌ها','adminReportsMenu'],
             ['📨 پیام و پشتیبانی','adminMessagesMenu'], ['📝 محتوا و آموزش','adminContentMenu'],
             ['⚙️ تنظیمات ربات','adminSettingsMenu'], ['⚡ دسترسی سریع','adminQuickMenu']]],
         'Reports'=>['📊 آمار و گزارش‌ها','adminMainMenu',[
+            ['📊 آمار مشتریان قدیمی','cgStats_legacy'],
             ['📈 آمار کلی ربات','botReports'],['📊 گزارش‌های کانال','reportChannelSettingsMenu'],
             ['⏱ فاصله گزارش درآمد','editRewardTime']]],
         'Configs'=>['🧾 مدیریت سرویس‌ها','adminMainMenu',[
@@ -112,7 +115,7 @@ function v2raystore_adminMenuTree(){
         'Content'=>['📝 محتوا و آموزش','adminMainMenu',[
             ['📝 خوش‌آمد و قوانین خرید','adminTextSettings'],['📚 آموزش و سوالات','adminHelpMenu']]],
         'Settings'=>['⚙️ تنظیمات ربات','adminMainMenu',[
-            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['🆕 مشتریان جدید','customerGroupsMenu'],['👮 مدیران ربات','adminsList']]],
+            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👤 تنظیمات مشتریان قدیمی','cgLegacySettings'],['👮 مدیران ربات','adminsList']]],
         'Appearance'=>['🎛 ظاهر و دکمه‌ها','adminSettingsMenu',[
             ['➕ دکمه‌های سفارشی','mainMenuButtons'],['🎛 چیدمان دکمه‌ها','userButtonSettings']]],
         // Older messages with the old Quick callback remain usable.
@@ -120,6 +123,15 @@ function v2raystore_adminMenuTree(){
             ['🔎 جستجوی کانفیگ','searchUsersConfig'],['✉️ پیام به کاربر','messageToSpeceficUser'],
             ['♻️ بروزرسانی کانفیگ‌ها','updateConfigsMenu'],['📦 پلن‌ها','backplan']]]
     ];
+    if(($GLOBALS['v2seg_shared_context']??'')==='new'){
+        $tree['UserOperations'][2]=[
+            ['🔎 جستجوی کاربر','userReports'],['🚫 مسدودی کاربران','adminBlocksMenu'],
+            ['💰 کیف پول کاربر','adminWalletMenu'],['✉️ پیام به کاربر','messageToSpeceficUser'],
+            ['⚙️ امکانات و ورود','customerGroupsMenu']];
+        $tree['Agents'][2]=[['👥 فهرست نمایندگان','agentsList'],['➕ افزودن نماینده','addAgentManual'],['📋 درخواست‌های ردشده','rejectedAgentList']];
+        $tree['Configs'][2]=[['🔎 جستجوی کانفیگ','searchUsersConfig'],['➕ ثبت کانفیگ کاربر','manualAttachConfig'],['📦 ساخت چند اکانت','createMultipleAccounts']];
+    }
+    return $tree;
 }
 
 function v2raystore_adminMenuKeys($name){
@@ -148,7 +160,7 @@ function v2raystore_adminMenuKeys($name){
         $group=$GLOBALS['v2seg_shared_context'];
         foreach($rows as &$row)foreach($row as &$button){
             $cb=$button['callback_data'];
-            if($cb==='adminUsersMenu')$button['callback_data']='cgManage_'.$group;
+            if($cb==='adminUsersMenu' || ($cb==='adminMainMenu' && preg_match('/بازگشت/u',$button['text'])))$button['callback_data']='cgManage_'.$group;
             elseif($cb!=='adminMainMenu' && $cb!=='mainMenu' && strpos($cb,'cg')!==0)$button['callback_data'].='_ucg_'.$group;
         }
         unset($row,$button);
@@ -159,7 +171,7 @@ function v2raystore_adminMenuKeys($name){
 function v2raystore_adminMenuText($name){
     $tree = v2raystore_adminMenuTree();
     $entry = $tree[$name] ?? $tree['Main'];
-    if($name === 'Main' && function_exists('v2raystore_adminDashboardText')) return v2raystore_adminDashboardText();
+
     $path = [$entry[0]];
     $parent = $entry[1];
     while(preg_match('/^admin([A-Za-z]+)Menu$/D', $parent, $m) && isset($tree[$m[1]])){
@@ -325,9 +337,14 @@ function v2raystore_adminMenuFromMarkup($markup){
         $expectedCallbacks = [];
         foreach($expected as $row) foreach($row as $button) $expectedCallbacks[] = $button['callback_data'];
         $plain=function($list){return array_map(function($cb){return preg_replace('/_ucg_(legacy|new)$/D','',$cb);},$list);};
-        if($plain($callbacks) === $plain($expectedCallbacks)) return 'admin' . $name . 'Menu';
+        if($plain($callbacks) === $plain($expectedCallbacks)) return $name==='Main'?'adminUsersMenu':'admin' . $name . 'Menu';
     }
     $callbacks=array_map(function($cb){return preg_replace('/_ucg_(legacy|new)$/D','',$cb);},$callbacks);
+    if(function_exists('v2seg_dashboardKeys'))foreach(['legacy','new'] as $g){
+        $expected=[];$keys=json_decode(v2seg_dashboardKeys($g),true);
+        foreach($keys['inline_keyboard'] as $row)foreach($row as $b)$expected[]=preg_replace('/_ucg_(legacy|new)$/D','',$b['callback_data']);
+        if($callbacks===$expected)return 'cgManage_'.$g;
+    }
     foreach($callbacks as $cb){
         if(preg_match('/^cgStats_(legacy|new)$/D',$cb,$m) && in_array('adminUsersMenu',$callbacks,true))return 'cgManage_'.$m[1];
     }
