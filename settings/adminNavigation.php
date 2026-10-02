@@ -144,7 +144,7 @@ function v2raystore_adminMenuKeys($name){
         $navigation[] = ['text'=>'🏠 مدیریت','callback_data'=>'adminMainMenu'];
     }
     $rows[] = $navigation;
-    if(isset($GLOBALS['v2seg_shared_context'])){
+    if(isset($GLOBALS['v2seg_shared_context']) && !in_array($name,['Main','Users'],true)){
         $group=$GLOBALS['v2seg_shared_context'];
         foreach($rows as &$row)foreach($row as &$button){
             $cb=$button['callback_data'];
@@ -180,6 +180,8 @@ function v2raystore_captureFormOrigin($value, $field){
     if($value === 'none'){
         $origin = json_decode(v2raystore_getSettingValue($key, ''), true);
         if(!empty($origin['menu'])) $GLOBALS['v2raystore_form_return_menu'] = $origin['menu'];
+        $GLOBALS['v2raystore_form_return_user'] = (int)$from_id;
+        if(!isset($update->callback_query) && !empty($origin['group'])) $GLOBALS['v2seg_shared_context'] = $origin['group'];
         $stmt = $GLOBALS['connection']->prepare("DELETE FROM setting WHERE type=?");
         if($stmt){ $stmt->bind_param('s',$key); $stmt->execute(); $stmt->close(); }
         return;
@@ -195,7 +197,9 @@ function v2raystore_captureFormOrigin($value, $field){
         'entities'=>$message->entities ?? [],
         'reply_markup'=>$message->reply_markup,
         'time'=>time(),
-        'menu'=>v2raystore_adminMenuFromMarkup($message->reply_markup),
+        'menu'=>v2raystore_adminMenuFromMarkup($message->reply_markup) ?: v2raystore_markupBackDestination($message->reply_markup),
+        'group'=>v2raystore_markupCustomerGroup($message->reply_markup),
+        'version'=>2,
     ];
     v2raystore_setSettingValue($key, json_encode($snapshot, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
@@ -206,22 +210,32 @@ function v2raystore_restoreFormOrigin(){
     $origin = json_decode($raw, true);
     if(!is_array($origin) || empty($origin['text']) || empty($origin['reply_markup']['inline_keyboard'])) return false;
     if(time() - (int)($origin['time'] ?? 0) > 86400) return false;
+    $refresh=null;
+    if(empty($origin['version']) && preg_match('/^admin([A-Za-z]+)Menu$/D',$origin['menu']??'',$m)
+        && isset(v2raystore_adminMenuTree()[$m[1]]) && v2raystore_adminMenuFromMarkup($origin['reply_markup'])!==$origin['menu'])$refresh=$m[1];
     setUser();
     setUser('', 'temp');
     $userInfo['step'] = 'none';
     sendMessage('↩️ عملیات لغو شد.', $removeKeyboard, null);
-    bot('sendMessage',[
+    $payload=[
         'chat_id'=>$from_id,
         'text'=>$origin['text'],
         'entities'=>json_encode($origin['entities'] ?? [], JSON_UNESCAPED_UNICODE),
         'reply_markup'=>json_encode($origin['reply_markup'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-    ]);
+    ];
+    if($refresh!==null){
+        $payload['text']=v2raystore_adminMenuText($refresh);
+        $payload['reply_markup']=v2raystore_adminMenuKeys($refresh);
+        unset($payload['entities']);$payload['parse_mode']='HTML';
+    }
+    bot('sendMessage',$payload);
     return true;
 }
 
 function v2raystore_handleAdminNavigation(){
     global $from_id, $admin, $userInfo, $data, $text, $buttonValues, $message_id, $update, $removeKeyboard;
     if((int)$from_id !== (int)$admin && empty($userInfo['isAdmin'])) return;
+    v2raystore_normalizeAdminCallback();
     if(isset($update->message) && ($text ?? '') === ($buttonValues['cancel'] ?? '')){
         if(v2raystore_restoreFormOrigin()) exit();
         // Older forms have no snapshot; return safely before any text/media handler.
@@ -238,6 +252,7 @@ function v2raystore_handleAdminNavigation(){
         setUser();
         setUser('', 'temp');
         $userInfo['step'] = 'none';
+        if($m[1]==='Main' || $m[1]==='Users') unset($GLOBALS['v2seg_shared_context']);
         editText($message_id, v2raystore_adminMenuText($m[1]), v2raystore_adminMenuKeys($m[1]), 'HTML');
         exit();
     }
@@ -252,6 +267,10 @@ function v2raystore_handleAdminNavigation(){
         setUser();
         setUser('', 'temp');
         $userInfo['step'] = 'none';
+        if($clickedBack || (isset($update->message->text) && preg_match('/^\/[Ss]tart(?:\s|$)/',$text??''))){
+            unset($GLOBALS['v2raystore_form_return_menu'],$GLOBALS['v2raystore_form_return_user']);
+            if(in_array($data??'',['mainMenu','managePanel'],true) || isset($update->message))unset($GLOBALS['v2seg_shared_context']);
+        }
     }
     if(isset($update->callback_query)){
         // Callback message text is never a text answer to an outstanding admin form.
@@ -305,21 +324,86 @@ function v2raystore_adminMenuFromMarkup($markup){
         $expected = json_decode(v2raystore_adminMenuKeys($name),true)['inline_keyboard'];
         $expectedCallbacks = [];
         foreach($expected as $row) foreach($row as $button) $expectedCallbacks[] = $button['callback_data'];
-        if($callbacks === $expectedCallbacks) return 'admin' . $name . 'Menu';
+        $plain=function($list){return array_map(function($cb){return preg_replace('/_ucg_(legacy|new)$/D','',$cb);},$list);};
+        if($plain($callbacks) === $plain($expectedCallbacks)) return 'admin' . $name . 'Menu';
+    }
+    $callbacks=array_map(function($cb){return preg_replace('/_ucg_(legacy|new)$/D','',$cb);},$callbacks);
+    foreach($callbacks as $cb){
+        if(preg_match('/^cgStats_(legacy|new)$/D',$cb,$m) && in_array('adminUsersMenu',$callbacks,true))return 'cgManage_'.$m[1];
+    }
+    if(in_array('cgToggle_enabled',$callbacks,true))return 'customerGroupsMenu';
+    $group=v2raystore_markupCustomerGroup($markup);
+    if($group){
+        if(in_array('botSettings',$callbacks,true) && in_array('backplan',$callbacks,true))return 'cgCommon_'.$group;
+        if(in_array('broadcastTargetMessage_'.$group,$callbacks,true))return 'cgBroadcast_'.$group;
+        if(in_array('gateWays_Channels',$callbacks,true) && in_array('backplan',$callbacks,true))return 'cgLegacySettings';
     }
     return '';
+}
+
+function v2raystore_markupCustomerGroup($markup){
+    if(is_object($markup))$markup=json_decode(json_encode($markup),true);
+    if(is_string($markup))$markup=json_decode($markup,true);
+    $groups=[];
+    foreach(($markup['inline_keyboard']??[]) as $row)foreach($row as $button){
+        $cb=$button['callback_data']??'';
+        if(preg_match('/_(?:ucg|ctx)_(legacy|new)$/D',$cb,$m) || preg_match('/^cgManage_(legacy|new)$/D',$cb,$m))$groups[$m[1]]=true;
+    }
+    return count($groups)===1?array_key_first($groups):null;
+}
+
+function v2raystore_markupBackDestination($markup){
+    if(is_object($markup))$markup=json_decode(json_encode($markup),true);
+    if(is_string($markup))$markup=json_decode($markup,true);
+    foreach(($markup['inline_keyboard']??[]) as $row)foreach($row as $b){
+        if(preg_match('/بازگشت|برگشت/u',$b['text']??'')
+            && preg_match('/^(?:admin[A-Za-z]+Menu(?:_ucg_(?:legacy|new))?|cgManage_(?:legacy|new)|cgCommon_(?:legacy|new)|cgLegacySettings)$/D',$b['callback_data']??''))return $b['callback_data'];
+    }
+    return '';
+}
+
+function v2raystore_normalizeAdminCallback(){
+    global $from_id,$admin,$userInfo,$data,$update;
+    if((int)$from_id!==(int)$admin && empty($userInfo['isAdmin']))return;
+    if(isset($update->callback_query)){
+        $group=v2raystore_markupCustomerGroup($update->callback_query->message->reply_markup??null);
+        if($group)$GLOBALS['v2seg_shared_context']=$group;
+    }
+    if(preg_match('/^(.+)_ucg_(legacy|new)$/D',(string)($data??''),$m)){
+        $data=$m[1];$GLOBALS['v2seg_shared_context']=$m[2];
+    }elseif(preg_match('/^cg(?:Manage|Stats|Common|Broadcast|Customers)_(legacy|new)(?:_|$)/D',(string)($data??''),$m))$GLOBALS['v2seg_shared_context']=$m[1];
+    elseif(($data??'')==='customerGroupsMenu')$GLOBALS['v2seg_shared_context']='new';
+    if(in_array($data??'',['adminMainMenu','adminUsersMenu','managePanel','mainMenu'],true)){
+        unset($GLOBALS['v2seg_shared_context'],$GLOBALS['v2raystore_form_return_menu']);
+    }
+}
+
+function v2raystore_formReturnKeys(){
+    global $from_id,$update;
+    if(!isset($update->message) || (int)($GLOBALS['v2raystore_form_return_user']??0)!==(int)$from_id)return null;
+    $menu=$GLOBALS['v2raystore_form_return_menu']??'';
+    if(preg_match('/^admin([A-Za-z]+)Menu(?:_ucg_(legacy|new))?$/D',$menu,$m) && isset(v2raystore_adminMenuTree()[$m[1]])){
+        if(!empty($m[2]))$GLOBALS['v2seg_shared_context']=$m[2];
+        return v2raystore_adminMenuKeys($m[1]);
+    }
+    return null;
 }
 
 function v2raystore_adjustAdminBackMarkup($markup, $recipientId){
     global $from_id, $admin, $userInfo, $update, $data;
     if((int)$recipientId !== (int)$from_id
         || ((int)$from_id !== (int)$admin && empty($userInfo['isAdmin']))) return $markup;
+    if(!isset($update->callback_query) && empty($GLOBALS['v2seg_shared_context'])){
+        $origin=json_decode(v2raystore_getSettingValue('FORM_ORIGIN_'.(int)$from_id,''),true);
+        $group=$origin['group']??v2raystore_markupCustomerGroup($origin['reply_markup']??null);
+        if(in_array($group,['legacy','new'],true))$GLOBALS['v2seg_shared_context']=$group;
+    }
     $decoded = is_string($markup) ? json_decode($markup,true) : $markup;
     if(!is_array($decoded) || !isset($decoded['inline_keyboard'])) return $markup;
     // A complete category menu already owns its parent; never make its Back link point to itself.
-    if(v2raystore_adminMenuFromMarkup($decoded) !== '') return $markup;
+    if(v2raystore_adminMenuFromMarkup($decoded) !== '') return v2raystore_contextualAdminMarkup($decoded);
     $tree = v2raystore_adminMenuTree();
-    if(preg_match('/^admin([A-Za-z]+)Menu$/D',(string)($data ?? ''),$m) && isset($tree[$m[1]])) return $markup;
+    if(preg_match('/^admin([A-Za-z]+)Menu$/D',(string)($data ?? ''),$m) && isset($tree[$m[1]])) return v2raystore_contextualAdminMarkup($decoded);
     $source = $update->callback_query->message->reply_markup ?? null;
     $parent = $source ? v2raystore_adminMenuFromMarkup($source) : '';
     // A settings toggle re-renders the same page: retain its existing back destination.
@@ -328,7 +412,7 @@ function v2raystore_adjustAdminBackMarkup($markup, $recipientId){
         foreach(($source['inline_keyboard'] ?? []) as $row){
             foreach($row as $button){
                 if(preg_match('/بازگشت|برگشت/u',(string)($button['text'] ?? ''))
-                    && preg_match('/^admin[A-Za-z]+Menu$/D',(string)($button['callback_data'] ?? ''))){
+                    && preg_match('/^(?:admin[A-Za-z]+Menu(?:_ucg_(?:legacy|new))?|cgManage_(?:legacy|new)|cgCommon_(?:legacy|new)|cgLegacySettings)$/D',(string)($button['callback_data'] ?? ''))){
                     $parent = $button['callback_data'];
                 }
             }
@@ -339,7 +423,7 @@ function v2raystore_adjustAdminBackMarkup($markup, $recipientId){
         $origin = json_decode(v2raystore_getSettingValue('FORM_ORIGIN_' . (int)$from_id, ''),true);
         $parent = $origin['menu'] ?? '';
     }
-    if($parent === '') return $markup;
+    if($parent === '') return v2raystore_contextualAdminMarkup($decoded);
     $decoded = is_string($markup) ? json_decode($markup,true) : $markup;
     if(!is_array($decoded) || !isset($decoded['inline_keyboard'])) return $markup;
     foreach($decoded['inline_keyboard'] as &$row){
@@ -353,7 +437,23 @@ function v2raystore_adjustAdminBackMarkup($markup, $recipientId){
         unset($button);
     }
     unset($row);
-    return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return v2raystore_contextualAdminMarkup($decoded);
+}
+
+function v2raystore_contextualAdminMarkup($decoded){
+    $group=$GLOBALS['v2seg_shared_context']??null;
+    $root=v2raystore_adminMenuFromMarkup($decoded);
+    if(in_array($root,['adminMainMenu','adminUsersMenu'],true))$group=null;
+    if($group){
+        foreach($decoded['inline_keyboard'] as &$row)foreach($row as &$button){
+            $cb=$button['callback_data']??'';
+            if($cb==='' || $cb==='v2raystore' || in_array($cb,['mainMenu','managePanel','adminMainMenu','adminUsersMenu'],true)
+                || strpos($cb,'cg')===0 || strpos($cb,'monthlyReport')===0 || preg_match('/_ucg_(legacy|new)$/D',$cb))continue;
+            if(strlen($cb.'_ucg_'.$group)<=64)$button['callback_data']=$cb.'_ucg_'.$group;
+        }
+        unset($button,$row);
+    }
+    return json_encode($decoded,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
 }
 
 function v2raystore_cancelMenuForStep($step){

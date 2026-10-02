@@ -355,14 +355,7 @@ function v2seg_reportKeys($json){
 function v2seg_reportRoute(){
     global $data,$message_id;
     if(!v2seg_isAdmin()) return;
-    if(preg_match('/^([A-Za-z][A-Za-z0-9_]*)_ucg_(legacy|new)$/D',(string)$data,$context)){
-        $allowed=[];foreach(v2raystore_adminMenuTree() as $name=>$entry){
-            $allowed[]='admin'.$name.'Menu';foreach($entry[2] as $item)$allowed[]=$item[1];
-        }
-        if(in_array($context[1],$allowed,true)){
-            $data=$context[1];$GLOBALS['v2seg_shared_context']=$context[2];
-        }
-    }
+    v2raystore_normalizeAdminCallback();
     if(preg_match('/^(monthlyReport(?:Menu|Year|Month|Day|DayFormat)_.+)_cg_(all|legacy|new)$/D',(string)$data,$m)){
         $data=$m[1];$GLOBALS['v2seg_report_group']=$m[2];
         $GLOBALS['v2seg_report_mode']=strpos($data,'summary')!==false?'summary':'day';
