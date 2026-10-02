@@ -15,7 +15,7 @@ function v2seg_one($sql, $types = '', $args = []){
 }
 function v2seg_bootstrap(){
     global $connection, $admin, $dbName;
-    if(v2raystore_schemaPatchDone('CUSTOMER_GROUPS_V1')) return;
+    if(v2raystore_schemaPatchDone('CUSTOMER_GROUPS_V1')) {v2seg_paymentBootstrap(); return;}
     $lock = 'v2seg_init_' . md5((string)$dbName);
     if((int)(v2seg_one('SELECT GET_LOCK(?, 10) AS ok','s',[$lock])['ok'] ?? 0) !== 1) throw new RuntimeException('Customer groups: initialization busy');
     try {
@@ -38,6 +38,7 @@ function v2seg_bootstrap(){
             $connection->commit();
         }
         v2raystore_markSchemaPatchDone('CUSTOMER_GROUPS_V1');
+        v2seg_paymentBootstrap();
     } catch(Throwable $e){
         $connection->rollback(); throw $e;
     } finally { v2seg_query('SELECT RELEASE_LOCK(?)','s',[$lock])->close(); }
@@ -137,6 +138,7 @@ function v2seg_promote($uid,$code){
     }
     $connection->begin_transaction();
     try {
+        v2seg_snapshotPayments((int)$uid);
         v2seg_query("INSERT INTO v2_customer_groups VALUES(?,'legacy',UNIX_TIMESTAMP(),'access_code') ON DUPLICATE KEY UPDATE segment='legacy',created_at=UNIX_TIMESTAMP(),source='access_code'",'i',[(int)$uid])->close();
         if(!v2raystore_setUserAccessExempt($uid,true,$expected)) throw new RuntimeException('Cannot save code access');
         $connection->commit(); unset($GLOBALS['v2seg_groups'][(int)$uid]);
@@ -215,7 +217,7 @@ function v2seg_menuKeys(){
         [$button((!empty($s['sell'])?'✅':'❌').' فروش','cgToggle_sell'),$button((!empty($s['wallet'])?'✅':'❌').' کیف پول','cgToggle_wallet')],
         [$button((!empty($s['test'])?'✅':'❌').' اکانت تست','cgToggle_test'),$button((!empty($s['custom'])?'✅':'❌').' پلن دلخواه','cgToggle_custom')],
         [$button('📝 پیام خوش‌آمد جدیدها','cgEdit_welcome'),$button('🔎 گروه یک مشتری','cgEdit_lookup')],
-        [$button('⬅️ بازگشت','adminUsersMenu'),$button('🏠 مدیریت','adminMainMenu')]
+        [$button('⬅️ بازگشت','cgManage_new'),$button('🏠 مدیریت','adminMainMenu')]
     ];return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
 }
 function v2seg_menuText(){
@@ -223,11 +225,11 @@ function v2seg_menuText(){
     $holder=htmlspecialchars($s['holder']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
     return "👥 <b>تنظیمات مشتریان جدید</b>\n\nکارت مستقل: <code>$card</code>\nدارنده: $holder\n\nقیمت خرید، تمدید و افزایش حجم/زمان: +{$s['percent']}٪؛ گرد کردن رو به بالا تا ".number_format($s['round'])." تومان.\nدرصد صفر یعنی قیمت پایه بدون افزایش و گرد کردن. شارژ کیف پول افزایش قیمت ندارد.\n\nکارت اول و دوم فقط برای گروه قدیمی است. مشتری جدید با خرید، قدیمی نمی‌شود؛ انتقال فقط با کد است.\nپلن تازه به‌صورت پیش‌فرض برای هر دو گروه فعال است. غیرفعال کردن پلن برای یک گروه، سرویس‌های قبلی را حذف نمی‌کند.\nگزینه‌های امکانات، تابع روشن بودن همان امکان در تنظیمات اصلی هم هستند.";
 }
-function v2seg_codeKeys(){return json_encode(['inline_keyboard'=>[
+function v2seg_codeKeys(){return v2seg_contextKeys(json_encode(['inline_keyboard'=>[
     [['text'=>'🔄 ساخت کد جدید','callback_data'=>'cgCodeGenerate'],['text'=>'✏️ تنظیم کد','callback_data'=>'cgEdit_code']],
     [['text'=>'🧹 غیرفعال کردن کد','callback_data'=>'cgCodeClear']],
     [['text'=>'⬅️ بازگشت','callback_data'=>'customerGroupsMenu']]
-]],JSON_UNESCAPED_UNICODE);}
+]],JSON_UNESCAPED_UNICODE));}
 function v2seg_showCode(){
     global $message_id;
     $code=htmlspecialchars(v2raystore_getBuyersAccessCode()?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
@@ -242,13 +244,17 @@ function v2seg_planMenu($offset){
         $rows[]=[['text'=>($f['legacy_on']?'✅':'❌').' قدیمی | '.$title,'callback_data'=>"cgPlan_{$id}_legacy_{$offset}"],['text'=>($f['new_on']?'✅':'❌').' جدید | '.$title,'callback_data'=>"cgPlan_{$id}_new_{$offset}"]];}
     $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgPlans_'.max(0,$offset-8)];if(count($plans)>8)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgPlans_'.($offset+8)];if($nav)$rows[]=$nav;
     $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'customerGroupsMenu']];
-    editText($message_id,'📦 نمایش و فروش پلن برای هر گروه؛ با لمس هر دکمه همان گروه فعال/غیرفعال می‌شود. حذف از یک گروه، پلن یا سرویس‌های قبلی را پاک نمی‌کند.',json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));
+    editText($message_id,'📦 نمایش و فروش پلن برای هر گروه؛ با لمس هر دکمه همان گروه فعال/غیرفعال می‌شود. حذف از یک گروه، پلن یا سرویس‌های قبلی را پاک نمی‌کند.',v2seg_contextKeys(json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE)));
 }
 function v2seg_admin(){
     global $data,$text,$userInfo,$message_id,$cancelKey,$removeKeyboard,$update;
     if(!v2seg_isAdmin()) return;
     $cb=(string)($data??'');
+    if(preg_match('/^(cg(?:Code(?:Generate|Clear)?|Edit_code|Plans_\d+|Plan_\d+_(?:legacy|new)_\d+))_ctx_(legacy|new)$/D',$cb,$context)){
+        $cb=$context[1];$GLOBALS['v2seg_menu_context']=$context[2];
+    }
     if(preg_match('/^(?:cg|customerGroupsMenu)/',$cb)){setUser();$userInfo['step']='none';}
+    if(v2seg_managementAction($cb)) exit;
     if($cb==='customerGroupsMenu') {setUser();editText($message_id,v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;}
     if(preg_match('/^cgToggle_(enabled|sell|wallet|test|custom)$/',$cb,$m)){
         $s=v2seg_settings(true);v2seg_save($m[1],empty($s[$m[1]]));editText($message_id,v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;
@@ -265,9 +271,12 @@ function v2seg_admin(){
     }
     if(preg_match('/^cgEdit_(percent|round|card|holder|contact|welcome|code|lookup)$/',$cb,$m)){
         $prompts=['percent'=>'درصد افزایش قیمت را از ۰ تا ۱۰۰۰ بفرستید؛ مثلاً 10 یا 0. اعشار تا دو رقم مجاز است.','round'=>'مضرب گرد کردن رو به بالا را بفرستید؛ مثلاً 5000. صفر یعنی بدون گرد کردن.','card'=>'شماره کارت ۱۶ رقمی مخصوص مشتریان جدید را بفرستید. برای حذف بنویسید: حذف','holder'=>'نام دارنده کارت مخصوص مشتریان جدید را بفرستید.','contact'=>'آیدی پشتیبانی پرداخت جدیدها را بفرستید؛ مثلاً @support. برای حذف بنویسید: حذف','welcome'=>'متن خوش‌آمد مشتریان جدید را بفرستید. برای حذف بنویسید: حذف','code'=>'کد انتقال به گروه قدیمی را بفرستید؛ ۸ تا ۶۰ کاراکتر انگلیسی، عدد، خط تیره یا زیرخط.','lookup'=>'آیدی عددی مشتری را بفرستید.'];
-        setUser('cgInput_'.$m[1]);sendMessage($prompts[$m[1]],$cancelKey);exit;
+        $step='cgInput_'.$m[1];
+        if($m[1]==='code' && isset($GLOBALS['v2seg_menu_context']))$step.='_ctx_'.$GLOBALS['v2seg_menu_context'];
+        setUser($step);sendMessage($prompts[$m[1]],$cancelKey);exit;
     }
-    if(isset($update->message->text) && preg_match('/^cgInput_(percent|round|card|holder|contact|welcome|code|lookup)$/',(string)($userInfo['step']??''),$m)){
+    if(isset($update->message->text) && preg_match('/^cgInput_(percent|round|card|holder|contact|welcome|code|lookup)(?:_ctx_(legacy|new))?$/',(string)($userInfo['step']??''),$m)){
+        if(!empty($m[2]))$GLOBALS['v2seg_menu_context']=$m[2];
         $k=$m[1];$v=trim($text);$v=strtr($v,array_combine(preg_split('//u','۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',-1,PREG_SPLIT_NO_EMPTY),str_split('01234567890123456789')));
         $error='';
         if($k==='percent') {if(!preg_match('/^\d{1,4}(\.\d{1,2})?$/D',$v)||(float)$v>1000)$error='درصد معتبر بین صفر و ۱۰۰۰ بفرستید.';else $v=(float)$v;}
@@ -285,6 +294,168 @@ function v2seg_admin(){
         }elseif($k==='code')v2raystore_setBuyersAccessCode($v);
         else v2seg_save($k,$v);
         setUser();sendMessage($k==='lookup'?'بررسی انجام شد.':'✅ ذخیره شد.',$removeKeyboard);
+        if($k==='code'){
+            sendMessage('🎟 کد ورود مشتریان قدیمی: <code>'.htmlspecialchars(v2raystore_getBuyersAccessCode(),ENT_QUOTES,'UTF-8').'</code>',v2seg_codeKeys(),'HTML');exit;
+        }
         sendMessage(v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;
     }
+}
+
+// Payment membership is immutable, including after a code transfers its owner.
+function v2seg_paymentBootstrap(){
+    if(v2raystore_schemaPatchDone('CUSTOMER_PAYMENTS_V1')) return;
+    global $connection,$dbName;
+    $lock='v2seg_pay_init_'.md5((string)$dbName);
+    if((int)(v2seg_one('SELECT GET_LOCK(?,10) ok','s',[$lock])['ok']??0)!==1) throw new RuntimeException('Payment groups initialization busy');
+    try{
+        if(v2raystore_schemaPatchDone('CUSTOMER_PAYMENTS_V1')) return;
+        v2seg_query("CREATE TABLE IF NOT EXISTS v2_payment_groups(payment_id INT NOT NULL PRIMARY KEY,segment VARCHAR(8) NOT NULL,KEY segment_payment(segment,payment_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")->close();
+        // Recover the known transfer date for customers promoted by the earlier release.
+        v2seg_query("INSERT IGNORE INTO v2_payment_groups SELECT p.id,IF(g.segment='legacy' AND NOT(g.source='access_code' AND p.request_date<=g.created_at),'legacy','new') FROM pays p LEFT JOIN v2_customer_groups g ON g.userid=p.user_id")->close();
+        v2raystore_markSchemaPatchDone('CUSTOMER_PAYMENTS_V1');
+    } finally {v2seg_query('SELECT RELEASE_LOCK(?)','s',[$lock])->close();}
+}
+function v2seg_snapshotPayments($uid){
+    v2seg_query("INSERT IGNORE INTO v2_payment_groups SELECT p.id,IF(g.segment='legacy','legacy','new') FROM pays p LEFT JOIN v2_customer_groups g ON g.userid=p.user_id WHERE p.user_id=?",'i',[(int)$uid])->close();
+}
+function v2seg_snapshotPayHash($hash){
+    v2seg_query("INSERT IGNORE INTO v2_payment_groups SELECT p.id,IF(g.segment='legacy','legacy','new') FROM pays p LEFT JOIN v2_customer_groups g ON g.userid=p.user_id WHERE p.hash_id=?",'s',[(string)$hash])->close();
+}
+function v2seg_paymentGroup($pay){
+    $row=v2seg_one('SELECT segment FROM v2_payment_groups WHERE payment_id=?','i',[(int)($pay['id']??$pay['payment_id']??0)]);
+    return $row ? $row['segment'] : v2seg_group($pay['user_id']??0);
+}
+function v2seg_paymentSql(){
+    return "COALESCE((SELECT pg.segment FROM v2_payment_groups pg WHERE pg.payment_id=pays.id),(SELECT g.segment FROM v2_customer_groups g WHERE g.userid=pays.user_id),'new')";
+}
+function v2seg_label($group){return $group==='new'?'🆕 مشتریان جدید':($group==='legacy'?'👤 مشتریان قدیمی':'👥 هر دو گروه');}
+function v2seg_contextKeys($json){
+    $group=$GLOBALS['v2seg_menu_context']??null;if(!$group)return $json;
+    $keys=json_decode($json,true);
+    foreach($keys['inline_keyboard'] as &$row)foreach($row as &$b){
+        if(($b['callback_data']??'')==='customerGroupsMenu')$b['callback_data']='cgManage_'.$group;
+        elseif(preg_match('/^cg(?:Code|Edit_code|Plans_|Plan_)/',$b['callback_data']??''))$b['callback_data'].='_ctx_'.$group;
+    }
+    unset($b,$row);return json_encode($keys,JSON_UNESCAPED_UNICODE);
+}
+function v2seg_reportFilter($group=null){
+    $group=$group??($GLOBALS['v2seg_report_group']??'all');
+    return in_array($group,['legacy','new'],true)?$group:'all';
+}
+function v2seg_reportKeys($json){
+    $keys=json_decode($json,true);$group=v2seg_reportFilter();
+    foreach($keys['inline_keyboard'] as &$row) foreach($row as &$b){
+        if(isset($b['callback_data']) && preg_match('/^monthlyReport/',$b['callback_data'])) $b['callback_data'].='_cg_'.$group;
+        elseif(($b['callback_data']??'')==='reportChannelSettingsMenu')$b['callback_data']=$group==='all'?'cgReportChoose_'.($GLOBALS['v2seg_report_mode']??'day'):'cgManage_'.$group;
+    }
+    unset($row,$b);
+    $keys['inline_keyboard'][]=[['text'=>'👥 تغییر گروه گزارش','callback_data'=>'cgReportChoose_'.(($GLOBALS['v2seg_report_mode']??'day')==='summary'?'summary':'day')]];
+    return json_encode($keys,JSON_UNESCAPED_UNICODE);
+}
+function v2seg_reportRoute(){
+    global $data,$message_id;
+    if(!v2seg_isAdmin()) return;
+    if(preg_match('/^([A-Za-z][A-Za-z0-9_]*)_ucg_(legacy|new)$/D',(string)$data,$context)){
+        $allowed=[];foreach(v2raystore_adminMenuTree() as $name=>$entry){
+            $allowed[]='admin'.$name.'Menu';foreach($entry[2] as $item)$allowed[]=$item[1];
+        }
+        if(in_array($context[1],$allowed,true)){
+            $data=$context[1];$GLOBALS['v2seg_shared_context']=$context[2];
+        }
+    }
+    if(preg_match('/^(monthlyReport(?:Menu|Year|Month|Day|DayFormat)_.+)_cg_(all|legacy|new)$/D',(string)$data,$m)){
+        $data=$m[1];$GLOBALS['v2seg_report_group']=$m[2];
+        $GLOBALS['v2seg_report_mode']=strpos($data,'summary')!==false?'summary':'day';
+        return;
+    }
+    if(preg_match('/^(?:monthlyReportMenu_|cgReportChoose_)(summary|day)$/D',(string)$data,$m) || $data==='sendMonthlyTransactionsNow'){
+        setUser();
+        $mode=$m[1]??'summary';
+        editText($message_id,'👥 گزارش کدام گروه ارسال شود؟',json_encode(['inline_keyboard'=>[
+            [['text'=>v2seg_label('legacy'),'callback_data'=>'monthlyReportMenu_'.$mode.'_cg_legacy'],['text'=>v2seg_label('new'),'callback_data'=>'monthlyReportMenu_'.$mode.'_cg_new']],
+            [['text'=>v2seg_label('all'),'callback_data'=>'monthlyReportMenu_'.$mode.'_cg_all']],
+            [['text'=>'⬅️ بازگشت','callback_data'=>'adminReportsMenu']]
+        ]],JSON_UNESCAPED_UNICODE));exit;
+    }
+}
+function v2seg_totalsText($rows){
+    $totals=['legacy'=>0,'new'=>0];$seen=[];
+    foreach($rows as $p){
+        if(empty($p['counts_in_total']))continue;
+        $id=(int)($p['payment_id']??0);if($id && isset($seen[$id]))continue;if($id)$seen[$id]=true;
+        $g=($p['segment']??'legacy')==='new'?'new':'legacy';$totals[$g]+=(int)$p['price'];
+    }
+    return "\n👤 جمع قدیمی‌ها: <b>".number_format($totals['legacy'])." تومان</b>\n🆕 جمع جدیدها: <b>".number_format($totals['new'])." تومان</b>";
+}
+function v2seg_reportChunks($text){
+    $chunks=[];$current='';
+    foreach(explode("\n",$text) as $line){
+        if($current!=='' && strlen($current."\n".$line)>3500){$chunks[]=$current;$current='';}
+        // Report lines normally contain a time, amount and short payment code.
+        if(strlen($line)>3500){
+            if($current!==''){$chunks[]=$current;$current='';}
+            $plain=html_entity_decode(strip_tags($line),ENT_QUOTES,'UTF-8');
+            preg_match_all('/.{1,800}/us',$plain,$parts);
+            foreach($parts[0] as $part)$chunks[]=htmlspecialchars($part,ENT_QUOTES,'UTF-8');
+        }else $current.=($current!==''?"\n":'').$line;
+    }
+    if($current!=='')$chunks[]=$current;
+    return $chunks;
+}
+function v2seg_statsText($group='all'){
+    $periods=v2raystore_statsPeriodStarts();$lines=[];$expr=v2seg_paymentSql();
+    foreach(['legacy','new'] as $g){
+        if($group!=='all' && $group!==$g)continue;
+        $count=v2seg_one("SELECT COUNT(*) n FROM users u WHERE ".($g==='legacy'?'EXISTS':'NOT EXISTS')."(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy')")['n'];
+        $lines[]="\n<b>".v2seg_label($g)."</b> · ".number_format($count).' کاربر';
+        foreach(['کل'=>0,'امروز'=>$periods['today'],'ماه'=>$periods['month']] as $label=>$since){
+            $cash=v2raystore_statsCashWhere();$product=v2raystore_statsProductWhere();
+            $row=v2seg_one("SELECT COALESCE(SUM(IF($cash,price,0)),0) cash,COALESCE(SUM(IF($product,price,0)),0) sales FROM pays WHERE $expr=? AND request_date>=?",'si',[$g,(int)$since]);
+            $lines[]=$label.' — پرداخت نقدی و شارژ: <b>'.number_format($row['cash']).'</b>؛ فروش: <b>'.number_format($row['sales']).' تومان</b>';
+        }
+    }
+    return "\n\n".implode("\n",$lines);
+}
+function v2seg_managementAction($cb){
+    global $message_id;
+    if(preg_match('/^cgStats_(legacy|new)$/D',$cb,$m)){
+        editText($message_id,'📊 آمار گروه'.v2seg_statsText($m[1]),json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$m[1]]]]],JSON_UNESCAPED_UNICODE),'HTML');return true;
+    }
+    if(preg_match('/^cgManage_(legacy|new)$/D',$cb,$m)){
+        $g=$m[1];$b=function($text,$data){return ['text'=>$text,'callback_data'=>$data];};
+        $items=[
+            $b('⚙️ تنظیمات اختصاصی',$g==='new'?'customerGroupsMenu':'cgLegacySettings'),$b('📦 نمایش پلن‌ها','cgPlans_0_ctx_'.$g),
+            $b('📊 آمار همین گروه','cgStats_'.$g),$b('🧾 ریز تراکنش','monthlyReportMenu_day_cg_'.$g),
+            $b('📅 درآمد ماهانه','monthlyReportMenu_summary_cg_'.$g),$b('📨 پیام و فوروارد','cgBroadcast_'.$g),
+            $b('👥 فهرست مشتری‌ها','cgCustomers_'.$g.'_0'),$b('🎟 کد ورود قدیمی‌ها','cgCode_ctx_'.$g),
+            $b('👤 عملیات کاربر · مشترک','adminUserOperationsMenu_ucg_'.$g),$b('🔗 تنظیمات مشترک','cgCommon_'.$g)
+        ];$rows=array_chunk($items,2);$rows[] = [$b('⬅️ انتخاب گروه','adminUsersMenu'),$b('🏠 مدیریت','adminMainMenu')];
+        editText($message_id,'<b>'.v2seg_label($g)."</b>\n\nآمار و گزارش‌ها برای همین گروه است. پلن‌ها مشترک‌اند و نمایش آن‌ها برای هر گروه جدا تنظیم می‌شود. بخش‌های «مشترک» به همان تنظیمات اصلی متصل‌اند.",json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
+    }
+    if(preg_match('/^cg(Common|Broadcast)_(legacy|new)$/D',$cb,$m) || $cb==='cgLegacySettings'){
+        $g=$m[2]??'legacy';$kind=$m[1]??'Legacy';
+        $items=$kind==='Broadcast'?[
+            ['✉️ پیام به همین گروه','broadcastTargetMessage_'.$g],['↪️ فوروارد به همین گروه','broadcastTargetForward_'.$g]
+        ]:($kind==='Legacy'?[
+            ['💳 کارت اول و دوم قدیمی‌ها','gateWays_Channels'],['💰 قیمت پایه و پلن‌ها','backplan'],
+            ['🔐 قوانین ورود قدیمی‌ها','adminAccessMenu'],['🎟 کد ورود قدیمی‌ها','cgCode_ctx_legacy']
+        ]:[
+            ['⚙️ امکانات مشترک ربات','botSettings'],['🛒 فروش و تخفیف پایه','botSettingsSales'],
+            ['🔗 تحویل و لینک‌ها','botSettingsConnections'],['♻️ تمدید و سرویس','botSettingsService'],
+            ['📦 ساخت و ویرایش پلن‌ها','backplan'],['📊 تنظیمات کانال گزارش','reportChannelSettingsMenu']
+        ]);
+        $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];$rows=array_chunk($buttons,2);
+        $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
+        editText($message_id,($kind==='Broadcast'?'📨 ارسال به '.v2seg_label($g):($kind==='Legacy'?'👤 تنظیمات مشتریان قدیمی؛ قیمت پایه و کارت اول و دوم برای قدیمی‌هاست.':'🔗 تنظیمات مشترک هر دو گروه؛ تغییر این گزینه‌ها روی هر دو گروه اثر دارد.')),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));return true;
+    }
+    if(preg_match('/^cgCustomers_(legacy|new)_(\d+)$/D',$cb,$m)){
+        $g=$m[1];$offset=max(0,(int)$m[2]);$op=$g==='legacy'?'EXISTS':'NOT EXISTS';
+        $stmt=v2seg_query("SELECT u.userid,u.name FROM users u WHERE $op(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy') ORDER BY u.id DESC LIMIT 21 OFFSET $offset");
+        $users=$stmt->get_result()->fetch_all(MYSQLI_ASSOC);$stmt->close();$lines=[];
+        foreach(array_slice($users,0,20) as $u)$lines[]=($g==='new'?'🆕':'👤').' '.htmlspecialchars($u['name'],ENT_QUOTES,'UTF-8').' · <code>'.(int)$u['userid'].'</code>';
+        $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgCustomers_'.$g.'_'.max(0,$offset-20)];if(count($users)>20)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgCustomers_'.$g.'_'.($offset+20)];
+        $rows=$nav?[$nav]:[];$rows[]=[['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports'],['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
+        editText($message_id,'<b>'.v2seg_label($g)."</b>\n\n".($lines?implode("\n",$lines):'کاربری ثبت نشده است.'),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
+    }
+    return false;
 }

@@ -73,18 +73,19 @@ function v2raystore_adminMenuTree(){
             ['⏱ تأیید خودکار','autoApproveOrdersMenu'],['🧾 بررسی فیش تکراری','receiptDuplicateSettings']]],
         'PaymentMethods'=>['🏦 روش‌ها و اطلاعات پرداخت','adminPaymentsMenu',[
             ['🏦 حساب‌ها و درگاه‌ها','gateWays_Channels'],['💳 تنظیمات کارت‌به‌کارت','proC2CMenu']]],
-        'Users'=>['👤 مدیریت کاربر','adminMainMenu',[
+        'Users'=>['👤 مدیریت مشتری‌ها','adminMainMenu',[
+            ['👤 مشتریان قدیمی','cgManage_legacy'],['🆕 مشتریان جدید','cgManage_new']]],
+        'UserOperations'=>['👤 عملیات مشترک کاربر','adminUsersMenu',[
             ['🔎 جستجوی کاربر','userReports'],['🚫 مسدودی کاربران','adminBlocksMenu'],
-            ['🆕 تنظیمات مشتریان جدید','customerGroupsMenu'],
             ['💰 کیف پول کاربر','adminWalletMenu'],['🎗 دعوت و زیرمجموعه','adminMarketingMenu'],
             ['✉️ پیام به کاربر','messageToSpeceficUser'],['🔐 دسترسی و عضویت','adminAccessMenu']]],
-        'Marketing'=>['🎗 دعوت و زیرمجموعه','adminUsersMenu',[
+        'Marketing'=>['🎗 دعوت و زیرمجموعه','adminUserOperationsMenu',[
             ['👥 زیرمجموعه‌های کاربر','proReferralAsk'],['🎗 بنر و پورسانت','inviteSetting']]],
-        'UserLookup'=>['👤 اطلاعات و زیرمجموعه‌ها','adminUsersMenu',[
+        'UserLookup'=>['👤 اطلاعات و زیرمجموعه‌ها','adminUserOperationsMenu',[
             ['👤 گزارش یک کاربر','userReports'],['👥 زیرمجموعه‌های کاربر','proReferralAsk']]],
-        'Wallet'=>['💰 مدیریت کیف پول کاربران','adminUsersMenu',[
+        'Wallet'=>['💰 مدیریت کیف پول کاربران','adminUserOperationsMenu',[
             ['➕ افزایش موجودی','increaseUserWallet'],['➖ کاهش موجودی','decreaseUserWallet']]],
-        'Blocks'=>['🚫 مسدودی و رفع مسدودی','adminUsersMenu',[
+        'Blocks'=>['🚫 مسدودی و رفع مسدودی','adminUserOperationsMenu',[
             ['🚫 مسدودسازی عادی','banUser'],['🔇 مسدودسازی بی‌صدا','silentBanUser'],
             ['✅ رفع مسدودی','unbanUser']]],
         'Agents'=>['🤝 مدیریت نمایندگی','adminMainMenu',[
@@ -93,7 +94,7 @@ function v2raystore_adminMenuTree(){
         'AgentOptions'=>['⚙️ تنظیمات نمایندگی','adminAgentsMenu',[
             ['نمایندگی','changeBotagencyState'],['فروش نماینده','changeBotagentSellState'],
             ['مبنای تخفیف','changeBotagencyPlanDiscount']]],
-        'Access'=>['🔐 قوانین ورود و عضویت','adminUsersMenu',[
+        'Access'=>['🔐 قوانین ورود و عضویت','adminUserOperationsMenu',[
             ['🔑 دسترسی اعضای جدید','newMemberAccessMenu'],['🚪 معافیت عضویت','joinExemptMenu'],
             ['📱 تأیید شماره و ورود','botSettingsAccess']]],
         'Messages'=>['📨 پیام‌ها و پشتیبانی','adminMainMenu',[
@@ -143,6 +144,15 @@ function v2raystore_adminMenuKeys($name){
         $navigation[] = ['text'=>'🏠 مدیریت','callback_data'=>'adminMainMenu'];
     }
     $rows[] = $navigation;
+    if(isset($GLOBALS['v2seg_shared_context'])){
+        $group=$GLOBALS['v2seg_shared_context'];
+        foreach($rows as &$row)foreach($row as &$button){
+            $cb=$button['callback_data'];
+            if($cb==='adminUsersMenu')$button['callback_data']='cgManage_'.$group;
+            elseif($cb!=='adminMainMenu' && $cb!=='mainMenu' && strpos($cb,'cg')!==0)$button['callback_data'].='_ucg_'.$group;
+        }
+        unset($row,$button);
+    }
     return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
