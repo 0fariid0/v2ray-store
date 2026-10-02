@@ -23783,6 +23783,10 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         }else{
             $remark = $srv_remark . '-' . $uid . '-' . rand(1111,99999);
         }
+        // New-customer marker: store the star in the real panel/order remark, not only in Telegram text.
+        if(function_exists('v2seg_configRemark')){
+            $remark = v2seg_configRemark($remark, $uid);
+        }
         if($portType == 'auto') @file_put_contents('settings/temp.txt', $port . '-' . $last_num);
         else $port = rand(1111,65000);
 
