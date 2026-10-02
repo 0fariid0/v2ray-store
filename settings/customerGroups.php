@@ -74,6 +74,15 @@ function v2seg_group($userId = null, $fresh = false){
     // Absence always means new, even after buying, approval or receiving a representative role.
     return $GLOBALS['v2seg_groups'][$uid] = ($row['segment'] ?? '') === 'legacy' ? 'legacy' : 'new';
 }
+function v2seg_configRemark($remark, $userId = null){
+    global $from_id;
+    $uid = (int)($userId ?? $from_id ?? 0);
+    $remark = (string)$remark;
+    if($uid > 0 && v2seg_group($uid, true) === 'new' && substr($remark, 0, 1) !== '*'){
+        return '*' . $remark;
+    }
+    return $remark;
+}
 function v2seg_isAdmin(){
     global $from_id, $admin, $userInfo;
     return (int)($from_id ?? 0)===(int)$admin || !empty($userInfo['isAdmin']);
@@ -287,6 +296,11 @@ function v2seg_admin(){
         sendMessage("🗑 <b>حذف از مشتریان قدیمی و انتقال به جدیدها</b>\n\nآیدی عددی کاربر قدیمی را بفرستید.\nاین عملیات برای کاربر هیچ پیام یا نوتیفیکیشنی ارسال نمی‌کند.",$cancelKey,'HTML');
         exit;
     }
+    if($cb==='cgTransferNewToLegacy'){
+        setUser('cgInput_transferNewToLegacy');
+        sendMessage("↩️ <b>انتقال مشتری جدید به قدیمی‌ها</b>\n\nآیدی عددی کاربر جدید را بفرستید.\nاین عملیات برای کاربر هیچ پیام یا نوتیفیکیشنی ارسال نمی‌کند.",$cancelKey,'HTML');
+        exit;
+    }
     if(isset($update->message->text) && ($userInfo['step']??'')==='cgInput_removeLegacy'){
         $v=trim((string)$text);
         $v=strtr($v,array_combine(preg_split('//u','۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',-1,PREG_SPLIT_NO_EMPTY),str_split('01234567890123456789')));
@@ -313,6 +327,32 @@ function v2seg_admin(){
         $keys=json_encode(['inline_keyboard'=>[
             [['text'=>'🗑 انتقال کاربر دیگری','callback_data'=>'cgRemoveLegacy']],
             [['text'=>'👥 فهرست قدیمی‌ها','callback_data'=>'cgCustomers_legacy_0'],['text'=>'⬅️ مدیریت قدیمی‌ها','callback_data'=>'cgManage_legacy']]
+        ]],JSON_UNESCAPED_UNICODE);
+        editText($message_id,($result['ok']?'✅ ':'❌ ').htmlspecialchars($result['message'],ENT_QUOTES,'UTF-8').($result['ok']?"\n\n🔕 هیچ پیامی برای کاربر ارسال نشد.":''),$keys,'HTML');
+        exit;
+    }
+    if(isset($update->message->text) && ($userInfo['step']??'')==='cgInput_transferNewToLegacy'){
+        $v=trim((string)$text);
+        $v=strtr($v,array_combine(preg_split('//u','۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',-1,PREG_SPLIT_NO_EMPTY),str_split('01234567890123456789')));
+        if(!ctype_digit($v) || (int)$v<=0){sendMessage('آیدی عددی معتبر بفرستید.');exit;}
+        $uid=(int)$v;
+        $u=v2raystore_getUserByTelegramId($uid);
+        if(!$u){sendMessage('کاربر پیدا نشد.');exit;}
+        if(v2seg_group($uid,true)==='legacy'){sendMessage('این کاربر در حال حاضر جزو مشتریان قدیمی است.');exit;}
+        $name=htmlspecialchars(trim((string)($u['name']??''))?:'بدون نام',ENT_QUOTES,'UTF-8');
+        setUser();
+        sendMessage("⚠️ <b>تأیید انتقال کاربر</b>\n\n👤 $name\n🆔 <code>$uid</code>\n\nبا تأیید، کاربر از گروه مشتریان جدید خارج و وارد گروه مشتریان قدیمی می‌شود. پرداخت‌ها و گزارش‌های قبلی او در گروه قبلی خودشان باقی می‌مانند.\n\n🔕 هیچ نوتیفیکیشنی برای کاربر ارسال نمی‌شود.",json_encode(['inline_keyboard'=>[
+            [['text'=>'✅ انتقال به قدیمی‌ها','callback_data'=>'cgTransferToLegacy_'.$uid]],
+            [['text'=>'⬅️ انصراف','callback_data'=>'cgManage_new']]
+        ]],JSON_UNESCAPED_UNICODE),'HTML');
+        exit;
+    }
+    if(preg_match('/^cgTransferToLegacy_(\d+)$/D',$cb,$m)){
+        $uid=(int)$m[1];
+        $result=v2seg_transferNewToLegacy($uid);
+        $keys=json_encode(['inline_keyboard'=>[
+            [['text'=>'↩️ انتقال کاربر دیگری','callback_data'=>'cgTransferNewToLegacy']],
+            [['text'=>'👥 فهرست جدیدها','callback_data'=>'cgCustomers_new_0'],['text'=>'⬅️ مدیریت جدیدها','callback_data'=>'cgManage_new']]
         ]],JSON_UNESCAPED_UNICODE);
         editText($message_id,($result['ok']?'✅ ':'❌ ').htmlspecialchars($result['message'],ENT_QUOTES,'UTF-8').($result['ok']?"\n\n🔕 هیچ پیامی برای کاربر ارسال نشد.":''),$keys,'HTML');
         exit;
@@ -486,6 +526,28 @@ function v2seg_transferLegacyToNew($uid){
     }
 }
 
+function v2seg_transferNewToLegacy($uid){
+    global $connection;
+    $uid=(int)$uid;
+    if($uid<=0) return ['ok'=>false,'message'=>'آیدی کاربر نامعتبر است.'];
+    $user=v2raystore_getUserByTelegramId($uid);
+    if(!$user) return ['ok'=>false,'message'=>'کاربر پیدا نشد.'];
+    if(v2seg_group($uid,true)==='legacy') return ['ok'=>false,'message'=>'این کاربر در حال حاضر جزو مشتریان قدیمی است.'];
+
+    $connection->begin_transaction();
+    try{
+        // Keep all previous payments/reports attached to the group in which they were created.
+        v2seg_snapshotPayments($uid);
+        v2seg_query("INSERT INTO v2_customer_groups(userid,segment,created_at,source) VALUES(?,'legacy',UNIX_TIMESTAMP(),'admin_transfer') ON DUPLICATE KEY UPDATE segment='legacy',created_at=UNIX_TIMESTAMP(),source='admin_transfer'",'i',[$uid])->close();
+        $connection->commit();
+        unset($GLOBALS['v2seg_groups'][$uid]);
+        return ['ok'=>true,'message'=>'کاربر با موفقیت از مشتریان جدید به مشتریان قدیمی منتقل شد.'];
+    }catch(Throwable $e){
+        $connection->rollback();
+        return ['ok'=>false,'message'=>'انتقال انجام نشد. دوباره تلاش کنید.'];
+    }
+}
+
 function v2seg_managementAction($cb){
     global $message_id;
     if(preg_match('/^cgStats_(legacy|new)$/D',$cb,$m)){
@@ -528,7 +590,7 @@ function v2seg_managementAction($cb){
         $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgCustomers_'.$g.'_'.max(0,$offset-20)];if(count($users)>20)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgCustomers_'.$g.'_'.($offset+20)];
         $rows=$nav?[$nav]:[];
         if($g==='legacy')$rows[]=[['text'=>'🗑 حذف/انتقال به جدیدها','callback_data'=>'cgRemoveLegacy'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
-        else $rows[]=[['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
+        else $rows[]=[['text'=>'↩️ انتقال به قدیمی‌ها','callback_data'=>'cgTransferNewToLegacy'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
         $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
         editText($message_id,'<b>'.v2seg_label($g)."</b>\n\n".($lines?implode("\n",$lines):'کاربری ثبت نشده است.'),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
     }
@@ -552,8 +614,10 @@ function v2seg_dashboardKeys($g){
     if($g==='legacy'){
         $items[]=['🗑 حذف/انتقال کاربر','cgRemoveLegacy'];
         $items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
+    }else{
+        $items[]=['↩️ انتقال به قدیمی‌ها','cgTransferNewToLegacy'];
+        if(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
     }
-    elseif(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
     $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];
     $rows=array_chunk($buttons,2);$rows[]=[['text'=>'⬅️ انتخاب گروه','callback_data'=>'adminMainMenu']];
     return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
