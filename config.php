@@ -19097,7 +19097,7 @@ function v2raystore_stripPrivateUserButtons($markup, &$removed = false){
     return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
-function v2raystore_formatUserLine($userId, $name = '', $username = ''){
+function v2raystore_formatUserLine($userId, $name = '', $username = '', $group = null){
     $userId = intval($userId);
     $fresh = $userId > 0 ? v2raystore_getUserRowFresh($userId) : null;
     if($fresh){
@@ -19107,7 +19107,7 @@ function v2raystore_formatUserLine($userId, $name = '', $username = ''){
     $name = trim((string)$name) !== '' ? trim((string)$name) : ('کاربر ' . $userId);
     $username = v2raystore_cleanTelegramUsernameValue($username);
     $username = $username !== '' ? '@' . $username : 'ندارد';
-    return "👤 کاربر: <a href='tg://user?id={$userId}'>" . v2raystore_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . v2raystore_h($username);
+    return (($group ?? v2seg_group($userId))==='new'?'🆕 جدید':'👤 قدیمی') . "\n👤 کاربر: <a href='tg://user?id={$userId}'>" . v2raystore_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . v2raystore_h($username);
 }
 
 
@@ -20035,7 +20035,7 @@ function v2raystore_liveStatsSnapshot($forDaily = false){
     }
     if(count($lines) == 0) return '';
     $title = $forDaily ? "📊 <b>آمار روزانه ربات</b>" : "📊 <b>آمار کلی ربات</b>";
-    return "\n\n" . $title . "\n" . implode("\n", $lines);
+    return "\n\n" . $title . "\n" . implode("\n", $lines) . v2seg_statsText();
 }
 
 function v2raystore_reportEvent($title, $body, $keyboard = null, $eventKey = null){
@@ -20111,6 +20111,7 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
 
     // شروع خط با متن فارسی و استفاده از اعداد فارسی، از به‌هم‌ریختگی RTL در تلگرام جلوگیری می‌کند.
     $parts = [
+        ($row['segment']??'legacy')==='new'?'🆕 جدید':'👤 قدیمی',
         'ساعت ' . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
         v2raystore_reportFaDigits($price) . ' تومان'
     ];
@@ -20164,8 +20165,9 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
     $productTypeWhere = function_exists('v2raystore_statsProductTypeWhere')
         ? v2raystore_statsProductTypeWhere()
         : "(`type` = 'BUY_SUB' OR `type` IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR `type` LIKE 'INCREASE_VOLUME_%' OR `type` LIKE 'INCREASE_DAY_%')";
+    $segmentSql=v2seg_paymentSql();
     $stmt = @$connection->prepare(
-        "SELECT `id`, `hash_id`, `price`, `type`, `state`, `payment_method`, `request_date`, `cancelled_date`,
+        "SELECT `id`, `user_id`, {$segmentSql} AS segment, `hash_id`, `price`, `type`, `state`, `payment_method`, `request_date`, `cancelled_date`,
                 CASE
                     WHEN `state` IN ('declined','auto_cancelled','cancelled_by_user') AND COALESCE(`cancelled_date`,0) > 0 THEN `cancelled_date`
                     ELSE `request_date`
@@ -20210,6 +20212,8 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
                 }
 
                 $payments[] = [
+                    'segment'=>$row['segment'],
+                    'counts_in_total'=>$countsInTotal,
                     'payment_id'=>intval($row['id'] ?? 0),
                     'hash_id'=>(string)($row['hash_id'] ?? ''),
                     'price'=>$price,
@@ -20240,6 +20244,8 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
         $detail .= "\nامروز تراکنش نهایی‌شده‌ای ثبت نشده است.";
     }
 
+    $stats.=v2seg_statsText();
+    $detail.=v2seg_totalsText($payments);
     return $title . "\n\n🕒 زمان گزارش: <b>" . v2raystore_h($nowTxt) . "</b>" . $stats . $detail;
 }
 
@@ -20248,18 +20254,7 @@ function v2raystore_sendDailyChannelStats($manual = false){
     $chat = v2raystore_getIncomeReportChatId();
     if($chat === null || $chat === '') return false;
     $text = v2raystore_buildDailyChannelStatsText($manual);
-    $threadId = v2raystore_reportEnsureTopic('daily_stats');
-    $payload = [
-        'chat_id' => $chat,
-        'text' => $text,
-        'parse_mode' => 'HTML',
-        '_timeout' => 8,
-    ];
-    if($threadId > 0) $payload['message_thread_id'] = $threadId;
-    $res = bot('sendMessage', $payload);
-    return function_exists('v2raystore_telegramResponseOk')
-        ? v2raystore_telegramResponseOk($res)
-        : (is_object($res) ? !empty($res->ok) : (is_array($res) ? !empty($res['ok']) : false));
+    return v2raystore_sendReportText($text,'daily_stats');
 }
 
 function v2raystore_processDailyChannelStats($force = false){
@@ -20335,7 +20330,7 @@ function v2raystore_reportJalaliDayBounds($year, $month, $day){
     return ['from'=>$from->getTimestamp(), 'until'=>$until->getTimestamp()];
 }
 
-function v2raystore_reportPaymentRows($from, $until){
+function v2raystore_reportPaymentRows($from, $until, $group = null){
     global $connection;
     $from = intval($from);
     $until = intval($until);
@@ -20343,9 +20338,11 @@ function v2raystore_reportPaymentRows($from, $until){
     $productTypeWhere = function_exists('v2raystore_statsProductTypeWhere')
         ? v2raystore_statsProductTypeWhere()
         : "(`type` = 'BUY_SUB' OR `type` IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR `type` LIKE 'INCREASE_VOLUME_%' OR `type` LIKE 'INCREASE_DAY_%')";
+    $group=v2seg_reportFilter($group);
+    $segmentSql=v2seg_paymentSql();
     $rows = [];
     $stmt = @$connection->prepare(
-        "SELECT `id`, `hash_id`, `price`, `type`, `state`, `payment_method`, `request_date`, `cancelled_date`
+        "SELECT `id`, `user_id`, {$segmentSql} AS segment, `hash_id`, `price`, `type`, `state`, `payment_method`, `request_date`, `cancelled_date`
          FROM `pays`
          WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
            AND (
@@ -20364,6 +20361,7 @@ function v2raystore_reportPaymentRows($from, $until){
     if($stmt->execute()){
         $result = $stmt->get_result();
         while($row = $result->fetch_assoc()){
+            if($group!=='all' && $row['segment']!==$group) continue;
             $type = (string)($row['type'] ?? '');
             $state = (string)($row['state'] ?? '');
             $method = (string)($row['payment_method'] ?? '');
@@ -20385,6 +20383,8 @@ function v2raystore_reportPaymentRows($from, $until){
             $requestDate = intval($row['request_date'] ?? 0);
             $cancelledDate = intval($row['cancelled_date'] ?? 0);
             $baseRow = [
+                'segment'=>$row['segment'],
+                'user_id'=>intval($row['user_id']),
                 'payment_id'=>intval($row['id'] ?? 0),
                 'hash_id'=>(string)($row['hash_id'] ?? ''),
                 'price'=>intval($row['price'] ?? 0),
@@ -20466,16 +20466,22 @@ function v2raystore_sendReportText($text, $eventKey = 'daily_stats'){
     ];
     $threadId = v2raystore_reportEnsureTopic($eventKey);
     if($threadId > 0) $payload['message_thread_id'] = $threadId;
-    $res = bot('sendMessage', $payload);
-    return function_exists('v2raystore_telegramResponseOk')
-        ? v2raystore_telegramResponseOk($res)
-        : (is_object($res) ? !empty($res->ok) : (is_array($res) ? !empty($res['ok']) : false));
+    foreach(v2seg_reportChunks($text) as $chunk){
+        $payload['text']=$chunk;
+        $res=bot('sendMessage',$payload);
+        $ok=function_exists('v2raystore_telegramResponseOk')
+            ? v2raystore_telegramResponseOk($res)
+            : (is_object($res) ? !empty($res->ok) : (is_array($res) ? !empty($res['ok']) : false));
+        if(!$ok)return false;
+    }
+    return true;
 }
 
-function v2raystore_sendMonthlyIncomeSummary($year, $month){
+function v2raystore_sendMonthlyIncomeSummary($year, $month, $group = null){
     $bounds = v2raystore_reportJalaliMonthBounds($year, $month);
     if(!$bounds) return false;
-    $rows = v2raystore_reportPaymentRows($bounds['from'], min($bounds['until'], time()));
+    $rows = v2raystore_reportPaymentRows($bounds['from'], min($bounds['until'], time()), $group);
+    $reportGroup=v2seg_reportFilter($group);
     $days = [];
     $monthTotal = 0;
     $countedPayments = [];
@@ -20494,6 +20500,7 @@ function v2raystore_sendMonthlyIncomeSummary($year, $month){
     }
     $monthName = v2raystore_reportMonthNames()[$month - 1] ?? ('ماه ' . $month);
     $text = "📊 <b>گزارش درآمد " . v2raystore_h($monthName) . " " . intval($year) . "</b>\n\n";
+    $text.=v2seg_label($reportGroup)."\n\n";
     if(count($days) === 0){
         $text .= "برای این ماه پرداخت موفقی ثبت نشده است.";
         return v2raystore_sendReportText($text);
@@ -20502,15 +20509,17 @@ function v2raystore_sendMonthlyIncomeSummary($year, $month){
         $text .= "📅 <b>" . v2raystore_h($day['label']) . "</b>: <b>" . number_format($day['total']) . " تومان</b> (" . number_format($day['count']) . " پرداخت)\n";
     }
     $text .= "\n💰 <b>جمع کل ماه: " . number_format($monthTotal) . " تومان</b>";
+    $text.=v2seg_totalsText($rows);
     return v2raystore_sendReportText($text);
 }
 
-function v2raystore_sendDayPaymentDetails($year, $month, $day, $includePaymentCode = false){
+function v2raystore_sendDayPaymentDetails($year, $month, $day, $includePaymentCode = false, $group = null){
     $bounds = v2raystore_reportJalaliDayBounds($year, $month, $day);
     if(!$bounds) return false;
-    $rows = v2raystore_reportPaymentRows($bounds['from'], $bounds['until']);
+    $rows = v2raystore_reportPaymentRows($bounds['from'], $bounds['until'], $group);
     $label = v2raystore_reportDayLabel($bounds['from']);
     $text = "🧾 <b>ریز تراکنش‌های " . v2raystore_h($label) . "</b>\n\n";
+    $text.=v2seg_label(v2seg_reportFilter($group))."\n\n";
     if(count($rows) === 0){
         $text .= "برای این روز تراکنش نهایی‌شده‌ای ثبت نشده است.";
         return v2raystore_sendReportText($text);
@@ -20522,20 +20531,21 @@ function v2raystore_sendDayPaymentDetails($year, $month, $day, $includePaymentCo
         $text .= v2raystore_reportCompactTransactionLine($row, $includePaymentCode) . "\n";
     }
     $text .= "\n💰 <b>جمع کل پرداخت‌های روز: " . number_format($total) . " تومان</b>";
+    $text.=v2seg_totalsText($rows);
     return v2raystore_sendReportText($text);
 }
 
 function v2raystore_getDayPaymentFormatText($year, $month, $day){
     $bounds = v2raystore_reportJalaliDayBounds($year, $month, $day);
     $label = $bounds ? v2raystore_reportDayLabel($bounds['from']) : (intval($day) . '/' . intval($month));
-    return "🧾 <b>ریز تراکنش‌های " . v2raystore_h($label) . "</b>\n\nکد پرداخت داخل گزارش نمایش داده شود؟";
+    return v2seg_label(v2seg_reportFilter())."\n\n" . "🧾 <b>ریز تراکنش‌های " . v2raystore_h($label) . "</b>\n\nکد پرداخت داخل گزارش نمایش داده شود؟";
 }
 
 function v2raystore_getDayPaymentFormatKeys($year, $month, $day){
     $year = intval($year);
     $month = intval($month);
     $day = intval($day);
-    return json_encode(['inline_keyboard'=>[
+    return v2seg_reportKeys(json_encode(['inline_keyboard'=>[
         [
             ['text'=>'🔖 با کد پرداخت', 'callback_data'=>"monthlyReportDayFormat_with_{$year}_{$month}_{$day}", 'style'=>'success'],
             ['text'=>'بدون کد پرداخت', 'callback_data'=>"monthlyReportDayFormat_without_{$year}_{$month}_{$day}", 'style'=>'primary']
@@ -20543,7 +20553,7 @@ function v2raystore_getDayPaymentFormatKeys($year, $month, $day){
         [
             ['text'=>'⬅️ بازگشت به روزها', 'callback_data'=>"monthlyReportMonth_day_{$year}_{$month}", 'style'=>'primary']
         ]
-    ]], JSON_UNESCAPED_UNICODE);
+    ]], JSON_UNESCAPED_UNICODE));
 }
 
 function v2raystore_reportModeTitle($mode){
@@ -20553,7 +20563,7 @@ function v2raystore_reportModeTitle($mode){
 }
 
 function v2raystore_getMonthlyReportYearsText($mode = 'summary'){
-    return v2raystore_reportModeTitle($mode) . "\n\nسال موردنظر را انتخاب کنید:";
+    return v2seg_label(v2seg_reportFilter())."\n\n" . v2raystore_reportModeTitle($mode) . "\n\nسال موردنظر را انتخاب کنید:";
 }
 
 function v2raystore_getMonthlyReportYearsKeys($mode = 'summary'){
@@ -20569,19 +20579,19 @@ function v2raystore_getMonthlyReportYearsKeys($mode = 'summary'){
     if(count($yearButtons) > 0) $rows[] = $yearButtons;
     if(count($rows) === 0) $rows[] = [['text'=>'سال موجود نیست', 'callback_data'=>'monthlyReportMenu_summary']];
     $rows[] = [['text'=>'⬅️ بازگشت', 'callback_data'=>'reportChannelSettingsMenu', 'style'=>'primary']];
-    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+    return v2seg_reportKeys(json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE));
 }
 
 function v2raystore_getMonthlyReportMonthsText($mode, $year){
-    return v2raystore_reportModeTitle($mode) . "\n\nماه موردنظر در سال <b>" . intval($year) . "</b> را انتخاب کنید:";
+    return v2seg_label(v2seg_reportFilter())."\n\n" . v2raystore_reportModeTitle($mode) . "\n\nماه موردنظر در سال <b>" . intval($year) . "</b> را انتخاب کنید:";
 }
 
 function v2raystore_getMonthlyReportMonthsKeys($mode, $year){
     $rows = [];
     $names = v2raystore_reportMonthNames();
-    for($month = 1; $month <= 12; $month += 3){
+    for($month = 1; $month <= 12; $month += 2){
         $row = [];
-        for($index = 0; $index < 3; $index++){
+        for($index = 0; $index < 2; $index++){
             $currentMonth = $month + $index;
             if($currentMonth > 12) break;
             $row[] = [
@@ -20593,13 +20603,13 @@ function v2raystore_getMonthlyReportMonthsKeys($mode, $year){
         $rows[] = $row;
     }
     $rows[] = [['text'=>'⬅️ سال‌ها', 'callback_data'=>"monthlyReportMenu_{$mode}", 'style'=>'primary']];
-    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+    return v2seg_reportKeys(json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE));
 }
 
 function v2raystore_getMonthlyReportDaysText($year, $month){
     $names = v2raystore_reportMonthNames();
     $monthName = $names[$month - 1] ?? ('ماه ' . $month);
-    return "🧾 <b>انتخاب روزهای " . v2raystore_h($monthName) . " " . intval($year) . "</b>\n\nروزی را انتخاب کنید:";
+    return v2seg_label(v2seg_reportFilter())."\n\n" . "🧾 <b>انتخاب روزهای " . v2raystore_h($monthName) . " " . intval($year) . "</b>\n\nروزی را انتخاب کنید:";
 }
 
 function v2raystore_getMonthlyReportDaysKeys($year, $month){
@@ -20617,7 +20627,7 @@ function v2raystore_getMonthlyReportDaysKeys($year, $month){
     $buttons = [];
     foreach($days as $day){
         $buttons[] = ['text'=>$day['label'], 'callback_data'=>"monthlyReportDay_" . intval($year) . "_" . intval($month) . "_" . intval($day['day']), 'style'=>'primary'];
-        if(count($buttons) === 3){
+        if(count($buttons) === 2){
             $rows[] = $buttons;
             $buttons = [];
         }
@@ -20625,7 +20635,7 @@ function v2raystore_getMonthlyReportDaysKeys($year, $month){
     if(count($buttons) > 0) $rows[] = $buttons;
     if(count($rows) === 0) $rows[] = [['text'=>'برای این ماه پرداختی ثبت نشده', 'callback_data'=>"monthlyReportMonth_day_" . intval($year) . "_" . intval($month)]];
     $rows[] = [['text'=>'⬅️ ماه‌ها', 'callback_data'=>"monthlyReportYear_day_" . intval($year), 'style'=>'primary']];
-    return json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE);
+    return v2seg_reportKeys(json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE));
 }
 
 function v2raystore_getReportSettingsMenuText(){
@@ -20789,6 +20799,7 @@ function v2raystore_notifyPurchaseStarted($hashId, $source = 'انتخاب پل�
     $pay = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     if(!$pay) return;
+    v2seg_snapshotPayHash($hashId);
     $uid = intval($pay['user_id']);
     $serverTitle = trim((string)($pay['server_title'] ?? ''));
     $planTitle = trim(trim((string)($pay['category_title'] ?? '')) . ' ' . trim((string)($pay['plan_title'] ?? '')));
@@ -20796,8 +20807,8 @@ function v2raystore_notifyPurchaseStarted($hashId, $source = 'انتخاب پل�
     $volume = $pay['volume'] ?? ($pay['plan_volume'] ?? '');
     $days = $pay['day'] ?? ($pay['plan_days'] ?? '');
 
-    $lines = ["🟡 <b>شروع فرایند خرید</b>"];
-    if(v2raystore_reportDetailEnabled('user_info', 'on')) $lines[] = v2raystore_formatUserLine($uid, $pay['name'] ?? '', $pay['username'] ?? '');
+    $lines = ["🟡 <b>شروع فرایند خرید</b>",v2seg_label(v2seg_paymentGroup($pay))];
+    if(v2raystore_reportDetailEnabled('user_info', 'on')) $lines[] = v2raystore_formatUserLine($uid, $pay['name'] ?? '', $pay['username'] ?? '', v2seg_paymentGroup($pay));
 
     // این پیام، گزارش اولیه خرید داخل کانال درآمد است. سرور و پلن باید همیشه نمایش داده شوند
     // حتی اگر گزینه جزئیات پلن در تنظیمات گزارش خاموش باشد؛ چون ادمین برای پیگیری سفارش به آن نیاز دارد.
@@ -21183,6 +21194,7 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
     $username = trim((string)($pay['username'] ?? ''));
     $username = $username !== '' ? '@' . ltrim($username, '@') : 'ندارد';
     $lines[] = '';
+    $lines[] = v2seg_label(v2seg_paymentGroup($pay));
     $lines[] = 'id : ' . $uid;
     $lines[] = 'username : ' . v2raystore_h($username);
 
@@ -22092,9 +22104,9 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     }
 
     $lines = ["🧾 <b>رسید پرداخت کارت‌به‌کارت</b>"];
-    $lines[] = "👥 گروه مشتری: <b>" . (v2seg_group($uid)==='legacy' ? 'قدیمی' : 'جدید') . "</b>";
+    $lines[] = "👥 گروه مشتری: <b>" . v2seg_label(v2seg_paymentGroup($pay)) . "</b>";
     $lines[] = "📌 نوع: <b>" . v2raystore_h($typeTitle) . "</b>";
-    if($user) $lines[] = v2raystore_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '');
+    if($user) $lines[] = v2raystore_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '', v2seg_paymentGroup($pay));
     else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
     $paymentHash = trim((string)($pay['hash_id'] ?? ''));
     if($paymentHash !== '') $lines[] = "🔖 کد پرداخت: <code>" . v2raystore_h($paymentHash) . "</code>";

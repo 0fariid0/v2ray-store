@@ -60,6 +60,7 @@ if($robotState == "off" && $from_id != $admin){
     sendMessage($mainValues['bot_is_updating']);
     exit();
 }
+v2seg_reportRoute();
 v2raystore_handleAdminNavigation();
 v2raystore_handleUserBlocking();
 v2seg_admin();
@@ -1833,7 +1834,7 @@ if(preg_match('/^sendMessageToUser(\d+)/',$userInfo['step'],$match) && ($from_id
 }
 
 if($data=='botReports' && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    editText($message_id, "آمار ربات در این لحظه",getBotReportKeys());
+    editText($message_id, "آمار ربات در این لحظه" . v2seg_statsText(),getBotReportKeys(),'HTML');
 }
 if($data=="adminsList" && $from_id == $admin){
     editText($message_id, "لیست ادمین ها",getAdminsKeys());
@@ -3234,7 +3235,7 @@ if($userInfo['step'] == "userReports" && $text != $buttonValues['cancel'] && ($f
         sendMessage($mainValues['please_wait_message'],$removeKeyboard);
         $keys = getUserInfoKeys($text);
         if($keys != null){
-            sendMessage("اطلاعات کاربر <a href='tg://user?id=$text'>$fullName</a>",$keys,"html");
+            sendMessage(v2seg_label(v2seg_group((int)$text)) . "\nاطلاعات کاربر <a href='tg://user?id=$text'>$fullName</a>",$keys,"html");
             setUser();
         }else sendMessage("کاربری با این آیدی یافت نشد");
     }else{
@@ -3503,6 +3504,7 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
     $stmt->bind_param("siii", $hash_id, $from_id, $text, $time);
     $stmt->execute();
     $stmt->close();
+    v2seg_snapshotPayHash($hash_id);
     
     
     $keyboard = array();
@@ -6730,6 +6732,7 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         $stmt->execute();
         $rowId = $stmt->insert_id;
         $stmt->close();
+        v2seg_snapshotPayHash($hash_id);
         v2raystore_notifyPurchaseStarted($hash_id, 'انتخاب پلن دلخواه');
     }
     
@@ -6958,6 +6961,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
         $stmt->bind_param("ssiiii", $hash_id, $renewDesc, $from_id, $renewOrderId, $price, $time);
         $stmt->execute();
         $stmt->close();
+        v2seg_snapshotPayHash($hash_id);
         if(function_exists('v2raystore_notifyPurchaseStarted')) v2raystore_notifyPurchaseStarted($hash_id, 'انتخاب پلن تمدید');
 
         $renewKeyboard = [];
@@ -7010,6 +7014,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
             $stmt->execute();
             $rowId = $stmt->insert_id;
             $stmt->close();
+            v2seg_snapshotPayHash($hash_id);
             v2raystore_notifyPurchaseStarted($hash_id, isset($accountCount) ? 'انتخاب پلن خرید انبوه' : 'انتخاب پلن خرید');
         }else{
             $price = $afterDiscount;
@@ -10747,6 +10752,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
     $stmt->execute();
     $rowId = $stmt->insert_id;
     $stmt->close();
+    v2seg_snapshotPayHash($hash_id);
 
     
     if($botState['cartToCartState'] == "on") $keyboard[] = [['text' => $buttonValues['cart_to_cart'],  'callback_data' => "payWithCartToCart$hash_id"]];
@@ -13465,6 +13471,7 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
         $stmt->execute();
         $rowId = $stmt->insert_id;
         $stmt->close();
+        v2seg_snapshotPayHash($hash_id);
     }else $price = $afterDiscount;
 
     if($price == 0) $price = "رایگان";
@@ -14425,6 +14432,7 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     $stmt->bind_param("sisii", $hash_id, $from_id,$type, $planprice, $time);
     $stmt->execute();
     $stmt->close();
+    v2seg_snapshotPayHash($hash_id);
 
     
     $keyboard = array();
@@ -14741,6 +14749,7 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
     $stmt->bind_param("sisii", $hash_id, $from_id,$type, $planprice, $time);
     $stmt->execute();
     $stmt->close();
+    v2seg_snapshotPayHash($hash_id);
     
     $keyboard = array();
     
