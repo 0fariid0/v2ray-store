@@ -224,7 +224,7 @@ function v2seg_menuKeys(){
         [$button((!empty($s['enabled'])?'🟢':'🔴').' پذیرش مشتری جدید','cgToggle_enabled'),$button('💰 افزایش قیمت: '.$s['percent'].'٪','cgEdit_percent')],
         [$button('🔢 گرد کردن: '.number_format($s['round']),'cgEdit_round'),$button('💳 شماره کارت مستقل','cgEdit_card')],
         [$button('👤 نام دارنده کارت','cgEdit_holder'),$button('📩 پشتیبانی پرداخت','cgEdit_contact')],
-        [$button('🎟 کد انتقال به قدیمی‌ها','cgCode'),$button('📦 پلن‌های هر گروه','cgPlans_0')],
+        [$button('📦 پلن‌های هر گروه','cgPlans_0')],
         [$button((!empty($s['sell'])?'✅':'❌').' فروش','cgToggle_sell'),$button((!empty($s['wallet'])?'✅':'❌').' کیف پول','cgToggle_wallet')],
         [$button((!empty($s['test'])?'✅':'❌').' اکانت تست','cgToggle_test'),$button((!empty($s['custom'])?'✅':'❌').' پلن دلخواه','cgToggle_custom')],
         [$button('📝 پیام خوش‌آمد جدیدها','cgEdit_welcome'),$button('🔎 گروه یک مشتری','cgEdit_lookup')],
@@ -234,7 +234,7 @@ function v2seg_menuKeys(){
 function v2seg_menuText(){
     $s=v2seg_settings(); $card=htmlspecialchars($s['card']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
     $holder=htmlspecialchars($s['holder']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
-    return "👥 <b>تنظیمات مشتریان جدید</b>\n\nکارت مستقل: <code>$card</code>\nدارنده: $holder\n\nقیمت خرید، تمدید و افزایش حجم/زمان: +{$s['percent']}٪؛ گرد کردن رو به بالا تا ".number_format($s['round'])." تومان.\nدرصد صفر یعنی قیمت پایه بدون افزایش و گرد کردن. شارژ کیف پول افزایش قیمت ندارد.\n\nکارت اول و دوم فقط برای گروه قدیمی است. مشتری جدید با خرید، قدیمی نمی‌شود؛ انتقال فقط با کد است.\nپلن تازه به‌صورت پیش‌فرض برای هر دو گروه فعال است. غیرفعال کردن پلن برای یک گروه، سرویس‌های قبلی را حذف نمی‌کند.\nگزینه‌های امکانات، تابع روشن بودن همان امکان در تنظیمات اصلی هم هستند.";
+    return "👥 <b>تنظیمات مشتریان جدید</b>\n\nکارت مستقل: <code>$card</code>\nدارنده: $holder\n\nقیمت خرید، تمدید و افزایش حجم/زمان: +{$s['percent']}٪؛ گرد کردن رو به بالا تا ".number_format($s['round'])." تومان.\nدرصد صفر یعنی قیمت پایه بدون افزایش و گرد کردن. شارژ کیف پول افزایش قیمت ندارد.\n\nکارت اول و دوم فقط برای گروه قدیمی است. مشتری جدید با خرید، قدیمی نمی‌شود.\nپلن تازه به‌صورت پیش‌فرض برای هر دو گروه فعال است. غیرفعال کردن پلن برای یک گروه، سرویس‌های قبلی را حذف نمی‌کند.\nگزینه‌های امکانات، تابع روشن بودن همان امکان در تنظیمات اصلی هم هستند.";
 }
 function v2seg_codeKeys(){return v2seg_contextKeys(json_encode(['inline_keyboard'=>[
     [['text'=>'🔄 ساخت کد جدید','callback_data'=>'cgCodeGenerate'],['text'=>'✏️ تنظیم کد','callback_data'=>'cgEdit_code']],
