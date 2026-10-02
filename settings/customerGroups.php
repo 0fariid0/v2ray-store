@@ -132,7 +132,15 @@ function v2seg_customerLock(){
 function v2seg_promote($uid,$code){
     global $connection;
     $expected=v2raystore_getBuyersAccessCode();
-    if($expected==='' || !hash_equals(strtolower($expected),strtolower(v2raystore_normalizeAccessCodeText($code)))) return false;
+    $normalized=v2raystore_normalizeAccessCodeText($code);
+    if($expected==='' || !hash_equals(strtolower($expected),strtolower($normalized))) return false;
+
+    // If management explicitly moved/revoked this customer, the same old code must not
+    // immediately promote the customer again. A newly generated/different valid code can.
+    $access=v2seg_one('SELECT access_code_used,access_code_revoked FROM users WHERE userid=?','i',[(int)$uid]);
+    $used=v2raystore_normalizeAccessCodeText($access['access_code_used'] ?? '');
+    if(!empty($access['access_code_revoked']) && $used!=='' && hash_equals(strtolower($used),strtolower($normalized))) return false;
+
     // A card/price must not switch midway through an unpaid or submitted order.
     $pay=v2seg_one("SELECT hash_id,state FROM pays WHERE user_id=? AND state IN ('pending','sent','processing','auto_processing') ORDER BY id DESC LIMIT 1",'i',[(int)$uid]);
     if($pay){
@@ -274,6 +282,41 @@ function v2seg_admin(){
         v2seg_query("INSERT INTO v2_plan_audience(plan_id,$col) VALUES(?,0) ON DUPLICATE KEY UPDATE $col=1-$col",'i',[(int)$m[1]])->close();
         if($m[3]==='999999') {editText($message_id,'📦 تنظیمات پلن',getPlanDetailsKeys($m[1]));}else v2seg_planMenu($m[3]);exit;
     }
+    if($cb==='cgRemoveLegacy'){
+        setUser('cgInput_removeLegacy');
+        sendMessage("🗑 <b>حذف از مشتریان قدیمی و انتقال به جدیدها</b>\n\nآیدی عددی کاربر قدیمی را بفرستید.\nاین عملیات برای کاربر هیچ پیام یا نوتیفیکیشنی ارسال نمی‌کند.",$cancelKey,'HTML');
+        exit;
+    }
+    if(isset($update->message->text) && ($userInfo['step']??'')==='cgInput_removeLegacy'){
+        $v=trim((string)$text);
+        $v=strtr($v,array_combine(preg_split('//u','۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',-1,PREG_SPLIT_NO_EMPTY),str_split('01234567890123456789')));
+        if(!ctype_digit($v) || (int)$v<=0){sendMessage('آیدی عددی معتبر بفرستید.');exit;}
+        $uid=(int)$v;
+        $u=v2raystore_getUserByTelegramId($uid);
+        if(!$u){sendMessage('کاربر پیدا نشد.');exit;}
+        if(v2seg_group($uid,true)!=='legacy'){sendMessage('این کاربر در حال حاضر جزو مشتریان جدید است.');exit;}
+        global $admin;
+        if($uid===(int)$admin || !empty($u['isAdmin'])){sendMessage('حساب مدیر را نمی‌توان به مشتری جدید منتقل کرد.');exit;}
+        $row=v2seg_one('SELECT source FROM v2_customer_groups WHERE userid=?','i',[$uid]);
+        $name=htmlspecialchars(trim((string)($u['name']??''))?:'بدون نام',ENT_QUOTES,'UTF-8');
+        $source=htmlspecialchars((string)($row['source']??'legacy'),ENT_QUOTES,'UTF-8');
+        setUser();
+        sendMessage("⚠️ <b>تأیید انتقال کاربر</b>\n\n👤 $name\n🆔 <code>$uid</code>\n📌 منبع عضویت قدیمی: <code>$source</code>\n\nبا تأیید، کاربر از گروه قدیمی حذف و وارد گروه جدید می‌شود. اگر قبلاً با کد دسترسی آمده باشد، دسترسی همان کد هم بی‌صدا لغو می‌شود.\n\n🔕 هیچ نوتیفیکیشنی برای کاربر ارسال نمی‌شود.",json_encode(['inline_keyboard'=>[
+            [['text'=>'✅ انتقال به جدیدها','callback_data'=>'cgTransferToNew_'.$uid]],
+            [['text'=>'⬅️ انصراف','callback_data'=>'cgManage_legacy']]
+        ]],JSON_UNESCAPED_UNICODE),'HTML');
+        exit;
+    }
+    if(preg_match('/^cgTransferToNew_(\d+)$/D',$cb,$m)){
+        $uid=(int)$m[1];
+        $result=v2seg_transferLegacyToNew($uid);
+        $keys=json_encode(['inline_keyboard'=>[
+            [['text'=>'🗑 انتقال کاربر دیگری','callback_data'=>'cgRemoveLegacy']],
+            [['text'=>'👥 فهرست قدیمی‌ها','callback_data'=>'cgCustomers_legacy_0'],['text'=>'⬅️ مدیریت قدیمی‌ها','callback_data'=>'cgManage_legacy']]
+        ]],JSON_UNESCAPED_UNICODE);
+        editText($message_id,($result['ok']?'✅ ':'❌ ').htmlspecialchars($result['message'],ENT_QUOTES,'UTF-8').($result['ok']?"\n\n🔕 هیچ پیامی برای کاربر ارسال نشد.":''),$keys,'HTML');
+        exit;
+    }
     if(preg_match('/^cgEdit_(percent|round|card|holder|contact|welcome|code|lookup)$/',$cb,$m)){
         $prompts=['percent'=>'درصد افزایش قیمت را از ۰ تا ۱۰۰۰ بفرستید؛ مثلاً 10 یا 0. اعشار تا دو رقم مجاز است.','round'=>'مضرب گرد کردن رو به بالا را بفرستید؛ مثلاً 5000. صفر یعنی بدون گرد کردن.','card'=>'شماره کارت ۱۶ رقمی مخصوص مشتریان جدید را بفرستید. برای حذف بنویسید: حذف','holder'=>'نام دارنده کارت مخصوص مشتریان جدید را بفرستید.','contact'=>'آیدی پشتیبانی پرداخت جدیدها را بفرستید؛ مثلاً @support. برای حذف بنویسید: حذف','welcome'=>'متن خوش‌آمد مشتریان جدید را بفرستید. برای حذف بنویسید: حذف','code'=>'کد انتقال به گروه قدیمی را بفرستید؛ ۸ تا ۶۰ کاراکتر انگلیسی، عدد، خط تیره یا زیرخط.','lookup'=>'آیدی عددی مشتری را بفرستید.'];
         $step='cgInput_'.$m[1];
@@ -414,6 +457,35 @@ function v2seg_statsText($group='all'){
     }
     return "\n\n".implode("\n",$lines);
 }
+function v2seg_transferLegacyToNew($uid){
+    global $connection,$admin;
+    $uid=(int)$uid;
+    if($uid<=0) return ['ok'=>false,'message'=>'آیدی کاربر نامعتبر است.'];
+    $user=v2raystore_getUserByTelegramId($uid);
+    if(!$user) return ['ok'=>false,'message'=>'کاربر پیدا نشد.'];
+    if($uid===(int)$admin || !empty($user['isAdmin'])) return ['ok'=>false,'message'=>'حساب مدیر را نمی‌توان به مشتری جدید منتقل کرد.'];
+    if(v2seg_group($uid,true)!=='legacy') return ['ok'=>false,'message'=>'این کاربر در حال حاضر جزو مشتریان جدید است.'];
+
+    $connection->begin_transaction();
+    try{
+        // Keep every existing payment/report in the group in which it was originally created.
+        v2seg_snapshotPayments($uid);
+        v2seg_query("INSERT INTO v2_customer_groups(userid,segment,created_at,source) VALUES(?,'new',UNIX_TIMESTAMP(),'admin_transfer') ON DUPLICATE KEY UPDATE segment='new',created_at=UNIX_TIMESTAMP(),source='admin_transfer'",'i',[$uid])->close();
+
+        // Access-code users have access_exempt=1. Revoke it silently so the old privilege
+        // does not survive the move. This function only updates DB and sends no Telegram message.
+        if(function_exists('v2raystore_setUserAccessExempt') && !v2raystore_setUserAccessExempt($uid,false)){
+            throw new RuntimeException('Cannot revoke legacy access exemption');
+        }
+        $connection->commit();
+        unset($GLOBALS['v2seg_groups'][$uid]);
+        return ['ok'=>true,'message'=>'کاربر با موفقیت از مشتریان قدیمی حذف و به مشتریان جدید منتقل شد.'];
+    }catch(Throwable $e){
+        $connection->rollback();
+        return ['ok'=>false,'message'=>'انتقال انجام نشد. دوباره تلاش کنید.'];
+    }
+}
+
 function v2seg_managementAction($cb){
     global $message_id;
     if(preg_match('/^cgStats_(legacy|new)$/D',$cb,$m)){
@@ -454,7 +526,10 @@ function v2seg_managementAction($cb){
         $users=$stmt->get_result()->fetch_all(MYSQLI_ASSOC);$stmt->close();$lines=[];
         foreach(array_slice($users,0,20) as $u)$lines[]=($g==='new'?'🆕':'👤').' '.htmlspecialchars($u['name'],ENT_QUOTES,'UTF-8').' · <code>'.(int)$u['userid'].'</code>';
         $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgCustomers_'.$g.'_'.max(0,$offset-20)];if(count($users)>20)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgCustomers_'.$g.'_'.($offset+20)];
-        $rows=$nav?[$nav]:[];$rows[]=[['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports'],['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
+        $rows=$nav?[$nav]:[];
+        if($g==='legacy')$rows[]=[['text'=>'🗑 حذف/انتقال به جدیدها','callback_data'=>'cgRemoveLegacy'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
+        else $rows[]=[['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
+        $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
         editText($message_id,'<b>'.v2seg_label($g)."</b>\n\n".($lines?implode("\n",$lines):'کاربری ثبت نشده است.'),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
     }
     return false;
@@ -474,7 +549,10 @@ function v2seg_dashboardKeys($g){
             ['⚙️ تنظیمات مشتریان جدید','customerGroupsMenu'],['👥 فهرست مشتریان','cgCustomers_new_0']
         ];
     }else $items=[['👤 مدیریت کاربر','adminUserOperationsMenu'],['🧾 مدیریت سرویس','adminConfigsMenu'],['📊 آمار همین بخش','cgStats_'.$g]];
-    if($g==='legacy')$items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
+    if($g==='legacy'){
+        $items[]=['🗑 حذف/انتقال کاربر','cgRemoveLegacy'];
+        $items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
+    }
     elseif(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
     $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];
     $rows=array_chunk($buttons,2);$rows[]=[['text'=>'⬅️ انتخاب گروه','callback_data'=>'adminMainMenu']];
