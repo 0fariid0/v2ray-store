@@ -67,6 +67,7 @@ v2raystore_handleUserBlocking();
 v2seg_admin();
 v2seg_gate();
 v2seg_guardSelection();
+v2cfg_handle();
 if(v2raystore_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
@@ -2806,6 +2807,7 @@ if(preg_match('/^removeAgent(\d+)/',$data,$match) && ($from_id == $admin || $use
     $stmt->execute();
     $stmt->close();
     
+    v2raystore_setSettingValue('AGENT_CONFIG_POWER_' . (int)$match[1], '0');
     alert($mainValues['agent_deleted_successfuly']);
     $keys = getAgentsList();
     if($keys != null) editKeys($keys);
@@ -13149,45 +13151,6 @@ if(preg_match('/changAccountConnectionLink(\d+)/', $data,$match)){
     alert("✅ دسترسی قبلی قطع شد و لینک جدید در پیام جداگانه ارسال شد.");
     exit();
 }
-if(preg_match('/changeUserConfigState(\d+)/', $data,$match)){
-    alert($mainValues['please_wait_message']);
-    $oid = $match[1];
-
-    $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id`=?");
-    $stmt->bind_param("i", $oid);
-    $stmt->execute();
-    $order = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    
-    $userId = $order['userid'];
-    $uuid = $order['uuid']??"0";
-    $inboundId = $order['inbound_id'];
-    $server_id = $order['server_id'];
-    $remark = $order['remark'];
-    
-    $stmt = $connection->prepare("SELECT * FROM server_config WHERE id=?");
-    $stmt->bind_param("i", $server_id);
-    $stmt->execute();
-    $server_info = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    $serverType = $server_info['type'];
-
-    
-    if($inboundId == 0){
-        if($serverType == "marzban") $update_response = changeMarzbanState($server_id, $remark);
-        else $update_response = changeInboundState($server_id, $uuid);
-    }else{
-        $update_response = changeClientState($server_id, $inboundId, $uuid);
-    }
-    
-    if($update_response->success){
-        alert($mainValues['please_wait_message']);
-    
-        $keys = getUserOrderDetailKeys($oid);
-        editText($message_id, $keys['msg'], $keys['keyboard'], "HTML");
-    }else sendMessage("عملیه مورد نظر با مشکل روبرو شد\n" . $update_response->msg);
-}
-
 if(preg_match('/changeAccProtocol(\d+)_(\d+)_(.*)/', $data,$match)){
     $fid = $match[1];
     $oid = $match[2];

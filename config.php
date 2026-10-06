@@ -5,6 +5,7 @@ include_once __DIR__ . '/baseInfo.php';
 require_once __DIR__ . '/settings/adminNavigation.php';
 require_once __DIR__ . '/settings/customerGroups.php';
 require_once __DIR__ . '/settings/receiptSimilarity.php';
+require_once __DIR__ . '/settings/configPower.php';
 
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
@@ -11877,6 +11878,8 @@ function getAgentDiscounts($agentId){
     $keys[] = [
         ['text'=>'🚚 تنظیم ارسال سرورها', 'callback_data'=>'agSendMode' . $agentId . '_0']
     ];
+    $powerAllowed = v2cfg_agentAllowed($agentInfo);
+    $keys[] = [['text'=>'🔌 روشن/خاموش کردن کانفیگ: ' . ($powerAllowed ? 'مجاز ✅' : 'غیرمجاز ⛔'), 'callback_data'=>'agentPower_' . (int)$agentId . '_' . ($powerAllowed ? '0' : '1')]];
     $limits = v2raystore_agentLimitsNormalize($discounts['limits'] ?? []);
     $keys[] = [
         ['text'=>'خرید نماینده: ' . ($limits['buying'] === 'on' ? 'فعال ✅' : 'بسته 🚫'), 'callback_data'=>'toggleAgentBuying_' . $agentId]
@@ -13635,6 +13638,7 @@ function getUserOrderDetailKeys($id, $offset = 0){
         }
     
         $keyboard[] = [['text' => $buttonValues['back_button'], 'callback_data' => "adminConfigsMenu"]];
+        $keyboard = v2cfg_attachButton($keyboard, $order, $from_id, 'a', $offset);
         return ["keyboard"=>v2raystore_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }
@@ -14031,6 +14035,7 @@ function getOrderDetailKeys($from_id, $id, $offset = 0){
         if(function_exists('v2raystore_prepareMyConfigDetailKeyboard')){
             $keyboard = v2raystore_prepareMyConfigDetailKeyboard($keyboard, $id, $agentBought, $configNote);
         }
+        $keyboard = v2cfg_attachButton($keyboard, $order, $from_id, 'm', $offset);
         return ["keyboard"=>v2raystore_inlineKeyboardJson($keyboard),
                 "msg"=>$msg];
     }
