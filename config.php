@@ -7841,17 +7841,21 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
     $fileId = trim((string)$fileId);
     static $cache = [];
     if(isset($cache[$fileId])) return $cache[$fileId];
-    $empty = ['sha256'=>'', 'visual'=>'', 'visual_version'=>3, 'signature'=>[]];
-    if($fileId === '' || trim((string)$botToken) === '' || !function_exists('curl_init')) return $empty;
-    $fileInfo = @bot('getFile', ['file_id'=>$fileId, '_timeout'=>6]);
+    $empty = ['sha256'=>'', 'visual'=>'', 'visual_version'=>3, 'signature'=>[], 'issues'=>[]];
+    $failed = function($issue) use ($empty){ $empty['issues']=[$issue]; return $empty; };
+    if($fileId === '') return $failed('file_missing');
+    if(trim((string)$botToken) === '') return $failed('bot_unconfigured');
+    if(!function_exists('curl_init')) return $failed('curl_missing');
+    try{ $fileInfo = @bot('getFile', ['file_id'=>$fileId, '_timeout'=>6]); }
+    catch(Throwable $e){ return $failed('telegram_file_failed'); }
     $filePath = is_object($fileInfo) ? trim((string)($fileInfo->result->file_path ?? '')) : '';
-    if($filePath === '') return $empty;
+    if($filePath === '') return $failed('telegram_file_failed');
     $tmp = @tempnam(sys_get_temp_dir(), 'v2rs_receipt_');
-    if($tmp === false || $tmp === '') return $empty;
+    if($tmp === false || $tmp === '') return $failed('temp_storage_failed');
     $fp = @fopen($tmp, 'wb');
-    if(!$fp){ @unlink($tmp); return $empty; }
+    if(!$fp){ @unlink($tmp); return $failed('temp_storage_failed'); }
     $ch = @curl_init('https://api.telegram.org/file/bot' . $botToken . '/' . ltrim($filePath, '/'));
-    if(!$ch){ @fclose($fp); @unlink($tmp); return $empty; }
+    if(!$ch){ @fclose($fp); @unlink($tmp); return $failed('download_failed'); }
     $downloaded = 0;
     @curl_setopt_array($ch, [
         CURLOPT_WRITEFUNCTION=>function($ch, $chunk) use ($fp, &$downloaded){
@@ -7871,7 +7875,9 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
     @fclose($fp);
     $size = @filesize($tmp);
     $hash = ($ok && $size !== false && $size > 0 && $size <= (15 * 1024 * 1024)) ? (string)@hash_file('sha256', $tmp) : '';
-    $visual = ''; $signature = [];
+    $visual = ''; $signature = []; $issues = [];
+    if($hash === '') $issues[] = $downloaded > 15*1024*1024 ? 'download_too_large' : 'download_failed';
+    elseif(!function_exists('imagecreatefromstring') || !function_exists('imagecreatetruecolor')) $issues[] = 'gd_missing';
     try{
     // نسخهٔ ۳: dHash تمام تصویر برای رسیدهای قالب‌ثابت کافی نیست؛ چون نوشته‌های
     // متغیر ممکن است در resize عمودی حذف شوند. اینجا ناحیهٔ اصلی رسید را با
@@ -7886,6 +7892,8 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
         $unit = strtolower(substr($limit,-1));
         $limitBytes = (float)$limit * ($unit==='g'?1073741824:($unit==='m'?1048576:($unit==='k'?1024:1)));
         $memoryOK = $limit==='-1' || memory_get_usage(true) + $pixels * 8 + 24*1024*1024 < $limitBytes;
+        if($pixels <= 0) $issues[] = 'image_invalid';
+        elseif($pixels > 12000000 || !$memoryOK) $issues[] = 'image_limit';
         $src = ($pixels > 0 && $pixels <= 12000000 && $memoryOK) ? @imagecreatefromstring($raw) : false;
         if($src){
             $srcW = max(1, @imagesx($src));
@@ -7907,16 +7915,18 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
                 @imagedestroy($small);
             }
             $signature = v2receipt_visualSignature($src);
+            if(empty($signature)) $issues[] = 'image_features_missing';
             @imagedestroy($src);
-        }
+        }elseif(empty($issues)) $issues[] = 'image_invalid';
     }
-    }catch(Throwable $e){ $visual=''; $signature=[]; error_log('Receipt image processing incomplete'); }
+    }catch(Throwable $e){ $visual=''; $signature=[]; $issues[]='image_processing_failed'; error_log('Receipt image processing incomplete'); }
     finally{ @unlink($tmp); }
     return $cache[$fileId] = [
         'signature'=>$signature,
         'sha256'=>preg_match('/^[a-f0-9]{64}$/i', $hash) ? strtolower($hash) : '',
         'visual'=>preg_match('/^[a-f0-9]{64}$/i', $visual) ? strtolower($visual) : '',
         'visual_version'=>3,
+        'issues'=>array_values(array_unique($issues)),
     ];
 }
 
@@ -8058,14 +8068,14 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
     $payHash=trim((string)$payHash);$fileUniqueId=trim((string)$fileUniqueId);$userId=(int)$userId;
     $contentHash=preg_match('/^[a-f0-9]{64}$/i',(string)$contentHash)?strtolower($contentHash):'';
     $visualHash=preg_match('/^[a-f0-9]{64}$/i',(string)$visualHash)?strtolower($visualHash):'';
-    if($payHash==='' || ($fileUniqueId==='' && $contentHash==='' && $visualHash==='')) return ['duplicate'=>false,'incomplete'=>true];
-    $matches=[];$locked=false;$incomplete=false;$now=time();$cutoff=$now-90*86400;
+    if($payHash==='' || ($fileUniqueId==='' && $contentHash==='' && $visualHash==='')) return ['duplicate'=>false,'incomplete'=>true,'issues'=>['fingerprint_missing']];
+    $matches=[];$locked=false;$incomplete=false;$issues=[];$now=time();$cutoff=$now-90*86400;
     $lockName='v2receipt:'.substr(hash('sha256',(string)($dbName??'')),0,32);
     try{
         if(!v2raystore_ensureReceiptFingerprintsTable())throw new RuntimeException('Receipt schema unavailable');
         $stmt=$connection->prepare('SELECT GET_LOCK(?,10) AS locked');$stmt->bind_param('s',$lockName);$stmt->execute();
         $locked=!empty($stmt->get_result()->fetch_assoc()['locked']);$stmt->close();
-        if(!$locked)$incomplete=true;
+        if(!$locked){$incomplete=true;$issues[]='check_lock_timeout';}
         // No user_id/cohort condition: reuse across accounts is exactly what we seek.
         foreach(['file_unique_id'=>$fileUniqueId,'content_hash'=>$contentHash,'visual_hash'=>$visualHash] as $column=>$value){
             if($value==='')continue;
@@ -8086,16 +8096,43 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
                 if(!v2receipt_ensureVisualTables())throw new RuntimeException('Visual schema unavailable');
                 $matches+=v2receipt_findVisualMatches($signature,$payHash,$cutoff,$now);
                 v2receipt_storeVisual($signature,$payHash,$userId,$now);
-            }catch(Throwable $e){$incomplete=true;error_log('Receipt visual check incomplete');}
+            }catch(Throwable $e){$incomplete=true;$issues[]='visual_database_failed';error_log('Receipt visual check incomplete');}
         }
-    }catch(Throwable $e){$incomplete=true;error_log('Receipt duplicate check incomplete');}
+    }catch(Throwable $e){$incomplete=true;$issues[]='database_failed';error_log('Receipt duplicate check incomplete');}
     finally{
         if($locked){try{$stmt=$connection->prepare('SELECT RELEASE_LOCK(?)');$stmt->bind_param('s',$lockName);$stmt->execute();$stmt->close();}catch(Throwable $e){}}
     }
     v2raystore_cleanupReceiptFingerprints($now);
-    if(!$matches)return ['duplicate'=>false,'incomplete'=>$incomplete];
+    if(!$matches)return ['duplicate'=>false,'incomplete'=>$incomplete,'issues'=>$issues];
     $previous=reset($matches);
-    return ['duplicate'=>true,'incomplete'=>$incomplete,'pay_hash'=>$previous['pay_hash'],'user_id'=>(int)$previous['user_id'],'created_at'=>(int)$previous['created_at'],'matches'=>array_values($matches)];
+    return ['duplicate'=>true,'incomplete'=>$incomplete,'issues'=>$issues,'pay_hash'=>$previous['pay_hash'],'user_id'=>(int)$previous['user_id'],'created_at'=>(int)$previous['created_at'],'matches'=>array_values($matches)];
+}
+
+function v2raystore_receiptIncompleteText($issues = []){
+    // Only fixed diagnostic labels reach Telegram; never expose URLs/tokens/SQL.
+    $labels = [
+        'file_missing'=>'شناسهٔ عکس رسید در دسترس نیست.',
+        'bot_unconfigured'=>'تنظیمات دریافت فایل ربات در دسترس نیست.',
+        'curl_missing'=>'افزونهٔ cURL در PHP فعال نیست؛ دریافت عکس انجام نشد.',
+        'telegram_file_failed'=>'آدرس دریافت عکس از تلگرام دریافت نشد.',
+        'temp_storage_failed'=>'ساخت یا نوشتن فایل موقت روی سرور انجام نشد.',
+        'download_failed'=>'دریافت یا خواندن کامل فایل عکس از تلگرام انجام نشد.',
+        'download_too_large'=>'حجم عکس از سقف پردازش ۱۵ مگابایت بیشتر است.',
+        'gd_missing'=>'افزونهٔ GD در PHP فعال نیست؛ مقایسهٔ تصویری انجام نشد.',
+        'image_invalid'=>'محتوای فایل به‌عنوان تصویر قابل پردازش نبود.',
+        'image_limit'=>'ابعاد تصویر یا حافظهٔ لازم از سقف پردازش بیشتر است.',
+        'image_features_missing'=>'جزئیات کافی برای مقایسهٔ تصویری از عکس استخراج نشد.',
+        'image_processing_failed'=>'پردازش تصویر با خطا متوقف شد.',
+        'fingerprint_missing'=>'اطلاعات کافی برای مقایسهٔ رسید در دسترس نیست.',
+        'check_lock_timeout'=>'مهلت هماهنگی بررسی هم‌زمان رسیدها تمام شد.',
+        'visual_database_failed'=>'خواندن یا ذخیرهٔ سابقهٔ تطبیق تصویری در دیتابیس کامل نشد.',
+        'database_failed'=>'خواندن یا ذخیرهٔ سابقهٔ رسیدها در دیتابیس کامل نشد.',
+        'check_incomplete'=>'بخشی از بررسی رسید کامل نشد؛ علت دقیق در دسترس نیست.',
+    ];
+    $lines=[];
+    foreach(array_unique((array)$issues) as $issue) $lines[]=$labels[$issue]??$labels['check_incomplete'];
+    if(!$lines) $lines[]=$labels['check_incomplete'];
+    return "\n\n⚠️ <b>بخش ناقص بررسی:</b>\n• ".implode("\n• ",array_unique($lines));
 }
 
 function v2raystore_adminMessageLink($chatId, $messageId){
@@ -8124,65 +8161,63 @@ function v2raystore_duplicateReceiptOwnerText($userId){
 }
 
 function v2raystore_warnDuplicateReceipt($duplicate, $messages = [], $currentHash = ''){
-    if(empty($duplicate['duplicate']) || !is_array($messages)) return;
+    if((empty($duplicate['duplicate']) && empty($duplicate['incomplete'])) || !is_array($messages)) return;
     $oldHash = trim((string)($duplicate['pay_hash'] ?? ''));
-    $oldUser = intval($duplicate['user_id'] ?? 0);
-    $matches = (isset($duplicate['matches']) && is_array($duplicate['matches'])) ? $duplicate['matches'] : [];
-    if(empty($matches) && $oldHash !== '') $matches[] = ['pay_hash'=>$oldHash, 'user_id'=>$oldUser];
-    $text = "⚠️ <b>هشدار فیش تکراری</b>\nدر سوابق ۹۰ روز اخیر، رسید یکسان یا مشابه برای سفارش‌های زیر پیدا شد:\n";
-    if($currentHash!=='') $text .= "\n🧾 سفارش فعلی: <code>".v2raystore_h($currentHash)."</code>\n";
-    $keyboard = [];
-    $shown = 0;
-    foreach($matches as $item){
-        $hash = trim((string)($item['pay_hash'] ?? ''));
-        if($hash === '') continue;
-        $uid = intval($item['user_id'] ?? 0);
-        $entry = "\n• 🧾 کد پرداخت: <code>" . v2raystore_h($hash) . "</code>";
-        $entry .= "\n  👤 صاحب رسید: " . v2raystore_duplicateReceiptOwnerText($uid) . " · <code>".$uid."</code>";
-        $entry .= "\n  🔍 نوع تطبیق: " . (($item['match_type'] ?? '') === 'exact' ? 'فایل یکسان' : 'شباهت تصویری؛ نیازمند بررسی');
-        // Bound bytes conservatively, including HTML, before sending to Telegram.
-        if(strlen($text)+strlen($entry)>3200) break;
-        $text .= $entry;
-        // tg://openmessage در بسیاری از کلاینت‌ها توسط دکمهٔ URL مسدود می‌شود؛
-        // دکمهٔ callback سفارش قبلی را با copyMessage در همین گفت‌وگو بازمی‌فرستد.
-        if(strlen('duplicateReceiptOrder'.$hash)<=64) $keyboard[] = [['text'=>'🔎 مشاهده سفارش ' . v2raystore_shortButtonText($hash, 18), 'callback_data'=>'duplicateReceiptOrder' . $hash]];
-        $shown++;
-        if($shown >= 10) break;
-    }
-    if(count($matches)>$shown) $text .= "\n… موارد مشابه بیشتر: " . (count($matches)-$shown);
-    if($shown === 0 && $oldHash !== '') $text .= "\n🧾 کد پرداخت: <code>" . v2raystore_h($oldHash) . "</code>";
+    $matches = isset($duplicate['matches']) && is_array($duplicate['matches']) ? $duplicate['matches'] : [];
+    if(!$matches && $oldHash !== '') $matches[] = ['pay_hash'=>$oldHash,'user_id'=>(int)($duplicate['user_id']??0)];
+    $matches = array_values(array_filter($matches, function($item){return trim((string)($item['pay_hash']??''))!=='';}));
+    $hasMatches = !empty($matches);
+    if(!$hasMatches && empty($duplicate['incomplete'])) return;
+    $header = $hasMatches
+        ? "⚠️ <b>هشدار فیش تکراری یا مشابه</b>\nدر سوابق ۹۰ روز اخیر، رسید یکسان یا مشابه برای پرداخت‌های زیر پیدا شد:\n"
+        : "⚠️ <b>بررسی رسید ناقص است</b>\nکد پرداخت مشابهی از این بررسی به دست نیامد؛ یکتا بودن رسید تأیید نشده است.\n";
+    if($currentHash !== '') $header .= "\n🧾 کد پرداخت فعلی: <code>".v2raystore_h($currentHash)."</code>\n";
+    $suffix = !empty($duplicate['incomplete']) ? v2raystore_receiptIncompleteText($duplicate['issues']??[]) : '';
+    $suffix .= "\n\nلطفاً رسید را دستی بررسی کنید؛ سفارش رد یا متوقف نشده است.";
     $settings = v2raystore_receiptCheckSettings();
-    if(!empty($settings['reminders']) && $currentHash !== '') $keyboard[] = [['text'=>'✅ رسید بررسی و تأیید شد','callback_data'=>'ackDuplicateReceipt' . $currentHash,'style'=>'success']];
-    $text .= "\n\nلطفاً رسید را دستی بررسی کنید؛ سفارش رد یا متوقف نشده است.";
-    // هشدار باید روی پیام رسید قبلی قرار بگیرد، نه روی رسید تازه‌ای که باعث
-    // هشدار شده است. قدیمی‌ترین پیام ثبت‌شده برای اولین تطبیق انتخاب می‌شود.
-    $replyTargets = [];
+    $ack = $hasMatches && !empty($settings['reminders']) && $currentHash !== '' && strlen('ackDuplicateReceipt'.$currentHash)<=64;
+    $pages=[]; $text=$header; $keyboard=[]; $shown=0;
     foreach($matches as $item){
-        $hash = trim((string)($item['pay_hash'] ?? ''));
-        if($hash === '' || !function_exists('v2raystore_getAdminPayMessages')) continue;
-        foreach(v2raystore_getAdminPayMessages($hash) as $target) $replyTargets[] = $target;
-        if(count($replyTargets)>=3) break;
-    }
-    // Old Telegram messages may have been deleted. Try the current receipt too,
-    // then send without a reply target so a stale message cannot hide the warning.
-    $replyTargets=array_merge(array_slice($replyTargets,0,3),$messages);
-    foreach($messages as $target) $replyTargets[]=[(int)($target[0]??0),0];
-    $seen=[];
-    $sentWarning = null;
-    foreach($replyTargets as $item){
-        $chatId = intval($item[0] ?? 0); $messageId = intval($item[1] ?? 0);
-        $targetKey=$chatId.':'.$messageId;
-        if(isset($seen[$targetKey]))continue; $seen[$targetKey]=true;
-        if($chatId != 0){
-            $sentWarning = @sendMessage($text, !empty($keyboard) ? json_encode(['inline_keyboard'=>$keyboard], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null, 'HTML', $chatId, $messageId>0?$messageId:null);
-            if(is_object($sentWarning) && !empty($sentWarning->ok)) break;
+        $hash=trim((string)$item['pay_hash']); $uid=(int)($item['user_id']??0);
+        // Bound the name without cutting a UTF-8 character or an HTML entity.
+        $owner=html_entity_decode(v2raystore_duplicateReceiptOwnerText($uid), ENT_QUOTES, 'UTF-8');
+        if(preg_match('/^.{0,80}/us',$owner,$part)) $owner=$part[0].($part[0]!==$owner?'…':'');
+        else $owner='نام ثبت نشده';
+        $entry="\n• 🧾 کد پرداخت: <code>".v2raystore_h($hash)."</code>";
+        $entry.="\n  👤 صاحب رسید: ".v2raystore_h($owner)." · <code>".$uid."</code>";
+        $entry.="\n  🔍 نوع تطبیق: ".(($item['match_type']??'')==='exact'?'فایل یکسان':'شباهت تصویری؛ نیازمند بررسی');
+        // Split long lists instead of hiding the remaining matched payment IDs.
+        if($shown > 0 && ($shown >= 10 || strlen($text.$entry.$suffix)>3900)){
+            $pages[]=[$text.$suffix,$keyboard]; $text=$header; $keyboard=[]; $shown=0;
         }
+        $text.=$entry; $shown++;
+        if(strlen('duplicateReceiptOrder'.$hash)<=64) $keyboard[]=[['text'=>'🔎 مشاهده رسید '.v2raystore_shortButtonText($hash,18),'callback_data'=>'duplicateReceiptOrder'.$hash]];
     }
-    if(!empty($sentWarning->ok) && !empty($settings['reminders']) && $currentHash !== ''){
-        $warningMsg = intval($sentWarning->result->message_id ?? 0);
-        $warningChat = intval($sentWarning->result->chat->id ?? 0);
-        if($warningChat === 0 && !empty($replyTargets[0][0])) $warningChat = intval($replyTargets[0][0]);
-        v2raystore_markDuplicateReceiptPending($currentHash, $warningChat, $warningMsg);
+    $pages[]=[$text.$suffix,$keyboard];
+    // Only current receipt recipients receive the result, next to that receipt.
+    // A deleted reply target must not prevent the warning from being delivered.
+    $targets=[];
+    foreach($messages as $target){
+        $chatId=(int)($target[0]??0); $messageId=(int)($target[1]??0);
+        if($chatId!==0 && !isset($targets[$chatId])) $targets[$chatId]=$messageId;
+    }
+    $pendingMarked=false;
+    foreach($pages as $page){
+        [$text,$keyboard]=$page;
+        if($ack) $keyboard[]=[['text'=>'✅ رسید بررسی و تأیید شد','callback_data'=>'ackDuplicateReceipt'.$currentHash,'style'=>'success']];
+        $markup=$keyboard ? json_encode(['inline_keyboard'=>$keyboard],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) : null;
+        foreach($targets as $chatId=>$messageId){
+            $sentWarning=null;
+            foreach($messageId>0 ? [$messageId,null] : [null] as $replyId){
+                try{ $sentWarning=@sendMessage($text,$markup,'HTML',$chatId,$replyId); }
+                catch(Throwable $e){ $sentWarning=null; }
+                if(is_object($sentWarning) && !empty($sentWarning->ok)) break;
+            }
+            if($ack && !$pendingMarked && !empty($sentWarning->ok)){
+                v2raystore_markDuplicateReceiptPending($currentHash,(int)($sentWarning->result->chat->id??$chatId),(int)($sentWarning->result->message_id??0));
+                $pendingMarked=true;
+            }
+        }
     }
 }
 
@@ -22262,7 +22297,7 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
     if(in_array($state, ['declined', 'auto_cancelled'], true)) return ['ok'=>false, 'message'=>'این سفارش قبلاً رد یا لغو شده است.'];
 
     if(!empty($receiptSettings['enabled'])){
-        try{$fingerprints=v2raystore_getReceiptFingerprints($fileId);}catch(Throwable $e){$fingerprints=[];error_log('Receipt download incomplete');}
+        try{$fingerprints=v2raystore_getReceiptFingerprints($fileId);}catch(Throwable $e){$fingerprints=['issues'=>['check_incomplete']];error_log('Receipt download incomplete');}
         if($contentHash==='')$contentHash=(string)($fingerprints['sha256']??'');
         if($visualHash==='')$visualHash=(string)($fingerprints['visual']??'');
     }
@@ -22282,13 +22317,11 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
     // تشخیص فقط برای هشدار است و هیچ‌وقت نتیجهٔ ثبت رسید/سفارش را تغییر نمی‌دهد.
     if(!empty($receiptSettings['enabled'])){
         $duplicate = v2raystore_registerReceiptFingerprint($hashId, $uid, $fileUniqueId, $contentHash, $visualHash, $fingerprints['signature'] ?? []);
-        try{v2receipt_markHistory($hashId,$fileId,time(),empty($duplicate['incomplete']) && !empty($fingerprints['signature']));}catch(Throwable $e){}
-        if(!empty($duplicate['incomplete']) || $contentHash==='' || empty($fingerprints['signature'])){
-            foreach(($adminSend['messages']??[]) as $target){
-                sendMessage('⚠️ بررسی تصویری رسید کامل نشد (تصویر، GD یا ذخیره‌سازی). بررسی فایل یکسان تا حد امکان انجام شد؛ رسید را دستی بررسی کنید.',null,'HTML',$target[0],$target[1]);
-            }
-        }
-        if(!empty($duplicate['duplicate'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? [], $hashId);
+        $duplicate['issues']=array_values(array_unique(array_merge($duplicate['issues']??[], $fingerprints['issues']??[])));
+        $duplicate['incomplete']=!empty($duplicate['incomplete']) || $contentHash==='' || empty($fingerprints['signature']) || !empty($duplicate['issues']);
+        try{v2receipt_markHistory($hashId,$fileId,time(),empty($duplicate['incomplete']));}catch(Throwable $e){}
+        // One report contains both actual matches and any incomplete checks.
+        if(!empty($duplicate['duplicate']) || !empty($duplicate['incomplete'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? [], $hashId);
     }
 
     $type = (string)($pay['type'] ?? '');
