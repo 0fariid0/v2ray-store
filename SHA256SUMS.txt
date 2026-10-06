@@ -1,0 +1,3 @@
+1c1df4da784505e50a0734d97a7023ef69717b0f4c6903d77e4ae0914966a754  config.php
+6b63f4dfbb8635b5c8a861bbba90a0bcea8ae69e2006fe83f96b2becae5fa5d4  bot.php
+f1765b0c51b243befa1b40f1cebe32ca7cdf551332bdde16a671bd5b0ef89288  settings/receiptSimilarity.php

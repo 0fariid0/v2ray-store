@@ -405,10 +405,8 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
     // هش محتوای عکس یک درخواست کوتاه به Telegram دارد؛ پاسخ وبهوک را قبل از
     // آن می‌بندیم تا این بررسی هرگز باعث retry یا اختلال در ثبت سفارش نشود.
     if(function_exists('farid_finishWebhookResponse')) farid_finishWebhookResponse();
-    $storeReceiptFingerprints = function_exists('v2raystore_getReceiptFingerprints')
-        ? v2raystore_getReceiptFingerprints($storeReceiptFileId) : [];
-    $storeReceiptContentHash = strtolower(trim((string)($storeReceiptFingerprints['sha256'] ?? '')));
-    $storeReceiptVisualHash = strtolower(trim((string)($storeReceiptFingerprints['visual'] ?? '')));
+    // Fingerprints are computed centrally after ownership/state validation.
+    $storeReceiptContentHash = ''; $storeReceiptVisualHash = '';
 
     if(function_exists('v2raystore_processCartToCartReceiptUpload')){
         $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId, $storeReceiptContentHash, $storeReceiptVisualHash);
@@ -2178,22 +2176,10 @@ if(($data ?? '') === 'toggleDuplicateReceiptReminders' && ($from_id == $admin ||
     editText($message_id, v2raystore_receiptCheckMenuText(), v2raystore_receiptCheckMenuKeys(), 'HTML');
     exit();
 }
-if(($data ?? '') === 'setReceiptRetentionDays' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
-    sendMessage('📅 تعداد روز نگهداری سوابق فیش را ارسال کنید.\n\nمثال: <code>90</code>\nعدد مجاز: 1 تا 3650 روز', $cancelKey, 'HTML');
-    setUser('setReceiptRetentionDays');
-    exit();
-}
-if(($userInfo['step'] ?? '') === 'setReceiptRetentionDays' && ($text ?? '') !== ($buttonValues['cancel'] ?? '') && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
-    $value = trim((string)$text);
-    $value = strtr($value, ['۰'=>'0','۱'=>'1','۲'=>'2','۳'=>'3','۴'=>'4','۵'=>'5','۶'=>'6','۷'=>'7','۸'=>'8','۹'=>'9','٠'=>'0','١'=>'1','٢'=>'2','٣'=>'3','٤'=>'4','٥'=>'5','٦'=>'6','٧'=>'7','٨'=>'8','٩'=>'9']);
-    if(!ctype_digit($value) || intval($value) < 1 || intval($value) > 3650){
-        sendMessage('❌ فقط عدد صحیح بین 1 تا 3650 روز وارد کنید.', $cancelKey, 'HTML');
-        exit();
-    }
-    setSettings('receiptDuplicateRetentionDays', intval($value));
+// Compatibility for previously sent retention buttons and unfinished forms.
+if((($data ?? '') === 'setReceiptRetentionDays' || ($userInfo['step'] ?? '') === 'setReceiptRetentionDays') && ($from_id == $admin || !empty($userInfo['isAdmin']))){
     setUser();
-    sendMessage('✅ مدت نگهداری سوابق فیش روی <b>' . intval($value) . ' روز</b> تنظیم شد.', $removeKeyboard, 'HTML');
-    sendMessage(v2raystore_receiptCheckMenuText(), v2raystore_receiptCheckMenuKeys(), 'HTML');
+    sendMessage('📅 بررسی رسیدها برای همهٔ حساب‌ها روی ۹۰ روز اخیر ثابت است.', v2raystore_receiptCheckMenuKeys(), 'HTML');
     exit();
 }
 if(($data=="botSettings" or preg_match("/^changeBot(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
