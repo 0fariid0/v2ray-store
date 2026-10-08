@@ -12851,6 +12851,9 @@ if(preg_match('/updateConfigConnectionLink(\d+)/', $data,$match)){
     }
 
     if(function_exists('farid_orderHasSubDelivery') && farid_orderHasSubDelivery($order)){
+        // Old update buttons on subscription-only services still refresh details
+        // and newly granted representative controls without changing any link.
+        v2cfg_refreshDetails($oid,$from_id,$message_id,$ownerId!=$from_id);
         alert("ℹ️ این سرویس با لینک ساب ارسال می‌شود؛ بروزرسانی لینک عادی برای آن غیرفعال است. ساب را داخل برنامه Update کنید.", true);
         exit();
     }
