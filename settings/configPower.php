@@ -22,8 +22,13 @@ function v2cfg_live($order,$server){
     $sid=(int)$order['server_id'];$uuid=trim((string)($order['uuid']??''));$email=trim((string)($order['remark']??''));$type=$server['type']??'';
     if($type==='sanaei_new'){
         if($email==='')return null;
-        $r=v2raystore_sanaeiRequestJson($server,'/panel/api/clients/get/'.rawurlencode($email),'GET');
-        if(empty($r['success']))return null;
+        $r=null;
+        foreach([false,true] as $refresh){
+            try{$r=v2raystore_sanaeiRequestJson($server,'/panel/api/clients/get/'.rawurlencode($email),'GET',null,$refresh);}
+            catch(Throwable $e){$r=null;}
+            if(is_array($r) && ($r['success']??false)===true)break;
+        }
+        if(!is_array($r) || ($r['success']??false)!==true)return null;
         $obj=v2raystore_decodeMaybeJson($r['obj']??null,true);
         $client=v2raystore_decodeMaybeJson($obj['client']??null,true);
         if(!is_array($client) || ($client['email']??'')!==$email)return null;
@@ -130,17 +135,29 @@ function v2cfg_setPower($orderId,$actorId,$target){
     finally{if($locked){try{$s=$connection->prepare('SELECT RELEASE_LOCK(?)');$s->bind_param('s',$lock);$s->execute();$s->close();}catch(Throwable $e){}}}
 }
 function v2cfg_attachButton($keyboard,$order,$actorId,$view='m',$offset=0){
-    foreach($keyboard as &$row)$row=array_values(array_filter($row,function($button){return !preg_match('/^(changeUserConfigState|cfgPower_)/',(string)($button['callback_data']??''));}));unset($row);
+    foreach($keyboard as &$row)$row=array_values(array_filter($row,function($button){return !preg_match('/^(changeUserConfigState|cfgPower_|cfgRefresh_)/',(string)($button['callback_data']??''));}));unset($row);
     $keyboard=array_values(array_filter($keyboard));
+    $allowed=false;$live=null;
     try{
         if(!v2cfg_authorized($order,$actorId))return $keyboard;
+        $allowed=true;
         $server=v2cfg_one('SELECT * FROM server_config WHERE id=? LIMIT 1',$order['server_id']);
         $live=$server?v2cfg_live($order,$server):null;
-        if($live===null)return $keyboard;
-        $button=['text'=>$live['enabled']?'⛔ غیرفعال کردن کانفیگ':'✅ فعال کردن کانفیگ','callback_data'=>'cfgPower_'.(int)$order['id'].'_'.($live['enabled']?'0':'1').'_'.$view.'_'.max(0,(int)$offset)];
-        array_splice($keyboard,max(0,count($keyboard)-1),0,[[$button]]);
     }catch(Throwable $e){error_log('Config power button unavailable');}
+    if(!$allowed)return $keyboard;
+    $suffix=(int)$order['id'].'_'.$view.'_'.max(0,(int)$offset);
+    $row=[];
+    if($live!==null)$row[]=['text'=>$live['enabled']?'⛔ غیرفعال کردن کانفیگ':'✅ فعال کردن کانفیگ','callback_data'=>'cfgPower_'.(int)$order['id'].'_'.($live['enabled']?'0':'1').'_'.$view.'_'.max(0,(int)$offset)];
+    $row[]=['text'=>$live===null?'🔄 وضعیت نامشخص؛ تلاش مجدد':'🔄 تازه‌سازی وضعیت','callback_data'=>'cfgRefresh_'.$suffix];
+    array_splice($keyboard,max(0,count($keyboard)-1),0,[$row]);
     return $keyboard;
+}
+function v2cfg_refreshDetails($orderId,$actorId,$messageId,$adminView=false,$offset=0){
+    $keys=$adminView?getUserOrderDetailKeys($orderId,$offset):getOrderDetailKeys($actorId,$orderId,$offset);
+    if(!$keys)return false;
+    if(function_exists('farid_attachUpdateConfigButton'))$keys['keyboard']=farid_attachUpdateConfigButton($keys['keyboard'],$orderId);
+    editText($messageId,$keys['msg'],$keys['keyboard'],'HTML');
+    return true;
 }
 function v2cfg_handle(){
     global $data,$from_id,$message_id;
@@ -154,6 +171,14 @@ function v2cfg_handle(){
         if(!$ok){alert('ذخیرهٔ دسترسی انجام نشد.',true);exit;}
         editKeys(getAgentDiscounts((int)$m[1]));alert($m[2]==='1'?'دسترسی روشن/خاموش کردن کانفیگ فعال شد.':'دسترسی روشن/خاموش کردن کانفیگ غیرفعال شد.');exit;
     }
+    if(preg_match('/^cfgRefresh_(\d+)_([am])_(\d+)$/D',$cb,$refresh)){
+        $oid=(int)$refresh[1];$order=v2cfg_one('SELECT * FROM orders_list WHERE id=? LIMIT 1',$oid);
+        if(!v2cfg_authorized($order,$from_id)){alert('اجازهٔ تغییر وضعیت این کانفیگ را ندارید.',true);exit;}
+        $actor=v2raystore_getUserRowFresh($from_id);
+        alert('در حال دریافت وضعیت جدید…');
+        if(!v2cfg_refreshDetails($oid,$from_id,$message_id,v2cfg_isAdmin($from_id,$actor)&&$refresh[2]==='a',(int)$refresh[3]))alert('کانفیگ پیدا نشد؛ فهرست سرویس‌ها را دوباره باز کنید.',true);
+        exit;
+    }
     $legacy=preg_match('/^changeUserConfigState(\d+)$/D',$cb,$old);
     if(!$legacy && !preg_match('/^cfgPower_(\d+)_([01])_([am])_(\d+)$/D',$cb,$m))return;
     $oid=(int)($legacy?$old[1]:$m[1]);$order=v2cfg_one('SELECT * FROM orders_list WHERE id=? LIMIT 1',$oid);
@@ -161,7 +186,6 @@ function v2cfg_handle(){
     $actor=v2raystore_getUserRowFresh($from_id);$adminView=v2cfg_isAdmin($from_id,$actor)&&($legacy||$m[3]==='a');$offset=$legacy?0:(int)$m[4];
     $result=$legacy?['ok'=>true,'message'=>'دکمه به‌روز شد؛ وضعیت موردنظر را انتخاب کنید.']:v2cfg_setPower($oid,$from_id,$m[2]==='1');
     alert($result['message'],!$result['ok']);
-    $keys=$adminView?getUserOrderDetailKeys($oid,$offset):getOrderDetailKeys($from_id,$oid,$offset);
-    if($keys){if(function_exists('farid_attachUpdateConfigButton'))$keys['keyboard']=farid_attachUpdateConfigButton($keys['keyboard'],$oid);editText($message_id,$keys['msg'],$keys['keyboard'],'HTML');}
+    v2cfg_refreshDetails($oid,$from_id,$message_id,$adminView,$offset);
     exit;
 }
