@@ -21,6 +21,9 @@ function v2cfg_bool($value){return filter_var($value,FILTER_VALIDATE_BOOLEAN,FIL
 function v2cfg_live($order,$server){
     $sid=(int)$order['server_id'];$uuid=trim((string)($order['uuid']??''));$email=trim((string)($order['remark']??''));$type=$server['type']??'';
     if($type==='sanaei_new'){
+        $identity=v2id_resolve($sid,$uuid,$email,null,$server);
+        if(!$identity)return null;
+        $email=$identity['email'];
         if($email==='')return null;
         $r=null;
         foreach([false,true] as $refresh){
@@ -34,7 +37,7 @@ function v2cfg_live($order,$server){
         if(!is_array($client) || ($client['email']??'')!==$email)return null;
         // The central record ID is numeric; its credential is uuid/password.
         $credentials=array_filter([(string)($client['uuid']??''),(string)($client['password']??'')],function($v){return $v!=='';});
-        if($uuid!=='' && $uuid!=='0' && !in_array($uuid,$credentials,true))return null;
+        if(!v2id_select([['client'=>$client,'central'=>true]],$identity,''))return null;
         $enabled=array_key_exists('enable',$client)?v2cfg_bool($client['enable']):null;
         return $enabled===null?null:['enabled'=>$enabled,'kind'=>'central','email'=>$email];
     }
