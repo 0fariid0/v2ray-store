@@ -6,6 +6,7 @@ require_once __DIR__ . '/settings/adminNavigation.php';
 require_once __DIR__ . '/settings/customerGroups.php';
 require_once __DIR__ . '/settings/receiptSimilarity.php';
 require_once __DIR__ . '/settings/configPower.php';
+require_once __DIR__ . '/settings/clientIdentity.php';
 
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
@@ -2491,6 +2492,8 @@ function v2raystore_renewInboundRows($serverId){
     return null;
 }
 function v2raystore_renewClientInboundState($serverId,$serverInfo,$email,$uuid='',$liveRows=null){
+    $identity=v2id_resolve($serverId,$uuid,$email,$liveRows,$serverInfo);
+    if(!$identity || $identity['email']!==$email)return ['ok'=>false,'identity_mismatch'=>true];
     $endpoint='/panel/api/clients/get/'.rawurlencode($email);
     // Re-authenticate once: a cached cookie can expire before its local deadline.
     foreach([['GET',false],['GET',true],['POST',false]] as [$method,$refresh]){
@@ -2504,7 +2507,7 @@ function v2raystore_renewClientInboundState($serverId,$serverInfo,$email,$uuid='
         if(is_array($client)){
             if(isset($client['email']) && (string)$client['email']!==$email) return ['ok'=>false,'identity_mismatch'=>true];
             $credentials=array_filter([(string)($client['uuid']??''),(string)($client['password']??'')],function($s){return $s!=='';});
-            if($uuid!=='' && $uuid!=='0' && $credentials && !in_array($uuid,$credentials,true)) return ['ok'=>false,'identity_mismatch'=>true];
+            if(!v2id_select([['client'=>$client,'central'=>true]],$identity,'')) return ['ok'=>false,'identity_mismatch'=>true];
         }
         if(array_key_exists('inboundIds',$obj)){
             $ids=v2raystore_renewInboundIdsStrict($obj['inboundIds']);
@@ -2529,7 +2532,7 @@ function v2raystore_renewClientInboundState($serverId,$serverInfo,$email,$uuid='
             if(!is_array($client)){$complete=false;continue;}
             if((string)($client['email']??'')!==$email) continue;
             $credentials=array_filter([(string)($client['id']??''),(string)($client['password']??'')],function($s){return $s!=='';});
-            if($uuid!=='' && $uuid!=='0' && !in_array($uuid,$credentials,true)) return ['ok'=>false,'identity_mismatch'=>true];
+            // UUID and Shadowsocks password may differ for this verified central client.
             $ids[]=(int)$iid;
         }
     }
@@ -2602,9 +2605,8 @@ function v2raystore_prepareRenewPlanInboundSync($serverId, $plan, $order, $serve
     $email = trim((string)($order['remark'] ?? ''));
     $uuid = trim((string)($order['uuid'] ?? ''));
     $oldInbound = intval($order['inbound_id'] ?? 0);
-    if($email === '' && function_exists('v2raystore_sanaeiNewFindClientEmail')){
-        $email = trim((string)v2raystore_sanaeiNewFindClientEmail($serverId, $uuid, $oldInbound, ''));
-    }
+    $identity=v2id_resolve($serverId,$uuid,$email,$liveRows,$serverInfo);
+    $email=$identity['email']??'';
     if($email === ''){
         return ['ok'=>false, 'applicable'=>true, 'message'=>'شناسه Client برای Sync Inbound پیدا نشد.'];
     }
@@ -4833,6 +4835,9 @@ function v2raystore_rewardInspectOrderQuota($order){
     $json = getJson($serverId);
     if(!$json || !isset($json->obj)) return ['ok'=>false,'message'=>'دریافت اطلاعات پنل ناموفق بود.'];
     $rows = function_exists('v2raystore_panelListFromGetJson') ? v2raystore_panelListFromGetJson($json) : (is_array($json->obj) ? $json->obj : [$json->obj]);
+    $identity=$serverType==='sanaei_new'?v2id_resolve($serverId,$uuid,$remark,$rows):null;
+    if($serverType==='sanaei_new'&&!$identity)return ['ok'=>false,'message'=>'شناسایی کلاینت ناموفق بود.'];
+    if($identity)$remark=$identity['email'];
     $passes = $inboundId > 0 ? [$inboundId, 0] : [0];
     foreach($passes as $wantedInbound){
         foreach($rows as $row){
@@ -4845,7 +4850,7 @@ function v2raystore_rewardInspectOrderQuota($order){
                 if(!is_array($client)) continue;
                 $cid = function_exists('v2raystore_panelClientIdentity') ? v2raystore_panelClientIdentity($client) : (string)($client['id'] ?? ($client['password'] ?? ''));
                 $email = trim((string)($client['email'] ?? ''));
-                if($cid !== $uuid && ($remark === '' || $email !== $remark)) continue;
+                if($serverType==='sanaei_new' ? $email!==$remark : ($cid !== $uuid && ($remark === '' || v2id_name($email)!==v2id_name($remark)))) continue;
 
                 if($inboundId > 0){
                     $clientTotal = intval($client['totalGB'] ?? 0);
@@ -6260,31 +6265,8 @@ function v2raystore_orderRemarkByUuid($server_id, $uuid){
 }
 
 function v2raystore_sanaeiNewFindClientEmail($server_id, $uuid = '', $inbound_id = 0, $remark = ''){
-    $remark = trim((string)$remark);
-    $uuid = trim((string)$uuid);
-    if($remark !== '') return $remark;
-    if($uuid === '') return '';
-    $orderRemark = v2raystore_orderRemarkByUuid($server_id, $uuid);
-    if($orderRemark !== '') return $orderRemark;
-    $json = getJson($server_id);
-    if(!$json || empty($json->success) || !isset($json->obj) || !is_array($json->obj)) return '';
-
-    $passes = intval($inbound_id) > 0 ? [intval($inbound_id), 0] : [0];
-    foreach($passes as $wantedInbound){
-        foreach($json->obj as $row){
-            if($wantedInbound > 0 && intval($row->id ?? 0) != $wantedInbound) continue;
-            $settings = v2raystore_decodeMaybeJson($row->settings ?? '{}', true);
-            $clients = $settings['clients'] ?? [];
-            if(!is_array($clients)) continue;
-            foreach($clients as $client){
-                if(!is_array($client)) continue;
-                $cid = (string)($client['id'] ?? '');
-                $pwd = (string)($client['password'] ?? '');
-                if($cid === $uuid || $pwd === $uuid) return (string)($client['email'] ?? '');
-            }
-        }
-    }
-    return '';
+    $identity=v2id_resolve($server_id,(string)$uuid,(string)$remark);
+    return $identity['email']??'';
 }
 
 function v2raystore_sanaeiNewClientLinksFromPanel($server_id, $email = '', $uuid = '', $inbound_id = 0){
@@ -8470,9 +8452,12 @@ function v2raystore_orderPanelUsage($order){
     $res['source'] = 'xui';
     $rows = v2raystore_panelListFromGetJson($json);
 
+    $identity=$serverType==='sanaei_new'?v2id_resolve($serverId,$uuid,$remark,$rows,$server):null;
+    if($serverType==='sanaei_new'&&!$identity){$res['checked']=false;return $res;}
+    if($identity)$remark=$identity['email'];
     foreach($rows as $row){
         $rowId = intval(v2raystore_arrayValue($row, 'id', 0));
-        if($inboundId > 0 && $rowId !== $inboundId) continue;
+        if($serverType!=='sanaei_new' && $inboundId > 0 && $rowId !== $inboundId) continue;
 
         $settings = v2raystore_decodeMaybeJson(v2raystore_arrayValue($row, 'settings', '{}'), true);
         $clients = $settings['clients'] ?? [];
@@ -8485,6 +8470,7 @@ function v2raystore_orderPanelUsage($order){
             $match = false;
             if($uuid !== '' && $clientId !== '' && $clientId === $uuid) $match = true;
             if(!$match && $remark !== '' && $email !== '' && $email === $remark) $match = true;
+            if($serverType==='sanaei_new')$match=$email===$remark;
             if(!$match) continue;
 
             $stat = v2raystore_panelFindClientStat(v2raystore_arrayValue($row, 'clientStats', []), $email);
@@ -9848,9 +9834,12 @@ function v2raystore_syncOrderExpiryFromPanel($order, $updateDb = true){
             $checked = true;
         }
         $rows = v2raystore_panelListFromGetJson($json);
+        $identity=$serverType==='sanaei_new'?v2id_resolve($serverId,$uuid,$remark,$rows,$serverInfo):null;
+        if($serverType==='sanaei_new'&&!$identity)return ['checked'=>false,'found'=>false,'source'=>'identity_unavailable'];
+        if($identity)$remark=$identity['email'];
         foreach($rows as $row){
             $rowId = intval(v2raystore_arrayValue($row, 'id', 0));
-            if($inboundId > 0 && $rowId !== $inboundId) continue;
+            if($serverType!=='sanaei_new' && $inboundId > 0 && $rowId !== $inboundId) continue;
 
             $settings = v2raystore_decodeMaybeJson(v2raystore_arrayValue($row, 'settings', '{}'), true);
             $clients = $settings['clients'] ?? [];
@@ -9862,6 +9851,7 @@ function v2raystore_syncOrderExpiryFromPanel($order, $updateDb = true){
                 $match = false;
                 if($uuid !== '' && $clientId !== '' && $clientId === $uuid) $match = true;
                 if(!$match && $remark !== '' && $clientEmail !== '' && $clientEmail === $remark) $match = true;
+                if($serverType==='sanaei_new')$match=$clientEmail===$remark;
                 if(!$match) continue;
 
                 $found = true;
@@ -9941,6 +9931,12 @@ function v2raystore_findPanelSubId($server_id, $token = '', $uuid = '', $inbound
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
+    if(($server_info['type']??'')==='sanaei_new'){
+        $identity=v2id_resolve($server_id,$uuid,$remark,null,$server_info);
+        if(!$identity)return '';
+        if(!empty($identity['subId']))return $identity['subId'][0];
+        $remark=$identity['email'];
+    }
     if($server_info && ($server_info['type'] ?? '') === 'sanaei_new' && $remark !== ''){
         [$curl, $session] = v2raystore_panelLoginSession($server_info);
         if($curl && $session){
@@ -13320,13 +13316,8 @@ function getPlanDetailsKeys($planId){
 // Read-only snapshot for the centralized clients API in newer 3x-ui panels.
 // Inbound clientStats is not authoritative for a client shared by several inbounds.
 function v2raystore_sanaeiNewDetailSnapshot($serverConfig, $order){
-    $email = trim((string)($order['remark'] ?? ''));
-    if($email === ''){
-        $email = trim((string)v2raystore_sanaeiNewFindClientEmail(
-            intval($order['server_id'] ?? 0), (string)($order['uuid'] ?? ''),
-            intval($order['inbound_id'] ?? 0), ''
-        ));
-    }
+    $email = v2raystore_sanaeiNewFindClientEmail((int)($order['server_id']??0),
+        (string)($order['uuid']??''),(int)($order['inbound_id']??0),(string)($order['remark']??''));
     if($email === '') return null;
     $endpoint = '/panel/api/clients/get/' . rawurlencode($email);
     $response = v2raystore_sanaeiRequestJson($serverConfig, $endpoint, 'GET');
@@ -14241,7 +14232,9 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
     $up = 0;
     $down = 0;
     $foundClient = false;
-    $emailHint = ($serverType === 'sanaei_new') ? v2raystore_orderRemarkByUuid($server_id, $uuid) : '';
+    $identity = $serverType==='sanaei_new'?v2id_resolve($server_id,(string)$uuid,'',$response,$server_info):null;
+    if($serverType==='sanaei_new'&&!$identity)return (object)['success'=>false,'msg'=>'شناسایی کلاینت ناموفق بود.'];
+    $emailHint=$identity['email']??'';
     $passes = intval($inbound_id) > 0 ? [intval($inbound_id), 0] : [0];
 
     foreach($passes as $wantedInbound){
@@ -14260,6 +14253,7 @@ function deleteClient($server_id, $inbound_id, $uuid, $delete = 0){
             $clientEmail = trim((string)($client->email ?? ''));
             $matchesClient = ($clientId !== '' && $clientId === (string)$uuid) || ($clientPassword !== '' && $clientPassword === (string)$uuid);
             if(!$matchesClient && $emailHint !== '' && $clientEmail === $emailHint) $matchesClient = true;
+            if($serverType==='sanaei_new')$matchesClient=$clientEmail===$emailHint;
             if($matchesClient){
                 $foundClient = true;
                 $old_data = $client;
@@ -15462,7 +15456,9 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
     $email = '';
     $settings = null;
     $row = null;
-    $emailHint = ($serverType === 'sanaei_new') ? v2raystore_orderRemarkByUuid($server_id, $uuid) : '';
+    $identity = ($serverType === 'sanaei_new') ? v2id_resolve($server_id,(string)$uuid,'',$response,$server_info) : null;
+    if($serverType === 'sanaei_new' && !$identity)return (object)['success'=>false,'msg'=>'شناسایی یکتای کلاینت ناموفق بود.'];
+    $emailHint = $identity['email']??'';
     $passes = intval($inbound_id) > 0 ? [intval($inbound_id), 0] : [0];
     $foundClient = false;
 
@@ -15481,6 +15477,7 @@ function editClientTraffic($server_id, $inbound_id, $uuid, $volume, $days, $edit
                 $mail = trim((string)($client['email'] ?? ''));
                 $match = ($cid !== '' && $cid === (string)$uuid) || ($pwd !== '' && $pwd === (string)$uuid);
                 if(!$match && $emailHint !== '' && $mail === $emailHint) $match = true;
+                if($serverType === 'sanaei_new')$match=($mail===$emailHint);
                 if(!$match) continue;
 
                 $row = $panelRow;
@@ -20983,10 +20980,9 @@ function v2raystore_getOrderRemainingSummary($order){
         // برمی‌گرداند. clientStats هر Inbound ممکن است لحظه‌ای total=0 داشته باشد و
         // نباید چنین مقداری به اشتباه «نامحدود» تفسیر شود.
         if($serverType === 'sanaei_new' && function_exists('v2raystore_sanaeiRequestJson')){
-            $email = $remark;
-            if($email === '' && function_exists('v2raystore_sanaeiNewFindClientEmail')){
-                $email = trim((string)v2raystore_sanaeiNewFindClientEmail($serverId, $uuid, $inboundId, ''));
-            }
+            $email=v2raystore_sanaeiNewFindClientEmail($serverId,$uuid,$inboundId,$remark);
+            if($email==='')return null;
+            $remark=$email;
             if($email !== ''){
                 $clientResp = v2raystore_sanaeiRequestJson($serverConfig, '/panel/api/clients/get/' . rawurlencode($email), 'GET');
                 if(is_array($clientResp) && !empty($clientResp['success'])){
@@ -21026,14 +21022,14 @@ function v2raystore_getOrderRemainingSummary($order){
         $rows = function_exists('v2raystore_panelListFromGetJson') ? v2raystore_panelListFromGetJson($json) : (($json && isset($json->obj) && is_array($json->obj)) ? $json->obj : []);
         foreach($rows as $row){
             $rowId = intval(v2raystore_arrayValue($row, 'id', 0));
-            if($inboundId > 0 && $rowId !== $inboundId) continue;
+            if($serverType!=='sanaei_new' && $inboundId > 0 && $rowId !== $inboundId) continue;
             $settings = json_decode((string)v2raystore_arrayValue($row, 'settings', ''));
             $clients = (is_object($settings) && isset($settings->clients) && is_array($settings->clients)) ? $settings->clients : [];
             $stats = v2raystore_arrayValue($row, 'clientStats', []);
             foreach($clients as $client){
                 $cid = function_exists('v2raystore_panelClientIdentity') ? v2raystore_panelClientIdentity($client) : (string)(v2raystore_arrayValue($client, 'id', v2raystore_arrayValue($client, 'password', '')));
                 $email = function_exists('v2raystore_panelClientEmail') ? v2raystore_panelClientEmail($client) : (string)v2raystore_arrayValue($client, 'email', '');
-                if($cid !== $uuid && ($remark === '' || $email !== $remark)) continue;
+                if($serverType==='sanaei_new' ? ($email!==$remark || $remark==='') : ($cid !== $uuid && ($remark === '' || v2id_name($email)!==v2id_name($remark)))) continue;
 
                 if($inboundId > 0){
                     $stat = function_exists('v2raystore_panelFindClientStat') ? v2raystore_panelFindClientStat($stats, $email) : null;
