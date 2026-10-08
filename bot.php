@@ -6916,7 +6916,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
 
         $agentBought = true;
     }
-    $price = v2seg_group()==='new' && isset($accountCount) && $accountCount>0 ? v2seg_price($price/$accountCount)*$accountCount : v2seg_price($price);
+    $price = v2seg_runtimeGroup()==='new' && isset($accountCount) && $accountCount>0 ? v2seg_price($price/$accountCount)*$accountCount : v2seg_price($price);
     if(preg_match('/^renew(\d+)$/', $match['buyType'], $renewBuyMatch)){
         $renewOrderId = intval($renewBuyMatch[1]);
         $stmt = $connection->prepare("SELECT `id`, `userid`, `remark`, `status`, `server_id` FROM `orders_list` WHERE `id` = ? LIMIT 1");

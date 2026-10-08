@@ -5880,8 +5880,8 @@ function v2raystore_referrerInstructionMessage($rejected = false){
 function v2raystore_handleNewMemberLock(){
     global $connection, $from_id, $admin, $userInfo, $botState, $text, $data, $first_name, $username;
 
-    // Customer groups gate owns admission of new customers; legacy rules remain intact.
-    if(v2seg_group($from_id) === 'new') return false;
+    // Only an enabled independent customer section owns admission.
+    if(v2seg_runtimeGroup($from_id) === 'new') return false;
     $mode = v2raystore_getNewMemberAccessMode($botState);
     if($mode === 'open') return false;
     if($from_id == $admin || (!empty($userInfo) && !empty($userInfo['isAdmin']))) return false;
@@ -7372,7 +7372,7 @@ function v2raystore_salesStateBlockReason($kind = 'new', $agentContext = null){
         $sellState = $state['sellState'] ?? 'off';
     }
 
-    if(isset($GLOBALS['from_id']) && (int)$GLOBALS['from_id']>0 && v2seg_group()==='new' && empty(v2seg_settings()['sell'])) return 'sales_off';
+    if(isset($GLOBALS['from_id']) && (int)$GLOBALS['from_id']>0 && v2seg_runtimeGroup()==='new' && empty(v2seg_settings()['sell'])) return 'sales_off';
     if($sellState !== 'on') return 'sales_off';
 
     // خاموش بودن دکمه خرید فقط برای خرید کاربران عادی اعمال شود.
@@ -7770,7 +7770,7 @@ function v2raystore_markCardInfoChanged(){
 function v2raystore_cardContactRaw($paymentKeys = null){
     global $admin;
     if($paymentKeys === null) $paymentKeys = v2raystore_getPaymentKeys();
-    if(isset($GLOBALS['from_id']) && v2seg_group() === 'new') {
+    if(isset($GLOBALS['from_id']) && v2seg_runtimeGroup() === 'new') {
         $raw = trim((string)v2seg_settings()['contact']);
         return $raw !== '' ? $raw : (string)$admin;
     }
@@ -8304,7 +8304,7 @@ function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = '
     global $mainValues, $userInfo;
     $pay = v2raystore_getPayByHash($hashId);
     if(!$pay || (int)$pay['user_id'] !== (int)($userInfo['userid'] ?? 0)){sendMessage('پرداخت متعلق به شما نیست.');return;}
-    if(v2seg_group($userInfo['userid']) === 'new' && trim(v2seg_settings()['card']) === ''){sendMessage('اطلاعات پرداخت هنوز تنظیم نشده است.');return;}
+    if(v2seg_runtimeGroup($userInfo['userid']) === 'new' && trim(v2seg_settings()['card']) === ''){sendMessage('اطلاعات پرداخت هنوز تنظیم نشده است.');return;}
     $proPayLine = function_exists('v2raystore_pro_prepare_cart_to_cart_pay') ? v2raystore_pro_prepare_cart_to_cart_pay($hashId) : '';
     $paymentKeys = v2raystore_getPaymentKeys();
     $account = v2raystore_getCartToCartAccountForUser($userInfo['userid'] ?? null, $paymentKeys);
