@@ -74,11 +74,16 @@ function v2seg_group($userId = null, $fresh = false){
     // Absence always means new, even after buying, approval or receiving a representative role.
     return $GLOBALS['v2seg_groups'][$uid] = ($row['segment'] ?? '') === 'legacy' ? 'legacy' : 'new';
 }
+// Disabling customer segmentation restores the original customer experience.
+// Persistent membership remains unchanged for reports and later reactivation.
+function v2seg_runtimeGroup($userId = null){
+    return empty(v2seg_settings()['enabled']) ? 'legacy' : v2seg_group($userId);
+}
 function v2seg_configRemark($remark, $userId = null){
     global $from_id;
     $uid = (int)($userId ?? $from_id ?? 0);
     $remark = (string)$remark;
-    if($uid > 0 && v2seg_group($uid, true) === 'new' && substr($remark, 0, 1) !== '*'){
+    if($uid > 0 && v2seg_runtimeGroup($uid) === 'new' && substr($remark, 0, 1) !== '*'){
         return '*' . $remark;
     }
     return $remark;
@@ -96,7 +101,7 @@ function v2seg_roundPrice($base, $percent, $round){
     return (int)(ceil(($base*(10000+$bps))/$denominator)*$unit);
 }
 function v2seg_price($base, $userId = null, $round = true){
-    if(v2seg_group($userId)!=='new') return $base;
+    if(v2seg_runtimeGroup($userId)!=='new') return $base;
     $s=v2seg_settings();
     return v2seg_roundPrice($base,$s['percent'],$round ? $s['round'] : 1);
 }
@@ -105,16 +110,16 @@ function v2seg_planFlags($id){
 }
 function v2seg_planAllowed($id, $userId=null){
     $flags=v2seg_planFlags($id);
-    return !empty($flags[v2seg_group($userId).'_on']);
+    return !empty($flags[v2seg_runtimeGroup($userId).'_on']);
 }
 function v2seg_planSql($alias='server_plans'){
     $alias=preg_replace('/[^A-Za-z0-9_]/','',$alias);
-    $column=v2seg_group()==='legacy'?'legacy_on':'new_on';
+    $column=v2seg_runtimeGroup()==='legacy'?'legacy_on':'new_on';
     return " AND NOT EXISTS (SELECT 1 FROM v2_plan_audience va WHERE va.plan_id=$alias.id AND va.$column=0) ";
 }
 function v2seg_applyStates($state,$user){
     if(!is_array($user) || empty($user['userid']))return $state;
-    if(v2seg_group($user['userid'])==='legacy'){
+    if(v2seg_runtimeGroup($user['userid'])==='legacy'){
         return $state;
     }
     $s=v2seg_settings();
@@ -126,7 +131,7 @@ function v2seg_applyStates($state,$user){
     return $state;
 }
 function v2seg_account($userId){
-    if(v2seg_group($userId)!=='new') return null;
+    if(v2seg_runtimeGroup($userId)!=='new') return null;
     $s=v2seg_settings();
     return ['bank'=>$s['card'],'holder'=>$s['holder'],'type'=>'new','is_second'=>false,'has_active_paid_config'=>false];
 }
@@ -168,6 +173,12 @@ function v2seg_promote($uid,$code){
 function v2seg_gate(){
     global $from_id,$userInfo,$text,$data,$update,$first_name,$username,$botState,$buttonValues,$cancelKey;
     if(v2seg_isAdmin()) return;
+    if(empty(v2seg_settings()['enabled'])){
+        // Leave admission to the original open/existing/buyers/approval gate.
+        if(($userInfo['step']??'')==='cgEnterLegacy'){setUser();$userInfo['step']='none';}
+        if(($data??'')==='cgEnterLegacy') $data='mainMenu';
+        return;
+    }
     v2seg_customerLock();
     $group=v2seg_group($from_id,true);
     if($group==='legacy') return;
@@ -189,12 +200,6 @@ function v2seg_gate(){
     }
     if(($data??'')==='cgEnterLegacy'){setUser('cgEnterLegacy');sendMessage('کد دسترسی را ارسال کنید.',$cancelKey);exit;}
     $s=v2seg_settings();
-    // Cancellation stays available when new-customer access is temporarily disabled.
-    if(empty($s['enabled']) && !preg_match('/^cancelPendingPay/',(string)($data??''))){
-        $msg='🔒 دسترسی فعلاً غیرفعال است. اگر کد دسترسی دارید، آن را اینجا ارسال کنید.';
-        if(isset($update->callback_query)) alert($msg,true); else sendMessage($msg);
-        exit;
-    }
     $botState=v2seg_applyStates($botState,$userInfo);
     if(trim($s['welcome'])!=='' && isset($update->message->text) && trim($text)==='/start') sendMessage($s['welcome']);
 }
@@ -219,7 +224,7 @@ function v2seg_guardSelection(){
         if(!empty($userInfo['is_agent']) && in_array($fm[2],['one','much'],true)) $cost=v2raystore_applyAgentPricing($cost,$userInfo,$plan['id'],$plan['server_id'],$plan['volume']??0,1);
         if(v2seg_price($cost)>0){sendMessage('این پلن رایگان نیست؛ از منوی خرید ادامه دهید.');exit;}
     }
-    if(v2seg_group()!=='new') return;
+    if(v2seg_runtimeGroup()!=='new') return;
     $s=v2seg_settings();
     if(empty($s['wallet']) && (strpos($input,'WithWallet')!==false || strpos($input,'increaseMyWallet')===0 || strpos($input,'increaseWallet')===0)){sendMessage('کیف پول فعلاً غیرفعال است.');exit;}
     if(empty($s['custom']) && preg_match('/^(?:selectCustom|selectCustome|enterCustom|freeCustom)/',$input)) {sendMessage('پلن دلخواه فعلاً غیرفعال است.');exit;}
@@ -230,7 +235,7 @@ function v2seg_menuKeys(){
     $s=v2seg_settings();
     $button=function($label,$cb){return ['text'=>$label,'callback_data'=>$cb];};
     $rows=[
-        [$button((!empty($s['enabled'])?'🟢':'🔴').' پذیرش مشتری جدید','cgToggle_enabled'),$button('💰 افزایش قیمت: '.$s['percent'].'٪','cgEdit_percent')],
+        [$button((!empty($s['enabled'])?'🟢':'🔴').' بخش مستقل مشتریان جدید','cgToggle_enabled'),$button('💰 افزایش قیمت: '.$s['percent'].'٪','cgEdit_percent')],
         [$button('🔢 گرد کردن: '.number_format($s['round']),'cgEdit_round'),$button('💳 شماره کارت مستقل','cgEdit_card')],
         [$button('👤 نام دارنده کارت','cgEdit_holder'),$button('📩 پشتیبانی پرداخت','cgEdit_contact')],
         [$button('📦 پلن‌های هر گروه','cgPlans_0')],
@@ -243,7 +248,7 @@ function v2seg_menuKeys(){
 function v2seg_menuText(){
     $s=v2seg_settings(); $card=htmlspecialchars($s['card']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
     $holder=htmlspecialchars($s['holder']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
-    return "👥 <b>تنظیمات مشتریان جدید</b>\n\nکارت مستقل: <code>$card</code>\nدارنده: $holder\n\nقیمت خرید، تمدید و افزایش حجم/زمان: +{$s['percent']}٪؛ گرد کردن رو به بالا تا ".number_format($s['round'])." تومان.\nدرصد صفر یعنی قیمت پایه بدون افزایش و گرد کردن. شارژ کیف پول افزایش قیمت ندارد.\n\nکارت اول و دوم فقط برای گروه قدیمی است. مشتری جدید با خرید، قدیمی نمی‌شود.\nپلن تازه به‌صورت پیش‌فرض برای هر دو گروه فعال است. غیرفعال کردن پلن برای یک گروه، سرویس‌های قبلی را حذف نمی‌کند.\nگزینه‌های امکانات، تابع روشن بودن همان امکان در تنظیمات اصلی هم هستند.";
+    return "👥 <b>تنظیمات مشتریان جدید</b>\n\nخاموش: همه با منو، قیمت، کارت و قوانین دسترسی اصلی ربات کار می‌کنند؛ گروه‌بندی ذخیره‌شده تغییر نمی‌کند.\nروشن: تنظیمات مستقل زیر برای مشتریان جدید اعمال می‌شود.\n\nکارت مستقل: <code>$card</code>\nدارنده: $holder\n\nقیمت خرید، تمدید و افزایش حجم/زمان: +{$s['percent']}٪؛ گرد کردن رو به بالا تا ".number_format($s['round'])." تومان.\nدرصد صفر یعنی قیمت پایه بدون افزایش و گرد کردن. شارژ کیف پول افزایش قیمت ندارد.\n\nدر حالت روشن، کارت اول و دوم فقط برای گروه قدیمی است. مشتری جدید با خرید، قدیمی نمی‌شود.\nپلن تازه به‌صورت پیش‌فرض برای هر دو گروه فعال است. غیرفعال کردن پلن برای یک گروه، سرویس‌های قبلی را حذف نمی‌کند.\nگزینه‌های امکانات، تابع روشن بودن همان امکان در تنظیمات اصلی هم هستند.";
 }
 function v2seg_codeKeys(){return v2seg_contextKeys(json_encode(['inline_keyboard'=>[
     [['text'=>'🔄 ساخت کد جدید','callback_data'=>'cgCodeGenerate'],['text'=>'✏️ تنظیم کد','callback_data'=>'cgEdit_code']],
@@ -625,7 +630,7 @@ function v2seg_dashboardKeys($g){
     return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
 }
 function v2seg_compactCustomerKeys($keys,$user){
-    if(v2seg_group($user['userid']??0)!=='legacy' || !empty(v2seg_settings()['legacy_enabled']))return $keys;
+    if(v2seg_runtimeGroup($user['userid']??0)!=='legacy' || !empty(v2seg_settings()['legacy_enabled']))return $keys;
     $decoded=json_decode($keys,true);$rows=[];$buttons=[];
     foreach($decoded['inline_keyboard']??[] as $row)foreach($row as $b){
         if(in_array($b['callback_data']??'',['getTestAccount','buySubscription','agentOneBuy','agentMuchBuy','mySubscriptions','agentConfigsList','myInfo','managePanel'],true))$buttons[]=$b;
