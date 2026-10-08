@@ -614,12 +614,14 @@ function v2seg_dashboardKeys($g){
     if($g==='legacy'){
         $items[]=['🗑 حذف/انتقال کاربر','cgRemoveLegacy'];
         $items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
+        if(!v2seg_adminGroupEnabled('new')) $items[]=['🆕 تنظیمات پذیرش مشتری جدید','customerGroupsMenu'];
     }else{
         $items[]=['↩️ انتقال به قدیمی‌ها','cgTransferNewToLegacy'];
         if(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
     }
     $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];
-    $rows=array_chunk($buttons,2);$rows[]=[['text'=>'⬅️ انتخاب گروه','callback_data'=>'adminMainMenu']];
+    $rows=array_chunk($buttons,2);
+    $rows[]=v2seg_adminGroupEnabled('new') ? [['text'=>'⬅️ انتخاب گروه','callback_data'=>'adminMainMenu']] : [['text'=>'⬅️ بازگشت','callback_data'=>$g==='legacy'?'mainMenu':'cgManage_legacy']];
     return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
 }
 function v2seg_compactCustomerKeys($keys,$user){

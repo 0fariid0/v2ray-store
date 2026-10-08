@@ -136,6 +136,13 @@ function v2raystore_adminMenuTree(){
 
 function v2raystore_adminMenuKeys($name){
     global $from_id, $admin;
+    if(in_array($name,['Main','Users'],true) && function_exists('v2seg_adminGroupEnabled') && !v2seg_adminGroupEnabled('new')){
+        if($name==='Main') return v2seg_dashboardKeys('legacy');
+        $saved=$GLOBALS['v2seg_shared_context']??null;
+        $GLOBALS['v2seg_shared_context']='legacy';
+        try{return v2raystore_adminMenuKeys('UserOperations');}
+        finally{if($saved===null)unset($GLOBALS['v2seg_shared_context']);else $GLOBALS['v2seg_shared_context']=$saved;}
+    }
     $tree = v2raystore_adminMenuTree();
     $entry = $tree[$name] ?? $tree['Main'];
     $buttons = [];
@@ -169,6 +176,9 @@ function v2raystore_adminMenuKeys($name){
 }
 
 function v2raystore_adminMenuText($name){
+    if(in_array($name,['Main','Users'],true) && function_exists('v2seg_adminGroupEnabled') && !v2seg_adminGroupEnabled('new')){
+        return ($name==='Main' ? '<b>🧭 مدیریت ربات</b>' : '<b>👤 مدیریت کاربر</b>')."\n\nگزینه موردنظر را انتخاب کنید.";
+    }
     $tree = v2raystore_adminMenuTree();
     $entry = $tree[$name] ?? $tree['Main'];
 
@@ -333,6 +343,7 @@ function v2raystore_adminMenuFromMarkup($markup){
         foreach($row as $button) if(isset($button['callback_data'])) $callbacks[] = $button['callback_data'];
     }
     foreach(v2raystore_adminMenuTree() as $name=>$entry){
+        if(in_array($name,['Main','Users'],true) && function_exists('v2seg_adminGroupEnabled') && !v2seg_adminGroupEnabled('new')) continue;
         $expected = json_decode(v2raystore_adminMenuKeys($name),true)['inline_keyboard'];
         $expectedCallbacks = [];
         foreach($expected as $row) foreach($row as $button) $expectedCallbacks[] = $button['callback_data'];
@@ -392,6 +403,10 @@ function v2raystore_normalizeAdminCallback(){
     elseif(($data??'')==='customerGroupsMenu')$GLOBALS['v2seg_shared_context']='new';
     if(in_array($data??'',['adminMainMenu','adminUsersMenu','managePanel','mainMenu'],true)){
         unset($GLOBALS['v2seg_shared_context'],$GLOBALS['v2raystore_form_return_menu']);
+    }
+    if(in_array($data??'',['adminMainMenu','adminUsersMenu','managePanel'],true) && function_exists('v2seg_adminGroupEnabled') && !v2seg_adminGroupEnabled('new')){
+        $data=$data==='adminUsersMenu' ? 'adminUserOperationsMenu' : 'cgManage_legacy';
+        $GLOBALS['v2seg_shared_context']='legacy';
     }
 }
 
