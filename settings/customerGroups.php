@@ -279,6 +279,7 @@ function v2seg_admin(){
         $cb=$context[1];$GLOBALS['v2seg_menu_context']=$context[2];
     }
     if(preg_match('/^(?:cg|customerGroupsMenu)/',$cb)){setUser();$userInfo['step']='none';}
+    if(v2seg_buyerAction($cb)) exit;
     if(v2seg_managementAction($cb)) exit;
     if($cb==='customerGroupsMenu') {setUser();editText($message_id,v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;}
     if(preg_match('/^cgToggle_(enabled|legacy_enabled|sell|wallet|test|custom)$/',$cb,$m)){
@@ -595,7 +596,7 @@ function v2seg_managementAction($cb){
         $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgCustomers_'.$g.'_'.max(0,$offset-20)];if(count($users)>20)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgCustomers_'.$g.'_'.($offset+20)];
         $rows=$nav?[$nav]:[];
         if($g==='legacy')$rows[]=[['text'=>'🗑 حذف/انتقال به جدیدها','callback_data'=>'cgRemoveLegacy'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
-        else $rows[]=[['text'=>'↩️ انتقال به قدیمی‌ها','callback_data'=>'cgTransferNewToLegacy'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
+        else $rows[]=[['text'=>'🛍 خریداران جدید؛ انتقال','callback_data'=>'cgBuyers_0'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
         $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
         editText($message_id,'<b>'.v2seg_label($g)."</b>\n\n".($lines?implode("\n",$lines):'کاربری ثبت نشده است.'),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE),'HTML');return true;
     }
@@ -621,7 +622,8 @@ function v2seg_dashboardKeys($g){
         $items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
         if(!v2seg_adminGroupEnabled('new')) $items[]=['🆕 تنظیمات پذیرش مشتری جدید','customerGroupsMenu'];
     }else{
-        $items[]=['↩️ انتقال به قدیمی‌ها','cgTransferNewToLegacy'];
+        $items[]=['🛍 خریداران جدید؛ انتقال','cgBuyers_0'];
+        $items[]=['↩️ انتقال با آیدی','cgTransferNewToLegacy'];
         if(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
     }
     $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];
@@ -637,4 +639,89 @@ function v2seg_compactCustomerKeys($keys,$user){
     }
     foreach(array_chunk($buttons,2) as $row)$rows[]=$row;
     return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
+}
+
+// A sale is a finalized, positive service payment (including wallet purchases).
+function v2seg_buyerWhere(){return "p.state IN ('paid','approved','paid_with_wallet') AND ".v2raystore_statsProductTypeWhere('p').' AND p.price>0';}
+function v2seg_buyerRows($offset){
+    $where=v2seg_buyerWhere();$offset=max(0,(int)$offset);
+    $q=v2seg_query("SELECT u.userid,u.name,u.username,b.purchase_count,b.purchase_total FROM users u JOIN (SELECT p.user_id,COUNT(*) purchase_count,SUM(p.price) purchase_total FROM pays p WHERE $where GROUP BY p.user_id) b ON b.user_id=u.userid WHERE NOT EXISTS(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy') ORDER BY u.id DESC LIMIT 6 OFFSET $offset");
+    $rows=$q->get_result()->fetch_all(MYSQLI_ASSOC);$q->close();return $rows;
+}
+function v2seg_buyerPage($offset=0,$notice='',$retry=0){
+    global $message_id;
+    $offset=max(0,(int)$offset);$rows=v2seg_buyerRows($offset);
+    if(!$rows && $offset>0){
+        $where=v2seg_buyerWhere();
+        $count=v2seg_one("SELECT COUNT(*) total FROM users u WHERE NOT EXISTS(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy') AND EXISTS(SELECT 1 FROM pays p WHERE p.user_id=u.userid AND $where)");
+        $offset=intdiv(max(0,(int)$count['total']-1),5)*5;$rows=v2seg_buyerRows($offset);
+    }
+    $escape=function($v){return htmlspecialchars((string)$v,ENT_QUOTES,'UTF-8');};
+    $txt="🛍 <b>مشتریان جدیدِ خریدار</b> — صفحه ".(intdiv($offset,5)+1)."\n\n";
+    if($notice!=='')$txt.=$escape($notice)."\n\n";
+    $keys=[];
+    foreach(array_slice($rows,0,5) as $i=>$u){
+        $uid=(int)$u['userid'];$num=$offset+$i+1;$username=trim((string)($u['username']??''),'@ ');
+        $txt.="$num. ".$escape($u['name'])."\n🆔 <code>$uid</code>".($username!==''?' · @'.$escape($username):'')."\n🧾 ".(int)$u['purchase_count'].' پرداخت سرویس · '.number_format((int)$u['purchase_total'])." تومان\n\n";
+        $keys[]=[['text'=>"✅ انتقال $uid به قدیمی‌ها",'callback_data'=>"cgBuyerMove_{$uid}_{$offset}"]];
+    }
+    if(!$rows)$txt.='مشتری جدیدِ دارای خرید پرداخت‌شده وجود ندارد.';
+    $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgBuyers_'.max(0,$offset-5)];
+    if(count($rows)>5)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgBuyers_'.($offset+5)];if($nav)$keys[]=$nav;
+    if($retry>0)$keys[]=[['text'=>'🔄 تلاش مجدد ثبت گزارش','callback_data'=>"cgBuyerLog_{$retry}_{$offset}"]];
+    $keys[]=[['text'=>'🔄 تازه‌سازی','callback_data'=>'cgBuyers_'.$offset],['text'=>'⬅️ مدیریت جدیدها','callback_data'=>'cgManage_new']];
+    editText($message_id,$txt,json_encode(['inline_keyboard'=>$keys],JSON_UNESCAPED_UNICODE),'HTML');
+}
+function v2seg_buyerAuditSchema(){
+    static $done=false;if($done)return;
+    v2seg_query("CREATE TABLE IF NOT EXISTS v2_customer_transfer_log(id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,userid BIGINT NOT NULL,actor_id BIGINT NOT NULL,created_at BIGINT NOT NULL,details TEXT NOT NULL,sent TINYINT NOT NULL DEFAULT 0) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")->close();$done=true;
+}
+function v2seg_buyerLogSend($id){
+    global $botState;
+    $lock='v2seg_blog_'.(int)$id;
+    if((int)(v2seg_one('SELECT GET_LOCK(?,2) ok','s',[$lock])['ok']??0)!==1)return false;
+    try{
+        $r=v2seg_one('SELECT * FROM v2_customer_transfer_log WHERE id=?','i',[(int)$id]);if(!$r)return false;if((int)$r['sent']===1)return true;
+        $chat=trim((string)($botState['rewardChannel']??''));if($chat==='')return false;
+        $d=json_decode($r['details'],true);$esc=function($s){return htmlspecialchars((string)$s,ENT_QUOTES,'UTF-8');};
+        $username=trim((string)($d['username']??''),'@ ');
+        $txt="🔄 <b>انتقال مشتری جدید به قدیمی</b>\n\n👤 ".$esc($d['name']??'')."\n🆔 <code>".(int)$r['userid']."</code>\n🔸 یوزرنیم: ".($username!==''?'@'.$esc($username):'ندارد')."\n🧾 تعداد پرداخت سرویس: ".(int)($d['purchase_count']??0)."\n💰 مجموع پرداخت سرویس: ".number_format((int)($d['purchase_total']??0))." تومان\n👮 مدیر: ".$esc($d['actor_name']??'')." · <code>".(int)$r['actor_id']."</code>\n🕒 ".jdate('Y/m/d H:i:s',(int)$r['created_at'])."\n🔖 کد انتقال: ".(int)$r['id']."\n\n🔕 بدون پیام به مشتری؛ گزارش‌های مالی قبلی تغییر نکردند.";
+        // No message_thread_id: explicitly post to the statistics group's General topic.
+        $result=bot('sendMessage',['chat_id'=>$chat,'text'=>$txt,'parse_mode'=>'HTML']);
+        if(!is_object($result)||empty($result->ok))return false;
+        v2seg_query('UPDATE v2_customer_transfer_log SET sent=1 WHERE id=?','i',[(int)$id])->close();return true;
+    }finally{v2seg_query('SELECT RELEASE_LOCK(?)','s',[$lock])->close();}
+}
+function v2seg_buyerMove($uid){
+    global $connection,$from_id,$userInfo;
+    if(!v2seg_isAdmin())return ['ok'=>false,'message'=>'دسترسی ندارید.'];
+    try{v2seg_buyerAuditSchema();}catch(Throwable $e){return ['ok'=>false,'message'=>'ذخیرهٔ سابقهٔ انتقال در دیتابیس آماده نشد؛ انتقال انجام نشد.'];}
+    $uid=(int)$uid;$logId=0;
+    $connection->begin_transaction();
+    try{
+        // Lock the user before rechecking eligibility, including stale/double clicks.
+        $u=v2seg_one('SELECT userid,name,username FROM users WHERE userid=? LIMIT 1 FOR UPDATE','i',[$uid]);
+        $g=v2seg_one('SELECT segment FROM v2_customer_groups WHERE userid=? FOR UPDATE','i',[$uid]);
+        $where=v2seg_buyerWhere();$b=v2seg_one("SELECT COUNT(*) purchase_count,COALESCE(SUM(p.price),0) purchase_total FROM pays p WHERE p.user_id=? AND $where",'i',[$uid]);
+        if(!$u||($g['segment']??'new')==='legacy'||(int)$b['purchase_count']===0){$connection->rollback();return ['ok'=>false,'message'=>'این کاربر دیگر در فهرست مشتریان جدیدِ خریدار نیست.'];}
+        v2seg_snapshotPayments($uid);
+        v2seg_query("INSERT INTO v2_customer_groups(userid,segment,created_at,source) VALUES(?,'legacy',UNIX_TIMESTAMP(),'admin_transfer') ON DUPLICATE KEY UPDATE segment='legacy',created_at=UNIX_TIMESTAMP(),source='admin_transfer'",'i',[$uid])->close();
+        $details=json_encode(array_merge($u,$b,['actor_name'=>$userInfo['name']??'']),JSON_UNESCAPED_UNICODE);
+        v2seg_query('INSERT INTO v2_customer_transfer_log(userid,actor_id,created_at,details) VALUES(?,?,?,?)','iiis',[$uid,(int)$from_id,time(),$details])->close();$logId=(int)$connection->insert_id;
+        $connection->commit();unset($GLOBALS['v2seg_groups'][$uid]);
+    }catch(Throwable $e){$connection->rollback();return ['ok'=>false,'message'=>'انتقال ذخیره نشد؛ دوباره تلاش کنید.'];}
+    try{$sent=v2seg_buyerLogSend($logId);}catch(Throwable $e){$sent=false;}
+    return ['ok'=>true,'log_id'=>$logId,'report_ok'=>$sent,'message'=>"✅ کاربر $uid به قدیمی‌ها منتقل شد.".($sent?' گزارش در جنرال ثبت شد.':' ⚠️ ارسال گزارش انجام نشد؛ دکمهٔ تلاش مجدد را بزنید.')];
+}
+function v2seg_buyerAction($cb){
+    if(!v2seg_isAdmin())return false;
+    if(preg_match('/^cgBuyers_(\d{1,9})$/D',$cb,$m)){v2seg_buyerPage((int)$m[1]);return true;}
+    if(preg_match('/^cgBuyerMove_(\d{1,16})_(\d{1,9})$/D',$cb,$m)){
+        $r=v2seg_buyerMove((int)$m[1]);alert($r['message'],empty($r['ok']));v2seg_buyerPage((int)$m[2],$r['message'],!empty($r['ok'])&&empty($r['report_ok'])?(int)$r['log_id']:0);return true;
+    }
+    if(preg_match('/^cgBuyerLog_(\d{1,16})_(\d{1,9})$/D',$cb,$m)){
+        try{v2seg_buyerAuditSchema();$ok=v2seg_buyerLogSend((int)$m[1]);}catch(Throwable $e){$ok=false;}
+        v2seg_buyerPage((int)$m[2],$ok?'✅ گزارش در جنرال ثبت شد.':'⚠️ ارسال گزارش ناموفق بود؛ تنظیم گروه آمار و دسترسی ربات را بررسی کنید.',$ok?0:(int)$m[1]);return true;
+    }
+    return false;
 }
