@@ -663,7 +663,13 @@ function v2seg_buyerPage($offset=0,$notice='',$retry=0){
     foreach(array_slice($rows,0,5) as $i=>$u){
         $uid=(int)$u['userid'];$num=$offset+$i+1;$username=trim((string)($u['username']??''),'@ ');
         $txt.="$num. ".$escape($u['name'])."\n🆔 <code>$uid</code>".($username!==''?' · @'.$escape($username):'')."\n🧾 ".(int)$u['purchase_count'].' پرداخت سرویس · '.number_format((int)$u['purchase_total'])." تومان\n\n";
-        $keys[]=[['text'=>"✅ انتقال $uid به قدیمی‌ها",'callback_data'=>"cgBuyerMove_{$uid}_{$offset}"]];
+        $contact = preg_match('/^[A-Za-z0-9_]{1,32}$/D',$username)
+            ? ['text'=>'💬 رفتن به پیوی','url'=>'https://t.me/'.$username]
+            : ['text'=>'📋 کپی نام','copy_text'=>['text'=>(string)$u['name']]];
+        if(isset($contact['copy_text']) && trim($contact['copy_text']['text'])===''){
+            $contact=['text'=>'📋 کپی آیدی','copy_text'=>['text'=>(string)$uid]];
+        }
+        $keys[]=[['text'=>"✅ انتقال $uid به قدیمی‌ها",'callback_data'=>"cgBuyerMove_{$uid}_{$offset}"],$contact];
     }
     if(!$rows)$txt.='مشتری جدیدِ دارای خرید پرداخت‌شده وجود ندارد.';
     $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgBuyers_'.max(0,$offset-5)];
