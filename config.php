@@ -20466,21 +20466,32 @@ function v2raystore_reportPaymentRows($from, $until, $group = null){
 }
 
 function v2raystore_reportAvailableJalaliYears(){
+    return array_keys(v2raystore_reportAvailablePeriods());
+}
+
+function v2raystore_reportAvailablePeriods(){
     global $connection;
-    $currentYear = intval(function_exists('jdate') ? jdate('Y', time(), '', 'Asia/Tehran', 'en') : date('Y'));
-    $firstYear = $currentYear;
-    $productWhere = function_exists('v2raystore_statsProductWhere')
-        ? v2raystore_statsProductWhere()
-        : "(`state` IN ('paid','approved'))";
-    $res = @($connection->query("SELECT MIN(`request_date`) AS `first_date` FROM `pays` WHERE {$productWhere}"));
-    if($res){
-        $row = $res->fetch_assoc();
-        $firstTimestamp = intval($row['first_date'] ?? 0);
-        if($firstTimestamp > 0) $firstYear = intval(function_exists('jdate') ? jdate('Y', $firstTimestamp, '', 'Asia/Tehran', 'en') : date('Y', $firstTimestamp));
+    $group=v2seg_reportFilter();$segment=v2seg_paymentSql();
+    $type=v2raystore_statsProductTypeWhere();
+    $sql="SELECT DISTINCT request_date,cancelled_date,state FROM pays WHERE (`type`='INCREASE_WALLET' OR $type) AND (state IN ('paid','approved','paid_with_wallet') OR (state IN ('declined','auto_cancelled','cancelled_by_user') AND COALESCE(sent_date,0)>0))";
+    if($group!=='all')$sql.=" AND $segment=?";
+    $stmt=$connection->prepare($sql);if(!$stmt)return [];
+    if($group!=='all')$stmt->bind_param('s',$group);
+    if(!$stmt->execute()){$stmt->close();return [];}
+    $result=$stmt->get_result();$periods=[];$now=time();
+    while($row=$result->fetch_assoc()){
+        $dates=[(int)$row['request_date']];
+        if(in_array($row['state'],['declined','auto_cancelled','cancelled_by_user'],true))$dates[]=(int)$row['cancelled_date'];
+        foreach($dates as $ts){
+            if($ts<=0||$ts>$now)continue;
+            $ym=explode('-',jdate('Y-n',$ts,'','Asia/Tehran','en'));
+            $year=(int)$ym[0];$month=(int)$ym[1];
+            if($year>=1200&&$month>=1&&$month<=12)$periods[$year][$month]=true;
+        }
     }
-    $years = [];
-    for($year = $currentYear; $year >= $firstYear; $year--) $years[] = $year;
-    return $years;
+    $stmt->close();krsort($periods,SORT_NUMERIC);
+    foreach($periods as &$months)ksort($months,SORT_NUMERIC);unset($months);
+    return $periods;
 }
 
 function v2raystore_reportMonthNames(){
@@ -20548,6 +20559,28 @@ function v2raystore_sendMonthlyIncomeSummary($year, $month, $group = null){
     }
     $text .= "\n💰 <b>جمع کل ماه: " . number_format($monthTotal) . " تومان</b>";
     $text.=v2seg_totalsText($rows);
+    return v2raystore_sendReportText($text);
+}
+
+function v2raystore_sendMonthlyPaymentDetails($year,$month,$group=null){
+    $bounds=v2raystore_reportJalaliMonthBounds($year,$month);if(!$bounds)return false;
+    $rows=v2raystore_reportPaymentRows($bounds['from'],min($bounds['until'],time()+1),$group);
+    $name=v2raystore_reportMonthNames()[(int)$month-1];
+    $text='<b>ریز تراکنش‌های '.v2raystore_h($name).' '.(int)$year.'</b>'."\n".v2seg_label(v2seg_reportFilter($group))."\n\n";
+    $lastDay='';$dayTotal=0;$total=0;
+    foreach($rows as $row){
+        $ts=(int)($row['event_date']??$row['request_date']);
+        $day=jdate('Y-m-d',$ts,'','Asia/Tehran','en');
+        if($day!==$lastDay){
+            if($lastDay!=='')$text.='جمع پرداخت‌های روز: <b>'.number_format($dayTotal)." تومان</b>\n\n";
+            $text.='<b>'.v2raystore_h(v2raystore_reportDayLabel($ts))."</b>\n";$lastDay=$day;$dayTotal=0;
+        }
+        $text.=v2raystore_reportCompactTransactionLine($row,false)."\n";
+        if(!empty($row['counts_in_total'])){$dayTotal+=(int)$row['price'];$total+=(int)$row['price'];}
+    }
+    if($lastDay!=='')$text.='جمع پرداخت‌های روز: <b>'.number_format($dayTotal)." تومان</b>\n";
+    else $text.="برای این ماه تراکنش نهایی‌شده‌ای ثبت نشده است.\n";
+    $text.="\nجمع پرداخت‌های ماه: <b>".number_format($total).' تومان</b>';
     return v2raystore_sendReportText($text);
 }
 
@@ -20625,23 +20658,15 @@ function v2raystore_getMonthlyReportMonthsText($mode, $year){
 }
 
 function v2raystore_getMonthlyReportMonthsKeys($mode, $year){
-    $rows = [];
-    $names = v2raystore_reportMonthNames();
-    for($month = 1; $month <= 12; $month += 2){
-        $row = [];
-        for($index = 0; $index < 2; $index++){
-            $currentMonth = $month + $index;
-            if($currentMonth > 12) break;
-            $row[] = [
-                'text'=>$names[$currentMonth - 1],
-                'callback_data'=>"monthlyReportMonth_{$mode}_" . intval($year) . "_{$currentMonth}",
-                'style'=>'primary'
-            ];
-        }
-        $rows[] = $row;
+    $names=v2raystore_reportMonthNames();$buttons=[];
+    $periods=v2raystore_reportAvailablePeriods();
+    foreach(array_keys($periods[(int)$year]??[]) as $month){
+        $buttons[]=['text'=>$names[$month-1],'callback_data'=>"monthlyReportMonth_{$mode}_".(int)$year."_$month",'style'=>'primary'];
     }
-    $rows[] = [['text'=>'⬅️ سال‌ها', 'callback_data'=>"monthlyReportMenu_{$mode}", 'style'=>'primary']];
-    return v2seg_reportKeys(json_encode(['inline_keyboard'=>$rows], JSON_UNESCAPED_UNICODE));
+    $rows=array_chunk($buttons,2);
+    if(!$rows)$rows[]=[['text'=>'تراکنشی در این سال ثبت نشده','callback_data'=>'v2raystore']];
+    $rows[]=[['text'=>'⬅️ سال‌ها','callback_data'=>"monthlyReportMenu_{$mode}",'style'=>'primary']];
+    return v2seg_reportKeys(json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));
 }
 
 function v2raystore_getMonthlyReportDaysText($year, $month){
