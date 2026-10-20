@@ -68,6 +68,7 @@ v2seg_admin();
 v2seg_gate();
 v2seg_guardSelection();
 v2cfg_handle();
+v2hist_handle();
 if(v2raystore_stopPurchaseIfBlocked($data ?? '', $userInfo['step'] ?? '')){
     exit();
 }
@@ -4653,6 +4654,7 @@ elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType, $increaseInfo)){
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     $serverType = $server_info['type'];
+    $historyBefore=v2hist_snapshot($orderInfo);
 
     if($serverType == "marzban"){
         $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$volume]);
@@ -4664,6 +4666,7 @@ elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType, $increaseInfo)){
     }
     
 if($response->success){
+    v2hist_record((string)$payInfo['hash_id'],$orderInfo,$historyBefore,0,$volume,'add');
     $stmt = $connection->prepare("UPDATE `orders_list` SET `expire_date` = `expire_date` + ?, `notif` = 0 WHERE `uuid` = ?");
     $newVolume = $volume * 86400;
     $stmt->bind_param("is", $newVolume, $uuid);
@@ -4731,6 +4734,7 @@ $volume = $res['volume'];
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     $serverType = $server_info['type'];
+    $historyBefore=v2hist_snapshot($orderInfo);
 
     if($serverType == "marzban"){
         $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_volume'=>$volume]);
@@ -4742,6 +4746,7 @@ $volume = $res['volume'];
     }
     
 if($response->success){
+    v2hist_record((string)$payInfo['hash_id'],$orderInfo,$historyBefore,$volume,0,'add');
     $stmt = $connection->prepare("UPDATE `orders_list` SET `notif` = 0 WHERE `uuid` = ?");
     $stmt->bind_param("s", $uuid);
     $stmt->execute();
