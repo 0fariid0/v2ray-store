@@ -7047,6 +7047,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
         $stmt->close();
         if(!$payInfo){ alert('پرداخت پیدا نشد.', true); exit(); }
         if(($payInfo['state'] ?? '') == 'approved'){ alert('این سفارش قبلاً تأیید شده است.', true); exit(); }
+        if((int)($payInfo['user_id'] ?? 0) !== (int)$from_id){ alert('این پرداخت متعلق به شما نیست.', true); exit(); }
         $price = intval($payInfo['price'] ?? 0);
         $userwallet = intval($userInfo['wallet'] ?? 0);
         if($userwallet < $price){
@@ -7797,6 +7798,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
         $stmt->close();
         if(!$payInfo){ alert('پرداخت پیدا نشد.', true); exit(); }
         if(($payInfo['state'] ?? '') == 'approved'){ alert('این سفارش قبلاً تأیید شده است.', true); exit(); }
+        if((int)($payInfo['user_id'] ?? 0) !== (int)$from_id){ alert('این پرداخت متعلق به شما نیست.', true); exit(); }
         $price = intval($payInfo['price'] ?? 0);
         $userwallet = intval($userInfo['wallet'] ?? 0);
         if($userwallet < $price){
@@ -13632,6 +13634,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
         alert('این تمدید قبلاً انجام شده است.', true);
         exit();
     }
+    if((int)($payInfo['user_id'] ?? 0) !== (int)$from_id){ alert('این پرداخت متعلق به شما نیست.', true); exit(); }
     $price = intval($payInfo['price'] ?? 0);
     $userwallet = intval($userInfo['wallet'] ?? 0);
     if($userwallet < $price) {

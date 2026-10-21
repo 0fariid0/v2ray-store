@@ -6224,7 +6224,7 @@ function v2raystore_sanaeiRequestJson($server_info, $endpoint, $method = 'GET', 
         'X-Requested-With: XMLHttpRequest',
         'Cookie: ' . $session,
     );
-    $csrf = v2raystore_sanaeiNewCsrfToken(null, $panel, $session);
+    $csrf = strtoupper($method) === 'GET' ? '' : v2raystore_sanaeiNewCsrfToken(null, $panel, $session);
     if($csrf !== '') $headers[] = 'X-CSRF-Token: ' . $csrf;
     $method = strtoupper($method);
     if($payload !== null) $headers[] = 'Content-Type: application/json';
@@ -6233,8 +6233,8 @@ function v2raystore_sanaeiRequestJson($server_info, $endpoint, $method = 'GET', 
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_ENCODING => '',
         CURLOPT_MAXREDIRS => 10,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_TIMEOUT => 6,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 12,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
         CURLOPT_CUSTOMREQUEST => $method,
@@ -6248,6 +6248,11 @@ function v2raystore_sanaeiRequestJson($server_info, $endpoint, $method = 'GET', 
     $response = curl_exec($curl);
     curl_close($curl);
     $decoded = json_decode((string)$response, true);
+    // Retry reads only. A write timeout is ambiguous and must never double-credit a client.
+    if(strtoupper($method) === 'GET' && !$refreshSession &&
+       (!is_array($decoded) || empty($decoded['success']))){
+        return v2raystore_sanaeiRequestJson($server_info, $endpoint, $method, $payload, true);
+    }
     return is_array($decoded) ? $decoded : null;
 }
 
@@ -10911,6 +10916,26 @@ function bot($method, $datas = []){
         }
     }
 
+    if($method === 'sendMessage' && is_object($decoded) && empty($decoded->ok) && (int)($decoded->error_code ?? 0) === 400){
+        $description = (string)($decoded->description ?? '');
+        if(preg_match('/parse entities|entity|message is too long|text is too long/i', $description)){
+            $plain = (string)($currentDatas['text'] ?? '');
+            if(strtolower((string)($currentDatas['parse_mode'] ?? '')) === 'html')
+                $plain = html_entity_decode(strip_tags($plain), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            // 1800 Unicode code points fit even when each uses two UTF-16 units.
+            preg_match_all('/.{1,1800}/us', $plain, $parts);
+            $chunks = $parts[0] ?? [];
+            foreach($chunks as $i => $chunk){
+                $fallback = $currentDatas;
+                unset($fallback['parse_mode']);
+                $fallback['text'] = $chunk;
+                if($i < count($chunks)-1) unset($fallback['reply_markup']);
+                [$raw, $error] = $sendRequest($fallback);
+                $decoded = $error ? null : json_decode((string)$raw);
+                if(!is_object($decoded) || empty($decoded->ok)) break;
+            }
+        }
+    }
     return $decoded;
 }
 function sendMessage($txt, $key = null, $parse ="MarkDown", $ci= null, $msg = null){
@@ -13320,11 +13345,7 @@ function v2raystore_sanaeiNewDetailSnapshot($serverConfig, $order){
     $email = v2raystore_sanaeiNewFindClientEmail((int)($order['server_id']??0),
         (string)($order['uuid']??''),(int)($order['inbound_id']??0),(string)($order['remark']??''));
     if($email === '') return null;
-    $endpoint = '/panel/api/clients/get/' . rawurlencode($email);
-    $response = v2raystore_sanaeiRequestJson($serverConfig, $endpoint, 'GET');
-    if(!is_array($response) || empty($response['success'])){
-        $response = v2raystore_sanaeiRequestJson($serverConfig, $endpoint, 'POST');
-    }
+    $response = v2id_readClient($serverConfig, $email);
     if(!is_array($response) || empty($response['success'])) return null;
     $obj = v2raystore_decodeMaybeJson($response['obj'] ?? null, true);
     if(is_object($obj)) $obj = (array)$obj;
@@ -13344,7 +13365,7 @@ function v2raystore_sanaeiNewDetailSnapshot($serverConfig, $order){
     $used = (int)$used;
     $expireSeconds = v2raystore_panelExpiryToSeconds($expiry);
     $enabled = $enabled && ($total === 0 || $used < $total)
-        && ($expireSeconds === 0 || $expireSeconds > time());
+        && ($expireSeconds <= 0 || $expireSeconds > time());
     return [
         'leftgb' => $total === 0 ? 'نامحدود' : (round(max(0, $total - $used) / 1073741824, 2) . ' GB'),
         'enabled' => $enabled,
@@ -18180,6 +18201,11 @@ function getJson($server_id){
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
+    if(!$server_info) return null;
+    if(($server_info['type'] ?? '') === 'sanaei_new'){
+        $result = v2raystore_sanaeiRequestJson($server_info, '/panel/api/inbounds/list', 'GET');
+        return v2raystore_normalizeSanaeiNewResponse(is_array($result) ? json_decode(json_encode($result)) : null, 'sanaei_new');
+    }
     $panel_url = $server_info['panel_url'];
     $cookie = 'Cookie: session='.$server_info['cookie'];
 
@@ -20987,7 +21013,7 @@ function v2raystore_getOrderRemainingSummary($order){
             if($email==='')return null;
             $remark=$email;
             if($email !== ''){
-                $clientResp = v2raystore_sanaeiRequestJson($serverConfig, '/panel/api/clients/get/' . rawurlencode($email), 'GET');
+                $clientResp = v2id_readClient($serverConfig, $email);
                 if(is_array($clientResp) && !empty($clientResp['success'])){
                     $obj = $clientResp['obj'] ?? [];
                     if(is_string($obj)){
@@ -20998,7 +21024,7 @@ function v2raystore_getOrderRemainingSummary($order){
                     if(is_array($obj)){
                         $client = $obj['client'] ?? [];
                         if(is_object($client)) $client = json_decode(json_encode($client), true);
-                        if(is_array($client)){
+                        if(is_array($client) && ($client['email'] ?? '') === $email && array_key_exists('enable', $client) && (array_key_exists('totalGB', $client) || array_key_exists('total_gb', $client)) && (array_key_exists('usedTraffic', $obj) || array_key_exists('used_traffic', $obj))){
                             $total = intval($client['totalGB'] ?? ($client['total_gb'] ?? 0));
                             $used = intval($obj['usedTraffic'] ?? ($obj['used_traffic'] ?? 0));
                             $remainingBytes = $total > 0 ? max(0, $total - max(0, $used)) : null;
@@ -21250,7 +21276,17 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
         $keyboard = v2raystore_reportPrivateKeyboard($uid);
     }
     $res = v2raystore_reportEvent('#سفارش_جدید', $body, $keyboard, 'payment_approved');
-    return is_object($res) && !empty($res->ok);
+    if(is_object($res) && !empty($res->ok)) return true;
+    // Respect disabled reports. If the report group is absent/unavailable, notify the owner.
+    if(v2raystore_reportIsEnabled(v2raystore_reportEventKey('payment_approved'), 'on')){
+        $owner = $GLOBALS['admin'] ?? null;
+        if($owner && (string)$owner !== (string)v2raystore_getIncomeReportChatId()){
+            $res = sendMessage('#سفارش_جدید' . "\n\n" . $body, null, 'HTML', $owner);
+            if(is_object($res) && !empty($res->ok)) return true;
+        }
+        error_log('Payment report delivery failed');
+    }
+    return false;
 }
 
 function v2raystore_notifyServerSwitch($result, $actorId = 0, $isAdminSwitch = false){
@@ -22804,24 +22840,9 @@ function v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $da
         }
 
         $sendOk = false;
-        if(class_exists('QRcode')){
-            $file = RandomString() . '.png';
-            QRcode::png($link, $file, 'L', 11, 0);
-            if(function_exists('addBorderImage')) @addBorderImage($file);
-            if(file_exists('settings/QRCode.jpg')){
-                $backgroundImage = @imagecreatefromjpeg('settings/QRCode.jpg');
-                $qrImage = @imagecreatefrompng($file);
-                if($backgroundImage && $qrImage){
-                    $qrSize = ['width' => imagesx($qrImage), 'height' => imagesy($qrImage)];
-                    imagecopy($backgroundImage, $qrImage, 300, 300, 0, 0, $qrSize['width'], $qrSize['height']);
-                    imagepng($backgroundImage, $file);
-                    imagedestroy($backgroundImage);
-                    imagedestroy($qrImage);
-                }
-            }
-            $res = sendPhoto($botUrl . $file, $acc_text, $keyboard, 'HTML', $uid);
-            $sendOk = function_exists('v2raystore_telegramResponseOk') ? v2raystore_telegramResponseOk($res) : true;
-            @unlink($file);
+        // QR failures must not interrupt payment completion or the text fallback.
+        if(function_exists('v2raystore_sendQrLinkMessage')){
+            $sendOk = v2raystore_sendQrLinkMessage($uid, $link, $acc_text, $keyboard, 'HTML');
         }
 
         // اگر ارسال عکس/QR به هر دلیل خطا داد، لینک در متن ساده ارسال می‌شود تا کاربر بدون کانفیگ نماند.
