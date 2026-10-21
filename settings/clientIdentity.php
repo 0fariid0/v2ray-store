@@ -22,8 +22,10 @@ function v2id_known($sid,$uuid,$name){
     // Existing subscription links can bootstrap recovery before aliases were saved.
     global $connection;
     if(isset($connection) && $uuid!=='' && $uuid!=='0'){
-        $q=$connection->prepare('SELECT `link` FROM `orders_list` WHERE `server_id`=? AND `uuid`=? ORDER BY `id` DESC LIMIT 1');
+        $q=$connection->prepare('SELECT `token`, `link` FROM `orders_list` WHERE `server_id`=? AND `uuid`=? ORDER BY `id` DESC LIMIT 1');
         if($q){$q->bind_param('is',$sid,$uuid);$q->execute();$row=$q->get_result()->fetch_assoc();$q->close();
+            $token=trim((string)($row['token']??''));
+            if($token!=='' && $token!=='0' && !preg_match('/^[A-Za-z0-9]{30}$/D',$token) && strpos($token,'://')===false)$known['subId'][]=$token;
             $links=json_decode((string)($row['link']??''),true);
             foreach(is_array($links)?$links:[] as $link){if(!is_string($link))continue;
                 $path=parse_url($link,PHP_URL_PATH);if(is_string($path)&&preg_match('~/sub/([^/]+)/*$~',$path,$m))$known['subId'][]=rawurldecode($m[1]);
@@ -101,7 +103,32 @@ function v2id_save($sid,$uuid,$name,$found){
     foreach(['uuid','password','subId'] as $f)if(!$found[$f]&&is_array($old[$f]??null))$found[$f]=$old[$f];
     $json=json_encode($found,JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
     if($json!==v2raystore_getSettingValue($key,'')){
-        if(!v2raystore_setSettingValue($key,$json))return null;
+        try{
+            if(!v2raystore_setSettingValue($key,$json))error_log('Client identity cache write failed');
+        }catch(Throwable $e){error_log('Client identity cache write failed');}
+        // A failed cache write does not invalidate the live, verified identity.
     }
     return $found;
+}
+
+// Read-only recovery for panels whose detail endpoint temporarily fails.
+function v2id_readClient($server,$email){
+    $response=v2raystore_sanaeiRequestJson($server,'/panel/api/clients/get/'.rawurlencode($email),'GET');
+    $obj=is_array($response)?($response['obj']??null):null;
+    if(!empty($response['success']) && is_array($obj) && is_array($obj['client']??null) && ($obj['client']['email']??'')===$email)return $response;
+    $list=v2raystore_sanaeiRequestJson($server,'/panel/api/clients/list','GET');
+    if(empty($list['success']) || !is_array($list['obj']??null))return null;
+    $matches=[];
+    foreach($list['obj'] as $row){
+        if(!is_array($row))continue;
+        $client=$row['client']??$row;
+        if(!is_array($client)||($client['email']??'')!==$email)continue;
+        $data=['client'=>$client];
+        $traffic=$row['traffic']??null;
+        if(is_array($traffic) && isset($traffic['up'],$traffic['down']) && is_numeric($traffic['up']) && is_numeric($traffic['down']) && $traffic['up']>=0 && $traffic['down']>=0)
+            $data['usedTraffic']=(int)$traffic['up']+(int)$traffic['down'];
+        if(array_key_exists('inboundIds',$row))$data['inboundIds']=$row['inboundIds'];
+        $matches[]=$data;
+    }
+    return count($matches)===1?['success'=>true,'obj'=>$matches[0]]:null;
 }

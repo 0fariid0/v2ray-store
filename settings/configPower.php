@@ -25,12 +25,7 @@ function v2cfg_live($order,$server){
         if(!$identity)return null;
         $email=$identity['email'];
         if($email==='')return null;
-        $r=null;
-        foreach([false,true] as $refresh){
-            try{$r=v2raystore_sanaeiRequestJson($server,'/panel/api/clients/get/'.rawurlencode($email),'GET',null,$refresh);}
-            catch(Throwable $e){$r=null;}
-            if(is_array($r) && ($r['success']??false)===true)break;
-        }
+        try{$r=v2id_readClient($server,$email);}catch(Throwable $e){$r=null;}
         if(!is_array($r) || ($r['success']??false)!==true)return null;
         $obj=v2raystore_decodeMaybeJson($r['obj']??null,true);
         $client=v2raystore_decodeMaybeJson($obj['client']??null,true);
