@@ -7068,6 +7068,7 @@ if(preg_match('/payCustomWithWallet(.*)/',$data, $match)){
             $stmt->execute();
             $stmt->close();
         }
+        v2raystore_notifyWalletCustomer($hashId, $result);
         editText($message_id, "✅ سرویس شما با موفقیت فعال شد", getMainKeys());
         exit();
     }
@@ -7819,6 +7820,7 @@ if(preg_match('/payWithWallet(.*)/',$data, $match)){
             $stmt->execute();
             $stmt->close();
         }
+        v2raystore_notifyWalletCustomer($hashId, $result);
         editText($message_id, "✅ سرویس شما با موفقیت فعال شد", getMainKeys());
         exit();
     }
@@ -13657,6 +13659,7 @@ if(preg_match('/payRenewWithWallet(.*)/', $data,$match)){
         $stmt->execute();
         $stmt->close();
     }
+    v2raystore_notifyWalletCustomer($match[1], $result);
     editText($message_id, "✅سرویس " . ($result['renew_remark'] ?? '') . " با موفقیت تمدید شد", getMainKeys());
     $keys = json_encode(['inline_keyboard'=>[
         [

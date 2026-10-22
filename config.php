@@ -21173,6 +21173,59 @@ function v2raystore_getOrderRowsForFullPaymentReport($orderIds){
     return $rows;
 }
 
+function v2raystore_notifyWalletCustomer($hashId, $result){
+    global $connection;
+    if(empty($result['ok']) || !empty($result['already'])) return false;
+    try{
+        $stmt = $connection->prepare("SELECT p.*, u.`wallet` FROM `pays` p LEFT JOIN `users` u ON u.`userid` = p.`user_id` WHERE p.`hash_id` = ? LIMIT 1");
+        if(!$stmt) return false;
+        $stmt->bind_param('s', $hashId);
+        $stmt->execute();
+        $pay = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if(!$pay || ($pay['state'] ?? '') !== 'approved') return false;
+        $uid = (int)($pay['user_id'] ?? 0);
+        if($uid <= 0 || $uid !== (int)($result['user_id'] ?? 0)) return false;
+        $renew = strpos((string)($result['type'] ?? ''), 'RENEW') === 0;
+        $lines = [
+            $renew ? '✅ تمدید سرویس با کیف پول انجام شد' : '✅ خرید سرویس با کیف پول انجام شد',
+            '🔖 کد پرداخت: ' . $hashId,
+            '💰 مبلغ پرداخت: ' . number_format((int)$pay['price']) . ' تومان',
+            '👛 موجودی کیف پول: ' . number_format((int)$pay['wallet']) . ' تومان',
+            '🕒 زمان: ' . jdate('Y/m/d H:i', (int)($pay['auto_approved_date'] ?: time()), '', 'Asia/Tehran', 'en')
+        ];
+        $orders = v2raystore_getOrderRowsForFullPaymentReport($result['order_ids'] ?? []);
+        foreach($orders as $order){
+            $lines[] = '';
+            $lines[] = '🔮 نام سرویس: ' . ($order['remark'] ?? '');
+            $lines[] = '🖥 سرور: ' . ($order['server_title'] ?? '');
+            $lines[] = '📦 پلن: ' . ($order['plan_title'] ?? '');
+            if($renew){
+                if(isset($result['renew_volume'])) $lines[] = '🔋 حجم پس از تمدید: ' . $result['renew_volume'] . ' گیگ';
+                if(isset($result['renew_days'])) $lines[] = '⏳ روزهای باقی‌مانده پس از تمدید: ' . $result['renew_days'];
+            }else{
+                $volume = (float)($pay['volume'] ?? 0) > 0 ? $pay['volume'] : ($order['plan_volume'] ?? null);
+                $days = (int)($pay['day'] ?? 0) > 0 ? $pay['day'] : ($order['plan_days'] ?? null);
+                if($volume !== null) $lines[] = '🔋 حجم خریداری‌شده: ' . ((float)$volume == 0 ? 'نامحدود' : $volume . ' گیگ');
+                if($days !== null) $lines[] = '⏳ مدت: ' . ((int)$days == 0 ? 'نامحدود' : $days . ' روز');
+            }
+        }
+        // Plain text avoids failures caused by service names containing HTML/Markdown.
+        preg_match_all('/.{1,1800}/us', implode("\n", $lines), $chunks);
+        $ok = true;
+        foreach($chunks[0] as $chunk){
+            $response = bot('sendMessage', ['chat_id'=>$uid, 'text'=>$chunk, 'disable_notification'=>false]);
+            if(empty($response->ok)) $ok = false;
+        }
+        if(!$ok) error_log('Wallet customer receipt delivery failed: ' . $hashId);
+        return $ok;
+    }catch(Throwable $error){
+        // Notification failure must never repeat a successful purchase or renewal.
+        error_log('Wallet customer receipt failed: ' . $hashId);
+        return false;
+    }
+}
+
 function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $auto = false){
     global $connection;
     if(!is_array($result) || empty($result['ok']) || !empty($result['already'])) return false;
