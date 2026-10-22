@@ -20580,6 +20580,28 @@ function v2raystore_sendMonthlyIncomeSummary($year, $month, $group = null){
     return v2raystore_sendReportText($text);
 }
 
+function v2raystore_sendMonthlyPaymentDetails($year,$month,$group=null){
+    $bounds=v2raystore_reportJalaliMonthBounds($year,$month);if(!$bounds)return false;
+    $rows=v2raystore_reportPaymentRows($bounds['from'],min($bounds['until'],time()+1),$group);
+    $name=v2raystore_reportMonthNames()[(int)$month-1];
+    $text='<b>ریز تراکنش‌های '.v2raystore_h($name).' '.(int)$year.'</b>'."\n".v2seg_label(v2seg_reportFilter($group))."\n\n";
+    $lastDay='';$dayTotal=0;$total=0;
+    foreach($rows as $row){
+        $ts=(int)($row['event_date']??$row['request_date']);
+        $day=jdate('Y-m-d',$ts,'','Asia/Tehran','en');
+        if($day!==$lastDay){
+            if($lastDay!=='')$text.='جمع پرداخت‌های روز: <b>'.number_format($dayTotal)." تومان</b>\n\n";
+            $text.='<b>'.v2raystore_h(v2raystore_reportDayLabel($ts))."</b>\n";$lastDay=$day;$dayTotal=0;
+        }
+        $text.=v2raystore_reportCompactTransactionLine($row,true)."\n";
+        if(!empty($row['counts_in_total'])){$dayTotal+=(int)$row['price'];$total+=(int)$row['price'];}
+    }
+    if($lastDay!=='')$text.='جمع پرداخت‌های روز: <b>'.number_format($dayTotal)." تومان</b>\n";
+    else $text.="برای این ماه تراکنش نهایی‌شده‌ای ثبت نشده است.\n";
+    $text.="\nجمع پرداخت‌های ماه: <b>".number_format($total).' تومان</b>';
+    return v2raystore_sendReportText($text);
+}
+
 function v2raystore_sendDayPaymentDetails($year, $month, $day, $includePaymentCode = false, $group = null){
     $bounds = v2raystore_reportJalaliDayBounds($year, $month, $day);
     if(!$bounds) return false;
