@@ -2437,17 +2437,19 @@ if($data=="changeUpdateConfigLinkState" && ($from_id == $admin || $userInfo['isA
     setSettings('updateConnectionState', $newValue);
     editText($message_id,$mainValues['change_bot_settings_message'],getBotConnectionSettingKeys());
 }
-if(in_array($data ?? '', ['paymentCardsSettings','paymentCredentialsSettings','paymentMethodsSettings','paymentChannelsSettings'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
+if(in_array($data ?? '', ['paymentCardsSettings','paymentCredentialsSettings','paymentMethodsSettings','paymentChannelsSettings','walletAccessSettings'], true) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $paymentMenuFns = [
+        'walletAccessSettings'=>'getWalletAccessSettingsKeys',
         'paymentCardsSettings'=>'getPaymentCardsSettingsKeys',
         'paymentCredentialsSettings'=>'getPaymentCredentialsSettingsKeys',
         'paymentMethodsSettings'=>'getPaymentMethodsSettingsKeys',
         'paymentChannelsSettings'=>'getPaymentChannelsSettingsKeys',
     ];
     $paymentTitles = [
-        'paymentCardsSettings'=>'💳 کارت‌ها و مسئول دریافت',
+        'walletAccessSettings'=>'👛 دسترسی کیف پول کاربران و نمایندگان',
+        'paymentCardsSettings'=>'💳 شماره کارت‌ها و نام صاحب حساب',
         'paymentCredentialsSettings'=>'🔑 کلیدها و آدرس درگاه‌ها',
-        'paymentMethodsSettings'=>'🔌 وضعیت روش‌های پرداخت',
+        'paymentMethodsSettings'=>'⚙️ روش‌های مجاز پرداخت',
         'paymentChannelsSettings'=>'📢 کانال گزارش و کانال قفل',
     ];
     editText($message_id, '<b>' . $paymentTitles[$data] . '</b>', $paymentMenuFns[$data](), 'HTML');
@@ -2455,11 +2457,17 @@ if(in_array($data ?? '', ['paymentCardsSettings','paymentCredentialsSettings','p
 }
 if(($data=="gateWays_Channels" or preg_match("/^changeGateWays(\w+)/",$data,$match)) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     if($data!="gateWays_Channels"){
-        $newValue = $botState[$match[1]]=="on"?"off":"on";
-        setSettings($match[1], $newValue);
-        editText($message_id,$mainValues['change_bot_settings_message'],getPaymentMethodsSettingsKeys());
+        $paymentState = v2raystore_adminPaymentState();
+        $allowedPaymentKeys = ['cartToCartState','walletState','agentWalletState','weSwapState','nextpay','zarinpal','nowPaymentWallet','nowPaymentOther','tronWallet'];
+        if(!in_array($match[1], $allowedPaymentKeys, true)){ alert('گزینه پرداخت معتبر نیست.', true); exit(); }
+        $currentValue = $paymentState[$match[1]] ?? ($match[1]==='agentWalletState' ? ($paymentState['walletState'] ?? 'off') : 'off');
+        $newValue = $currentValue==='on' ? 'off' : 'on';
+        $paymentState[$match[1]] = $newValue;
+        if(!v2raystore_saveBotStatesArray($paymentState)){ alert('ذخیره تنظیمات انجام نشد.', true); exit(); }
+        $isWallet = in_array($match[1], ['walletState','agentWalletState'], true);
+        editText($message_id, $isWallet ? '👛 دسترسی کیف پول — برای تغییر وضعیت روی گزینه بزنید.' : '⚙️ روش‌های مجاز پرداخت', $isWallet ? getWalletAccessSettingsKeys() : getPaymentMethodsSettingsKeys());
     }else{
-        editText($message_id,"🏦 <b>حساب‌ها، درگاه‌ها و کانال‌ها</b>\n\nبرای پیدا کردن سریع‌تر، تنظیمات پرداخت در چهار بخش جدا شده است.",getGateWaysKeys(),'HTML');
+        editText($message_id,"💳 <b>کارت و پرداخت</b>\n\nشماره کارت، کیف پول، درگاه و بررسی رسید را از این بخش مدیریت کنید.",getGateWaysKeys(),'HTML');
     }
     exit();
 }

@@ -6386,40 +6386,31 @@ function v2raystore_buttonStyleByCallback($button){
     if(!is_array($button)) return $button;
     if(!isset($button['text'])) return $button;
 
-    // فقط استایل‌های قابل قبول نگه داشته می‌شود تا دکمه‌ها به خاطر style اشتباه سفید/بی‌رنگ یا خراب نشوند.
-    $allowedStyles = ['danger', 'success', 'primary', 'warning'];
+    $allowedStyles = ['danger', 'success', 'primary'];
     $callback = (string)($button['callback_data'] ?? '');
     $text = (string)($button['text'] ?? '');
     $haystack = $text . ' ' . $callback;
     $hasAction = v2raystore_buttonHasVisibleAction($button);
-
-    $dangerWords = ['delete', 'del', 'remove', 'ban', 'reject', 'disable', 'decrease', 'cancel', 'clear', 'off', 'stop', 'deny', 'decline', 'لغو', 'حذف', 'بن', 'مسدود', 'رد', 'غیرفعال', 'کاهش', 'پاک', 'خاموش', 'توقف', 'انصراف', '❌', '🗑', '🧹', '➖'];
-    foreach($dangerWords as $w){
-        if(v2raystore_textContains($haystack, $w)){
-            $button['style'] = 'danger';
-            return $button;
-        }
+    // Navigation never becomes destructive because its title mentions blocking or deletion.
+    if(preg_match('/بازگشت|برگشت|انتخاب گروه/u', $text)
+        || preg_match('/^(?:admin[A-Za-z]+Menu|gateWays_Channels|payment[A-Za-z]+Settings|walletAccessSettings|cgManage_(?:legacy|new))(?:_ucg_(?:legacy|new))?$/D', $callback)){
+        $button['style'] = 'primary';
+        return $button;
     }
-
+    if(isset($button['style'])){
+        $style = strtolower(trim((string)$button['style']));
+        $button['style'] = in_array($style, $allowedStyles, true) ? $style : 'primary';
+        return $button;
+    }
     if(v2raystore_buttonIsRealApproveAction($button)){
         $button['style'] = 'success';
         return $button;
     }
-
-    if(isset($button['style'])){
-        $button['style'] = strtolower(trim((string)$button['style']));
-        if(!in_array($button['style'], $allowedStyles, true)){
-            // style نامعتبر را به primary تبدیل می‌کنیم تا دکمه یک‌دفعه سفید نشود.
-            $button['style'] = 'primary';
-            return $button;
-        }
-        if($button['style'] === 'success' && !v2raystore_buttonIsRealApproveAction($button)){
-            // فقط تایید واقعی سبز باشد؛ بقیه اکشن‌های مثبت آبی شوند.
-            $button['style'] = 'primary';
-        }
+    if(preg_match('/^(?:delete|remove|banUser|silentBanUser|reject|disable|decrease|cancel|clear|stop|deny|decline|confirmRemove|executeCancel)/i', $callback)
+        || preg_match('/(?:^|[\s،:؛])(?:لغو|حذف|مسدودسازی|مسدود|کاهش|توقف|انصراف)(?:[\s،:؛]|$)/u', $text)){
+        $button['style'] = 'danger';
         return $button;
     }
-
     $primaryWords = ['buy', 'renew', 'increase', 'enable', 'pay', 'gift', 'join', 'gettest', 'add', 'generate', 'on', 'back', 'main', 'search', 'show', 'details', 'update', 'change', 'qr', 'sub', 'support', 'info', 'config', 'subscription', 'settings', 'menu', 'list', 'status', 'report', 'backup', 'domain', 'token', 'ssl', 'start', 'run', 'continue', 'خرید', 'تمدید', 'افزایش', 'شارژ', 'فعال', 'پرداخت', 'هدیه', 'عضویت', 'افزودن', 'معاف', 'ساخت', 'روشن', 'برگشت', 'بازگشت', 'جستجو', 'نمایش', 'جزئیات', 'آپدیت', 'بروزرسانی', 'به‌روزرسانی', 'تغییر', 'کیوآر', 'ساب', 'پشتیبانی', 'حساب', 'کانفیگ', 'اشتراک', 'تنظیم', 'مدیریت', 'لیست', 'وضعیت', 'گزارش', 'بکاپ', 'دامنه', 'توکن', 'شروع', 'ادامه', '➕', '🔄', '📊', '⚙️', '🛠'];
     foreach($primaryWords as $w){
         if(v2raystore_textContains($haystack, $w)){
@@ -12335,17 +12326,17 @@ function v2raystore_adminPaymentState(){
 }
 
 function getGateWaysKeys(){
-    return json_encode(['inline_keyboard'=>[
-        [
-            ['text'=>'💳 کارت‌ها و مسئول دریافت', 'callback_data'=>'paymentCardsSettings'],
-            ['text'=>'🔑 کلیدها و آدرس درگاه‌ها', 'callback_data'=>'paymentCredentialsSettings']
-        ],
-        [
-            ['text'=>'🔌 روشن/خاموش روش‌های پرداخت', 'callback_data'=>'paymentMethodsSettings'],
-            ['text'=>'📢 کانال گزارش و کانال قفل', 'callback_data'=>'paymentChannelsSettings']
-        ],
-        [['text'=>'⬅️ بازگشت به پرداخت و درآمد', 'callback_data'=>'adminPaymentMethodsMenu']]
-    ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    return v2raystore_adminMenuKeys('Payments');
+}
+
+function getWalletAccessSettingsKeys(){
+    $s = v2raystore_adminPaymentState();
+    $rows = [];
+    foreach(['walletState'=>'👤 کیف پول کاربران', 'agentWalletState'=>'🤝 کیف پول نمایندگان'] as $key=>$label){
+        $on = ($s[$key] ?? ($key==='agentWalletState' ? ($s['walletState'] ?? 'off') : 'off')) === 'on';
+        $rows[] = ['text'=>$label . ($on ? ' · فعال' : ' · بسته'), 'callback_data'=>'changeGateWays'.$key, 'style'=>$on?'success':'danger'];
+    }
+    return json_encode(['inline_keyboard'=>[$rows,[['text'=>'⬅️ بازگشت', 'callback_data'=>'adminWalletMenu','style'=>'primary']]]],JSON_UNESCAPED_UNICODE);
 }
 
 function getPaymentCardsSettingsKeys(){
@@ -12358,7 +12349,7 @@ function getPaymentCardsSettingsKeys(){
         [['text'=>(!empty($p['secondHolderName'])?$p['secondHolderName']:(!empty($p['holderName2'])?$p['holderName2']:'—')),'callback_data'=>'changePaymentKeyssecondHolderName'], ['text'=>'دارنده کارت دوم','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['cardContact'])?$p['cardContact']:(string)$admin),'callback_data'=>'changePaymentKeyscardContact'], ['text'=>'ادمین دریافت کارت','callback_data'=>'v2raystore']],
         [['text'=>'🔄 اعلام تغییر شماره کارت به کاربران','callback_data'=>'markCartToCartCardChanged']],
-        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+        [['text'=>'⬅️ بازگشت','callback_data'=>'adminPaymentsMenu']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
@@ -12369,7 +12360,7 @@ function getPaymentCredentialsSettingsKeys(){
         [['text'=>(!empty($p['zarinpal'])?$p['zarinpal']:'—'),'callback_data'=>'changePaymentKeyszarinpal'], ['text'=>'مرچنت زرین‌پال','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['nextpay'])?$p['nextpay']:'—'),'callback_data'=>'changePaymentKeysnextpay'], ['text'=>'کلید نکست‌پی','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['tronwallet'])?$p['tronwallet']:'—'),'callback_data'=>'changePaymentKeystronwallet'], ['text'=>'آدرس والت ترون','callback_data'=>'v2raystore']],
-        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+        [['text'=>'⬅️ بازگشت','callback_data'=>'adminPaymentMethodsMenu']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
@@ -12379,15 +12370,13 @@ function getPaymentMethodsSettingsKeys(){
     $label = function($key, $fallback = 'off') use ($s, $buttonValues){ return (($s[$key] ?? $fallback)==='on') ? $buttonValues['on'] : $buttonValues['off']; };
     return v2raystore_compactSettingsKeys(json_encode(['inline_keyboard'=>[
         [['text'=>$label('cartToCartState'),'callback_data'=>'changeGateWayscartToCartState'], ['text'=>'کارت‌به‌کارت','callback_data'=>'v2raystore']],
-        [['text'=>$label('walletState'),'callback_data'=>'changeGateWayswalletState'], ['text'=>'کیف پول کاربران','callback_data'=>'v2raystore']],
-        [['text'=>$label('agentWalletState', $s['walletState'] ?? 'off'),'callback_data'=>'changeGateWaysagentWalletState'], ['text'=>'کیف پول نماینده‌ها','callback_data'=>'v2raystore']],
         [['text'=>$label('weSwapState'),'callback_data'=>'changeGateWaysweSwapState'], ['text'=>'وی‌سواپ','callback_data'=>'v2raystore']],
         [['text'=>$label('nextpay'),'callback_data'=>'changeGateWaysnextpay'], ['text'=>'نکست‌پی','callback_data'=>'v2raystore']],
         [['text'=>$label('zarinpal'),'callback_data'=>'changeGateWayszarinpal'], ['text'=>'زرین‌پال','callback_data'=>'v2raystore']],
         [['text'=>$label('nowPaymentWallet'),'callback_data'=>'changeGateWaysnowPaymentWallet'], ['text'=>'NowPayments کیف پول','callback_data'=>'v2raystore']],
         [['text'=>$label('nowPaymentOther'),'callback_data'=>'changeGateWaysnowPaymentOther'], ['text'=>'NowPayments سایر','callback_data'=>'v2raystore']],
         [['text'=>$label('tronWallet'),'callback_data'=>'changeGateWaystronWallet'], ['text'=>'ترون','callback_data'=>'v2raystore']],
-        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+        [['text'=>'⬅️ بازگشت','callback_data'=>'adminPaymentMethodsMenu']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 }
 
@@ -12396,7 +12385,7 @@ function getPaymentChannelsSettingsKeys(){
     return json_encode(['inline_keyboard'=>[
         [['text'=>(trim((string)($s['rewardChannel'] ?? '')) ?: 'تنظیم نشده'),'callback_data'=>'editRewardChannel'], ['text'=>'گروه/کانال گزارش','callback_data'=>'v2raystore']],
         [['text'=>(trim((string)($s['lockChannel'] ?? '')) ?: 'تنظیم نشده'),'callback_data'=>'editLockChannel'], ['text'=>'کانال قفل عضویت','callback_data'=>'v2raystore']],
-        [['text'=>'⬅️ بازگشت','callback_data'=>'gateWays_Channels']]
+        [['text'=>'⬅️ بازگشت','callback_data'=>'adminSettingsMenu']]
     ]], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 }
 
