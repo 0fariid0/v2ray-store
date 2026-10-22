@@ -46,13 +46,15 @@ function v2raystore_adminMenuTree(){
         'Main'=>['👥 انتخاب بخش مدیریت','mainMenu',[[
             '👤 مشتریان قدیمی','cgManage_legacy'],['🆕 مشتریان جدید','cgManage_new']]],
         'LegacyDashboard'=>['🧭 مدیریت ربات', 'adminMainMenu', [
-            ['👤 مدیریت کاربر','adminUserOperationsMenu'], ['🤝 مدیریت نمایندگی','adminAgentsMenu'],
-            ['🧾 مدیریت سرویس','adminConfigsMenu'], ['🖥 سرورها و پلن‌ها','adminSalesMenu'],
-            ['💳 پرداخت و جایزه','adminPaymentsMenu'], ['📊 آمار و گزارش‌ها','adminReportsMenu'],
-            ['📨 پیام و پشتیبانی','adminMessagesMenu'], ['📝 محتوا و آموزش','adminContentMenu'],
-            ['⚙️ تنظیمات ربات','adminSettingsMenu'], ['⚡ دسترسی سریع','adminQuickMenu']]],
-        'Reports'=>['📊 آمار و گزارش‌ها','adminMainMenu',[
-            ['📊 آمار مشتریان قدیمی','cgStats_legacy'],
+            ['👤 کاربران','adminUserOperationsMenu'], ['🤝 نمایندگان','adminAgentsMenu'],
+            ['🔎 سرویس و کانفیگ','adminConfigsMenu'], ['🖥 سرورها و پلن‌ها','adminSalesMenu'],
+            ['💳 کارت و پرداخت','adminPaymentsMenu'], ['👛 کیف پول','adminWalletMenu'],
+            ['📊 آمار و تراکنش‌ها','adminReportsMenu'], ['📨 پیام و پشتیبانی','adminMessagesMenu'],
+            ['📝 متن و آموزش','adminContentMenu'], ['🔐 ورود و عضویت','adminAccessMenu'],
+            ['⚙️ تنظیمات ربات','adminSettingsMenu'], ['⚡ ابزارهای پرکاربرد','adminQuickMenu']]],
+        'Reports'=>['📊 آمار و تراکنش‌ها','adminMainMenu',[
+            ['📊 خلاصه مشتریان قدیمی','cgStats_legacy'],
+            ['📅 گزارش ماهانه','monthlyReportMenu_summary_cg_legacy'],['🧾 تراکنش‌های روزانه','monthlyReportMenu_day_cg_legacy'],
             ['📈 آمار کلی ربات','botReports'],['📊 گزارش‌های کانال','reportChannelSettingsMenu'],
             ['⏱ فاصله گزارش درآمد','editRewardTime']]],
         'Configs'=>['🧾 مدیریت سرویس‌ها','adminMainMenu',[
@@ -69,24 +71,27 @@ function v2raystore_adminMenuTree(){
             ['🏷 کدهای تخفیف','discount_codes'],['🛒 تنظیمات فروش','botSettingsSales']]],
         'Catalog'=>['📦 پلن‌ها و دسته‌بندی‌ها','adminSalesMenu',[
             ['📦 مدیریت پلن‌ها','backplan'],['🗂 مدیریت دسته‌بندی‌ها','categoriesSetting']]],
-        'Payments'=>['💳 پرداخت و جایزه','adminMainMenu',[
-            ['🏦 روش‌های پرداخت','adminPaymentMethodsMenu'],['🧾 کنترل رسید و تأیید','adminPaymentChecksMenu'],
-            ['🎁 جایزه خرید و تمدید','rewardSettings']]],
-        'PaymentChecks'=>['🧾 کنترل رسید و تأیید','adminPaymentsMenu',[
-            ['⏱ تأیید خودکار','autoApproveOrdersMenu'],['🧾 بررسی فیش تکراری','receiptDuplicateSettings']]],
-        'PaymentMethods'=>['🏦 روش‌ها و اطلاعات پرداخت','adminPaymentsMenu',[
-            ['🏦 حساب‌ها و درگاه‌ها','gateWays_Channels'],['💳 تنظیمات کارت‌به‌کارت','proC2CMenu']]],
+        'Payments'=>['💳 کارت و پرداخت','adminMainMenu',[
+            ['💳 شماره کارت‌ها','paymentCardsSettings'],['👛 دسترسی کیف پول','walletAccessSettings'],
+            ['🏦 درگاه‌های آنلاین','adminPaymentMethodsMenu'],['🧾 رسید و تأیید سفارش','adminPaymentChecksMenu'],
+            ['💳 قوانین کارت‌به‌کارت','proC2CMenu'],['🎁 هدیه خرید و تمدید','rewardSettings']]],
+        'PaymentChecks'=>['🧾 رسید و تأیید سفارش','adminPaymentsMenu',[
+            ['✅ تأیید خودکار سفارش','autoApproveOrdersMenu'],['🔍 تشخیص رسید تکراری','receiptDuplicateSettings']]],
+        'PaymentMethods'=>['🏦 درگاه‌های آنلاین','adminPaymentsMenu',[
+            ['🔑 اتصال درگاه‌ها','paymentCredentialsSettings'],['⚙️ روش‌های مجاز پرداخت','paymentMethodsSettings']]],
         'Users'=>['👤 مدیریت مشتری‌ها','adminMainMenu',[
             ['👤 مشتریان قدیمی','cgManage_legacy'],['🆕 مشتریان جدید','cgManage_new']]],
-        'UserOperations'=>['👤 عملیات مشترک کاربر','adminUsersMenu',[
+        'UserOperations'=>['👤 مدیریت کاربران','adminMainMenu',[
             ['🔎 جستجوی کاربر','userReports'],['🚫 مسدودی کاربران','adminBlocksMenu'],
             ['💰 کیف پول کاربر','adminWalletMenu'],['🎗 دعوت و زیرمجموعه','adminMarketingMenu'],
-            ['✉️ پیام به کاربر','messageToSpeceficUser'],['🔐 دسترسی و عضویت','adminAccessMenu']]],
+            ['✉️ پیام به کاربر','messageToSpeceficUser'],['🔐 ورود و عضویت','adminAccessMenu'],
+            ['👥 فهرست کاربران','cgCustomers_legacy_0'],['🔁 انتقال به مشتری جدید','cgRemoveLegacy']]],
         'Marketing'=>['🎗 دعوت و زیرمجموعه','adminUserOperationsMenu',[
             ['👥 زیرمجموعه‌های کاربر','proReferralAsk'],['🎗 بنر و پورسانت','inviteSetting']]],
         'UserLookup'=>['👤 اطلاعات و زیرمجموعه‌ها','adminUserOperationsMenu',[
             ['👤 گزارش یک کاربر','userReports'],['👥 زیرمجموعه‌های کاربر','proReferralAsk']]],
-        'Wallet'=>['💰 مدیریت کیف پول کاربران','adminUserOperationsMenu',[
+        'Wallet'=>['👛 کیف پول','adminMainMenu',[
+            ['👛 دسترسی کاربران و نمایندگان','walletAccessSettings'],['🔎 موجودی یک کاربر','userReports'],
             ['➕ افزایش موجودی','increaseUserWallet'],['➖ کاهش موجودی','decreaseUserWallet']]],
         'Blocks'=>['🚫 مسدودی و رفع مسدودی','adminUserOperationsMenu',[
             ['🚫 مسدودسازی عادی','banUser'],['🔇 مسدودسازی بی‌صدا','silentBanUser'],
@@ -99,12 +104,12 @@ function v2raystore_adminMenuTree(){
             ['مبنای تخفیف','changeBotagencyPlanDiscount']]],
         'Access'=>['🔐 قوانین ورود و عضویت','adminUserOperationsMenu',[
             ['🔑 دسترسی اعضای جدید','newMemberAccessMenu'],['🚪 معافیت عضویت','joinExemptMenu'],
-            ['📱 تأیید شماره و ورود','botSettingsAccess']]],
+            ['📱 تأیید شماره موبایل','botSettingsAccess'],['📢 کانال عضویت اجباری','paymentChannelsSettings']]],
         'Messages'=>['📨 پیام‌ها و پشتیبانی','adminMainMenu',[
             ['📣 ارسال همگانی','adminBroadcastMenu'],['📌 مدیریت پین‌ها','adminPinsMenu'],
             ['🎫 تیکت و خطایابی','adminSupportMenu'],['⏳ پیام‌های خودکار','adminNoticesMenu']]],
         'Notices'=>['⏳ پیام‌های خودکار','adminMessagesMenu',[
-            ['⏳ اعلان حجم و انقضا','xuiMsgMenu'],['📩 پیام ترک کانال','proLeaveNoticeMenu']]],
+            ['🔋 هشدار حجم و انقضا','xuiMsgMenu'],['📩 پیام ترک کانال','proLeaveNoticeMenu']]],
         'Broadcast'=>['📣 پیام‌های همگانی','adminMessagesMenu',[
             ['📝 ارسال پیام همگانی','message2All'],['↪️ فوروارد همگانی','forwardToAll'],
             ['📊 وضعیت صف ارسال','broadcastQueueStatus']]],
@@ -115,7 +120,7 @@ function v2raystore_adminMenuTree(){
         'Content'=>['📝 محتوا و آموزش','adminMainMenu',[
             ['📝 خوش‌آمد و قوانین خرید','adminTextSettings'],['📚 آموزش و سوالات','adminHelpMenu']]],
         'Settings'=>['⚙️ تنظیمات ربات','adminMainMenu',[
-            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👤 تنظیمات مشتریان قدیمی','cgLegacySettings'],['👮 مدیران ربات','adminsList']]],
+            ['⚙️ امکانات و وضعیت ربات','botSettings'],['🎛 ظاهر و دکمه‌ها','adminAppearanceMenu'],['👤 تنظیمات مشتریان قدیمی','cgLegacySettings'],['🆕 تنظیمات مشتریان جدید','customerGroupsMenu'],['👮 مدیران ربات','adminsList'],['📢 کانال‌ها و گروه گزارش','paymentChannelsSettings']]],
         'Appearance'=>['🎛 ظاهر و دکمه‌ها','adminSettingsMenu',[
             ['➕ دکمه‌های سفارشی','mainMenuButtons'],['🎛 چیدمان دکمه‌ها','userButtonSettings']]],
         // Older messages with the old Quick callback remain usable.
@@ -127,7 +132,8 @@ function v2raystore_adminMenuTree(){
         $tree['UserOperations'][2]=[
             ['🔎 جستجوی کاربر','userReports'],['🚫 مسدودی کاربران','adminBlocksMenu'],
             ['💰 کیف پول کاربر','adminWalletMenu'],['✉️ پیام به کاربر','messageToSpeceficUser'],
-            ['⚙️ امکانات و ورود','customerGroupsMenu']];
+            ['👥 فهرست کاربران','cgCustomers_new_0'],['🛍 خریداران و انتقال','cgBuyers_0'],['🔁 انتقال با آیدی','cgTransferNewToLegacy'],['⚙️ تنظیمات مشتریان جدید','customerGroupsMenu']];
+        $tree['Wallet'][2]=[['➕ افزایش موجودی','increaseUserWallet'],['➖ کاهش موجودی','decreaseUserWallet'],['🔎 موجودی یک کاربر','userReports']];
         $tree['Agents'][2]=[['👥 فهرست نمایندگان','agentsList'],['➕ افزودن نماینده','addAgentManual'],['📋 درخواست‌های ردشده','rejectedAgentList']];
         $tree['Configs'][2]=[['🔎 جستجوی کانفیگ','searchUsersConfig'],['➕ ثبت کانفیگ کاربر','manualAttachConfig'],['📦 ساخت چند اکانت','createMultipleAccounts']];
     }
@@ -155,10 +161,10 @@ function v2raystore_adminMenuKeys($name){
             $on = ($agentStates[$key] ?? $fallback) === 'on';
             $title .= ' · ' . ($key === 'agencyPlanDiscount' ? ($on ? 'پلن' : 'سرور') : ($on ? '🟢' : '🔴'));
         }
-        $buttons[] = ['text'=>$title,'callback_data'=>$callback];
+        $buttons[] = ['text'=>$title,'callback_data'=>$callback,'style'=>$name==='AgentOptions' ? ($on ? 'success' : 'danger') : 'primary'];
     }
     $rows = array_chunk($buttons, 2);
-    $navigation = [['text'=>'⬅️ بازگشت','callback_data'=>$entry[1]]];
+    $navigation = [['text'=>'⬅️ بازگشت','callback_data'=>$entry[1],'style'=>'primary']];
     if($name !== 'Main' && $entry[1] !== 'adminMainMenu'){
         $navigation[] = ['text'=>'🏠 مدیریت','callback_data'=>'adminMainMenu'];
     }
@@ -364,7 +370,7 @@ function v2raystore_adminMenuFromMarkup($markup){
     if($group){
         if(in_array('botSettings',$callbacks,true) && in_array('backplan',$callbacks,true))return 'cgCommon_'.$group;
         if(in_array('broadcastTargetMessage_'.$group,$callbacks,true))return 'cgBroadcast_'.$group;
-        if(in_array('gateWays_Channels',$callbacks,true) && in_array('backplan',$callbacks,true))return 'cgLegacySettings';
+        if((in_array('gateWays_Channels',$callbacks,true) || in_array('paymentCardsSettings',$callbacks,true)) && in_array('backplan',$callbacks,true))return 'cgLegacySettings';
     }
     return '';
 }
@@ -519,7 +525,7 @@ function v2raystore_cancelMenuForStep($step){
 function v2raystore_isAdminReadScreen($callback){
     if(in_array($callback, [
         'agentsList','rejectedAgentList','serversSetting','categoriesSetting','backplan',
-        'discount_codes','botReports','gateWays_Channels','proC2CMenu','rewardSettings',
+        'discount_codes','botReports','gateWays_Channels','paymentCardsSettings','paymentCredentialsSettings','paymentMethodsSettings','paymentChannelsSettings','walletAccessSettings','proC2CMenu','rewardSettings',
         'autoApproveOrdersMenu','newMemberAccessMenu','joinExemptMenu','proLeaveNoticeMenu',
         'customerGroupsMenu','cgCode','adminsList','broadcastQueueStatus','broadcastPinsMenu','proPinMenu','ticketsList',
         'xuiMsgMenu','adminTextSettings','adminHelpMenu','botSettings','mainMenuButtons',

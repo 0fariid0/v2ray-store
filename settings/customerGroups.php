@@ -591,7 +591,7 @@ function v2seg_managementAction($cb){
         $items=$kind==='Broadcast'?[
             ['✉️ پیام به همین گروه','broadcastTargetMessage_'.$g],['↪️ فوروارد به همین گروه','broadcastTargetForward_'.$g]
         ]:($kind==='Legacy'?[
-            ['💳 کارت اول و دوم قدیمی‌ها','gateWays_Channels'],['💰 قیمت پایه و پلن‌ها','backplan'],
+            ['💳 کارت اول و دوم قدیمی‌ها','paymentCardsSettings'],['💰 قیمت پایه و پلن‌ها','backplan'],
             ['🔐 قوانین ورود قدیمی‌ها','adminAccessMenu'],['🎟 کد ورود قدیمی‌ها','cgCode_ctx_legacy'],['📦 نمایش پلن برای هر گروه','cgPlans_0_ctx_legacy'],['📊 آمار مشتریان قدیمی','cgStats_legacy']
         ]:[
             ['⚙️ امکانات مشترک ربات','botSettings'],['🛒 فروش و تخفیف پایه','botSettingsSales'],
@@ -633,12 +633,13 @@ function v2seg_dashboardKeys($g){
         ];
     }else $items=[['👤 مدیریت کاربر','adminUserOperationsMenu'],['🧾 مدیریت سرویس','adminConfigsMenu'],['📊 آمار همین بخش','cgStats_'.$g]];
     if($g==='legacy'){
-        $items[]=['🗑 حذف/انتقال کاربر','cgRemoveLegacy'];
-        $items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
-        if(!v2seg_adminGroupEnabled('new')) $items[]=['🆕 تنظیمات پذیرش مشتری جدید','customerGroupsMenu'];
+        // User transfers live in the Users category.
+        if(!v2seg_adminGroupEnabled('legacy')){
+            $items[]=['⚙️ تنظیمات مشتریان قدیمی','cgLegacySettings'];
+            if(!v2seg_adminGroupEnabled('new')) $items[]=['🆕 تنظیمات مشتریان جدید','customerGroupsMenu'];
+        }
     }else{
-        $items[]=['🛍 خریداران جدید؛ انتقال','cgBuyers_0'];
-        $items[]=['↩️ انتقال با آیدی','cgTransferNewToLegacy'];
+        // Buyer lists and transfers live in the Users category.
         if(!v2seg_adminGroupEnabled($g))$items[]=['⚙️ تنظیمات و فعال‌سازی','customerGroupsMenu'];
     }
     $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];
