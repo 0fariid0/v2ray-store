@@ -66,6 +66,21 @@ v2raystore_handleAdminNavigation();
 v2raystore_handleUserBlocking();
 v2seg_admin();
 v2seg_gate();
+// Retired agency keyboards must not resume a discounted purchase flow.
+if(empty($userInfo['is_agent']) && $from_id != $admin && empty($userInfo['isAdmin'])){
+    $retiredMenu = (int)v2raystore_getSettingValue('AGENT_REVOKED_MENU_' . (int)$from_id, '0');
+    $callbackMessage = (int)($update->callback_query->message->message_id ?? 0);
+    if($retiredMenu !== 0 && ($retiredMenu < 0 || (!empty($data) && $callbackMessage < $retiredMenu))){
+        setUser();
+        if(!empty($data)) alert('');
+        $menu = sendMessage($mainValues['reached_main_menu'] ?? 'منوی اصلی', getMainKeys(), null, $from_id);
+        if($retiredMenu < 0 && !empty($menu->ok) && !empty($menu->result->message_id)){
+            v2raystore_setSettingValue('AGENT_REVOKED_MENU_' . (int)$from_id, (string)$menu->result->message_id);
+        }
+        exit();
+    }
+}
+
 v2seg_guardSelection();
 v2cfg_handle();
 v2hist_handle();
@@ -2802,17 +2817,31 @@ if(preg_match('/^agentDetails(\d+)/',$data,$match) && ($from_id == $admin || $us
 
     editText($message_id,str_replace("AGENT-NAME", $fullName, $mainValues['agent_details']), getAgentDetails($match[1]));
 }
-if(preg_match('/^removeAgent(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
-    $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 0 WHERE `userid` = ?");
-    $stmt->bind_param("i", $match[1]);
-    $stmt->execute();
+if(preg_match('/^removeAgent(\d+)$/', $data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+    $targetId = (int)$match[1];
+    editText($message_id, 'نمایندگی این کاربر حذف شود؟ پیام حذف برای او ارسال نمی‌شود.', json_encode(['inline_keyboard'=>[
+        [['text'=>'✅ حذف بی‌صدا', 'callback_data'=>'confirmRemoveAgent'.$targetId]],
+        [['text'=>$buttonValues['back_button'], 'callback_data'=>'agentPercentDetails'.$targetId]]
+    ]], JSON_UNESCAPED_UNICODE));
+    exit();
+}
+if(preg_match('/^confirmRemoveAgent(\d+)$/', $data, $match) && ($from_id == $admin || !empty($userInfo['isAdmin']))){
+    $targetId = (int)$match[1];
+    // Mark old keyboards before revoking access; no message is sent to the target.
+    if(!v2raystore_setSettingValue('AGENT_REVOKED_MENU_' . $targetId, '-1')){
+        alert('ذخیره تغییرات انجام نشد. دوباره تلاش کنید.', true); exit();
+    }
+    $stmt = $connection->prepare("UPDATE `users` SET `is_agent` = 0, `discount_percent` = '{}', `step` = IF(`step` = 'banned', `step`, 'none') WHERE `userid` = ? AND `is_agent` = 1");
+    $stmt->bind_param('i', $targetId);
+    $ok = $stmt->execute();
     $stmt->close();
-    
-    v2raystore_setSettingValue('AGENT_CONFIG_POWER_' . (int)$match[1], '0');
+    if(!$ok){ alert('حذف نمایندگی انجام نشد.', true); exit(); }
+    v2raystore_setSettingValue('AGENT_CONFIG_POWER_' . $targetId, '0');
     alert($mainValues['agent_deleted_successfuly']);
     $keys = getAgentsList();
-    if($keys != null) editKeys($keys);
-    else editKeys(json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>"adminAgentsMenu"]]]]));
+    if(!$keys) $keys = json_encode(['inline_keyboard'=>[[['text'=>$buttonValues['back_button'],'callback_data'=>'adminAgentsMenu']]]]);
+    editText($message_id, '✅ نمایندگی حذف شد؛ پیامی برای کاربر ارسال نشد.', $keys);
+    exit();
 }
 if(preg_match('/^agentPercentDetails(\d+)/',$data,$match) && ($from_id == $admin || $userInfo['isAdmin'] == true)){
     $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid` = ?");

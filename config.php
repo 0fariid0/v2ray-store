@@ -12020,6 +12020,7 @@ function getAgentDiscounts($agentId){
     }
     if(($botState['agencyPlanDiscount'] ?? 'on')=="on")$keys[] = [['text' => "افزودن قیمت/تخفیف پلن", 'callback_data' => "addDiscountPlanAgent" . $agentId]];
     else $keys[] = [['text' => "افزودن قیمت/تخفیف سرور", 'callback_data' => "addDiscountServerAgent" . $agentId]];
+    $keys[] = [['text'=>'❌ حذف نمایندگی (بی‌صدا)', 'callback_data'=>'removeAgent' . (int)$agentId]];
     $keys[] = [['text' => $buttonValues['back_button'], 'callback_data' => "agentsList"]];
     return json_encode(['inline_keyboard'=>$keys], JSON_UNESCAPED_UNICODE);
 }
