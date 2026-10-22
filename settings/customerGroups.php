@@ -453,18 +453,18 @@ function v2seg_reportRoute(){
     if(preg_match('/^(monthlyReport(?:Menu|Year|Month|MonthFormat|Day|DayFormat)_.+)_cg_(all|legacy|new)$/D',(string)$data,$m)){
         $data=$m[1];$GLOBALS['v2seg_report_group']=$m[2];
         $GLOBALS['v2seg_report_mode']=strpos($data,'summary')!==false?'summary':'day';
-        if($m[2]==='new' && preg_match('/^monthlyReportMonth_summary_(\d{4})_(\d{1,2})$/D',$data,$month)){
+        if(in_array($m[2],['legacy','new'],true) && preg_match('/^monthlyReportMonth_summary_(\d{4})_(\d{1,2})$/D',$data,$month)){
             $year=(int)$month[1];$number=(int)$month[2];
             if(!v2raystore_reportJalaliMonthBounds($year,$number))return;
-            editText($message_id,'گزارش '.v2raystore_reportMonthNames()[$number-1].' '.$year.' برای مشتریان جدید چگونه ارسال شود؟',v2seg_reportKeys(json_encode(['inline_keyboard'=>[
+            editText($message_id,'گزارش '.v2raystore_reportMonthNames()[$number-1].' '.$year.' برای '.($m[2]==='legacy'?'مشتریان قدیمی':'مشتریان جدید').' چگونه ارسال شود؟',v2seg_reportKeys(json_encode(['inline_keyboard'=>[
                 [['text'=>'📊 کلی','callback_data'=>"monthlyReportMonthFormat_summary_{$year}_{$number}"],['text'=>'🧾 ریز تراکنش','callback_data'=>"monthlyReportMonthFormat_details_{$year}_{$number}"]],
                 [['text'=>'⬅️ ماه‌ها','callback_data'=>"monthlyReportYear_summary_{$year}"]]
             ]],JSON_UNESCAPED_UNICODE)),'HTML');exit;
         }
-        if($m[2]==='new' && preg_match('/^monthlyReportMonthFormat_(summary|details)_(\d{4})_(\d{1,2})$/D',$data,$format)){
+        if(in_array($m[2],['legacy','new'],true) && preg_match('/^monthlyReportMonthFormat_(summary|details)_(\d{4})_(\d{1,2})$/D',$data,$format)){
             $year=(int)$format[2];$month=(int)$format[3];$GLOBALS['v2seg_report_mode']='summary';
             if($format[1]==='summary'){$data="monthlyReportMonth_summary_{$year}_{$month}";return;}
-            $sent=v2raystore_sendMonthlyPaymentDetails($year,$month,'new');
+            $sent=v2raystore_sendMonthlyPaymentDetails($year,$month,$m[2]);
             alert($sent?'ریز تراکنش‌های ماه ارسال شد.':'ارسال گزارش کامل نشد.',!$sent);
             editText($message_id,v2raystore_getMonthlyReportMonthsText('summary',$year),v2raystore_getMonthlyReportMonthsKeys('summary',$year),'HTML');exit;
         }
