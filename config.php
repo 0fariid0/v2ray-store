@@ -1,4 +1,7 @@
 <?php
+// Apply Iran local time before any date parsing in webhooks, payments and cron jobs.
+// Unix timestamps stay unchanged; never add an offset to stored payment times.
+date_default_timezone_set('Asia/Tehran');
 include_once __DIR__ . "/settings/values.php";
 include_once __DIR__ . '/settings/jdf.php';
 include_once __DIR__ . '/baseInfo.php';
@@ -704,7 +707,7 @@ function v2raystore_statsPeriodStarts(){
     $now = new DateTime('now', $tz);
     $today = new DateTime($now->format('Y-m-d') . ' 00:00:00', $tz);
     $todayStart = $today->getTimestamp();
-    $weekStart = (clone $today)->modify('-' . intval($today->format('w')) . ' days')->getTimestamp();
+    $weekStart = (clone $today)->modify('-' . ((intval($today->format('w')) + 1) % 7) . ' days')->getTimestamp();
     $monthStart = new DateTime($now->format('Y-m-01') . ' 00:00:00', $tz);
     $monthStart = $monthStart->getTimestamp();
     if(function_exists('jdate') && function_exists('jalali_to_gregorian')){
@@ -20112,6 +20115,21 @@ function v2raystore_reportEvent($title, $body, $keyboard = null, $eventKey = nul
     return $res;
 }
 
+function v2raystore_iranDateTimeText($timestamp){
+    $timestamp = (int)$timestamp;
+    if($timestamp <= 0) return 'ثبت نشده';
+    return jdate('Y/m/d H:i:s', $timestamp, '', 'Asia/Tehran', 'fa');
+}
+
+function v2raystore_receiptTimingLines($pay){
+    $lines = [];
+    $requested = (int)($pay['request_date'] ?? 0);
+    $sent = (int)($pay['sent_date'] ?? 0);
+    if($requested > 0) $lines[] = '🕒 ثبت سفارش (تهران): ' . v2raystore_iranDateTimeText($requested);
+    if($sent > 0) $lines[] = '📨 ارسال رسید (تهران): ' . v2raystore_iranDateTimeText($sent);
+    return $lines;
+}
+
 function v2raystore_reportTehranDateKey($timestamp){
     $timestamp = intval($timestamp);
     if($timestamp <= 0) return '';
@@ -20169,7 +20187,7 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
 
     // شروع خط با متن فارسی و استفاده از اعداد فارسی، از به‌هم‌ریختگی RTL در تلگرام جلوگیری می‌کند.
     $parts = [
-        'ساعت ' . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
+        ($eventKind === 'cancellation' ? 'ساعت لغو (تهران) ' : 'ساعت ثبت (تهران) ') . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
         v2raystore_reportFaDigits($price) . ' تومان'
     ];
     if(v2seg_adminGroupEnabled('new'))array_unshift($parts,($row['segment']??'legacy')==='new'?'🆕 جدید':'👤 قدیمی');
@@ -22246,6 +22264,7 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     }
 
     $lines = ["🧾 <b>رسید پرداخت کارت‌به‌کارت</b>"];
+    $lines = array_merge($lines, v2raystore_receiptTimingLines($pay));
     if(v2seg_adminGroupEnabled('new')) $lines[] = "👥 گروه مشتری: <b>" . v2seg_label(v2seg_paymentGroup($pay)) . "</b>";
     $lines[] = "📌 نوع: <b>" . v2raystore_h($typeTitle) . "</b>";
     if($user) $lines[] = v2raystore_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '', v2seg_paymentGroup($pay));
