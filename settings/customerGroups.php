@@ -554,7 +554,7 @@ function v2seg_statsText($group='all'){
         $lines[]="\n<b>".v2seg_label($g)."</b> · ".number_format($count).' کاربر';
         foreach(['کل'=>0,'امروز'=>$periods['today'],'ماه'=>$periods['month']] as $label=>$since){
             $cash=v2raystore_statsCashWhere();$product=v2raystore_statsProductWhere();
-            $where=$g==='all'?'request_date>=?':"$expr=? AND request_date>=?";
+            $where=$g==='all'?'COALESCE(NULLIF(sent_date,0),request_date)>=?':"$expr=? AND COALESCE(NULLIF(sent_date,0),request_date)>=?";
             $row=v2seg_one("SELECT COALESCE(SUM(IF($cash,price,0)),0) cash,COALESCE(SUM(IF($product,price,0)),0) sales FROM pays WHERE $where",$g==='all'?'i':'si',$g==='all'?[(int)$since]:[$g,(int)$since]);
             $lines[]=$label.' — پرداخت نقدی و شارژ: <b>'.number_format($row['cash']).'</b>؛ فروش: <b>'.number_format($row['sales']).' تومان</b>';
         }
