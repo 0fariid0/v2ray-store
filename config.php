@@ -729,8 +729,8 @@ function v2raystore_statsProductIncome($since = 0, $userId = 0, $agentOnly = fal
     $where = v2raystore_statsProductWhere();
     $types = '';
     $params = [];
-    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
-    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($since > 0){ $where .= " AND COALESCE(NULLIF(`sent_date`,0), `request_date`) >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND COALESCE(NULLIF(`sent_date`,0), `request_date`) < ?"; $types .= 'i'; $params[] = intval($until); }
     if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
     if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
     elseif($userOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 0"; }
@@ -743,8 +743,8 @@ function v2raystore_statsProductPayments($since = 0, $userId = 0, $agentOnly = f
     $where = v2raystore_statsProductWhere();
     $types = '';
     $params = [];
-    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
-    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($since > 0){ $where .= " AND COALESCE(NULLIF(`sent_date`,0), `request_date`) >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND COALESCE(NULLIF(`sent_date`,0), `request_date`) < ?"; $types .= 'i'; $params[] = intval($until); }
     if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
     if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
     return intval(v2raystore_statsScalar("SELECT COUNT(*) AS v FROM `pays` WHERE $where", $types, $params, 'v'));
@@ -756,8 +756,8 @@ function v2raystore_statsSoldServices($since = 0, $userId = 0, $agentOnly = fals
     $where = v2raystore_statsBuyWhere();
     $types = '';
     $params = [];
-    if($since > 0){ $where .= " AND `request_date` >= ?"; $types .= 'i'; $params[] = intval($since); }
-    if($until > 0){ $where .= " AND `request_date` < ?"; $types .= 'i'; $params[] = intval($until); }
+    if($since > 0){ $where .= " AND COALESCE(NULLIF(`sent_date`,0), `request_date`) >= ?"; $types .= 'i'; $params[] = intval($since); }
+    if($until > 0){ $where .= " AND COALESCE(NULLIF(`sent_date`,0), `request_date`) < ?"; $types .= 'i'; $params[] = intval($until); }
     if($userId > 0){ $where .= " AND `user_id` = ?"; $types .= 'i'; $params[] = intval($userId); }
     if($agentOnly){ $where .= " AND COALESCE(`agent_bought`,0) = 1"; }
     $expr = v2raystore_statsServiceUnitsExpr();
@@ -19397,42 +19397,36 @@ function v2raystore_reportSendMessage($title, $body, $keyboard = null, $eventKey
             $payload['text'] = "⚠️ <b>دسترسی تاپیک ندارم</b>\nربات دسترسی ساخت/مدیریت تاپیک را ندارد؛ این گزارش در جنرال گروه ارسال شد.\n\n" . $payload['text'];
     }
 
-    $res = bot('sendMessage', $payload);
-    if(is_object($res) && !empty($res->ok)) return $res;
-
-    $desc = is_object($res) && isset($res->description) ? (string)$res->description : '';
-    // اگر تاپیک حذف/خراب شده باشد، گزارش نباید از بین برود؛ بدون تاپیک به خود گروه ارسال می‌شود.
-    if($threadId > 0 && preg_match('/thread|topic|message thread|not found|invalid/i', $desc)){
-        $topics = v2raystore_reportTopicStore(true);
-        $topicKey = v2raystore_reportTopicKeyForEvent($eventKey);
-        if(isset($topics[$topicKey])){
-            unset($topics[$topicKey]);
-            v2raystore_saveReportTopicStore($topics);
+    // Retry only explicit Telegram rejections, with the offending option removed.
+    // Network/timeouts are ambiguous: retrying them can duplicate a delivered report.
+    for($attempt=0; $attempt<4; $attempt++){
+        $res = bot('sendMessage', $payload);
+        if(is_object($res) && !empty($res->ok)) return $res;
+        $desc = (string)($res->description ?? 'No response from Telegram');
+        $code = (int)($res->error_code ?? 0);
+        if($code !== 400) break;
+        if(isset($payload['message_thread_id']) && preg_match('/message thread not found|message_thread_id|topic_closed|topic closed|topic_deleted|topic deleted|invalid.*thread|thread.*invalid/i', $desc)){
+            // Keep closed topic IDs: they become usable again when the topic is reopened.
+            if(preg_match('/not found|deleted|invalid/i', $desc)){
+                $topics = v2raystore_reportTopicStore(true);
+                unset($topics[v2raystore_reportTopicKeyForEvent($eventKey)]);
+                v2raystore_saveReportTopicStore($topics);
+            }
+            unset($payload['message_thread_id']);
+            continue;
         }
-        $fallback = $payload;
-        unset($fallback['message_thread_id']);
-        $res2 = bot('sendMessage', $fallback);
-        if(is_object($res2) && !empty($res2->ok)) return $res2;
-        $res = $res2;
-        $desc = is_object($res) && isset($res->description) ? (string)$res->description : $desc;
-    }
-
-    // اگر HTML تلگرام به‌خاطر لینک/کاراکتر خاص خطا داد، نسخه بدون ParseMode ارسال شود تا گزارش قطع نشود.
-    if(preg_match('/parse|entity|can\'t parse/i', $desc)){
-        $fallback = $payload;
-        unset($fallback['parse_mode']);
-        $fallback['text'] = str_replace(['<b>','</b>','<code>','</code>','<i>','</i>'], '', $fallback['text']);
-        $res2 = bot('sendMessage', $fallback);
-        if(is_object($res2) && !empty($res2->ok)) return $res2;
-        if(isset($fallback['message_thread_id'])){
-            unset($fallback['message_thread_id']);
-            $res3 = bot('sendMessage', $fallback);
-            if(is_object($res3) && !empty($res3->ok)) return $res3;
-            return $res3;
+        if(!empty($payload['reply_markup']) && preg_match('/button|reply.?markup|keyboard|user_id_invalid|user not found|peer_id_invalid/i', $desc)){
+            unset($payload['reply_markup']);
+            continue;
         }
-        return $res2;
+        if(isset($payload['parse_mode']) && preg_match('/parse|entit/i', $desc)){
+            unset($payload['parse_mode']);
+            $payload['text'] = html_entity_decode(strip_tags($payload['text']), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            continue;
+        }
+        break;
     }
-
+    error_log('Report delivery failed: event=' . (string)$eventKey . '; chat=' . (string)$chat . '; error=' . (int)($res->error_code ?? 0) . '; ' . (string)($res->description ?? 'No response'));
     return $res;
 }
 
@@ -20122,12 +20116,8 @@ function v2raystore_iranDateTimeText($timestamp){
 }
 
 function v2raystore_receiptTimingLines($pay){
-    $lines = [];
-    $requested = (int)($pay['request_date'] ?? 0);
     $sent = (int)($pay['sent_date'] ?? 0);
-    if($requested > 0) $lines[] = '🕒 ثبت سفارش (تهران): ' . v2raystore_iranDateTimeText($requested);
-    if($sent > 0) $lines[] = '📨 ارسال رسید (تهران): ' . v2raystore_iranDateTimeText($sent);
-    return $lines;
+    return ['📨 ثبت رسید: ' . ($sent > 0 ? v2raystore_iranDateTimeText($sent) : 'ثبت نشده')];
 }
 
 function v2raystore_reportTehranDateKey($timestamp){
@@ -20187,7 +20177,7 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
 
     // شروع خط با متن فارسی و استفاده از اعداد فارسی، از به‌هم‌ریختگی RTL در تلگرام جلوگیری می‌کند.
     $parts = [
-        ($eventKind === 'cancellation' ? 'ساعت لغو (تهران) ' : 'ساعت ثبت (تهران) ') . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
+        ($eventKind === 'cancellation' ? 'ساعت لغو ' : 'ساعت ') . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
         v2raystore_reportFaDigits($price) . ' تومان'
     ];
     if(v2seg_adminGroupEnabled('new'))array_unshift($parts,($row['segment']??'legacy')==='new'?'🆕 جدید':'👤 قدیمی');
@@ -20243,21 +20233,21 @@ function v2raystore_buildDailyChannelStatsText($manual = false){
         : "(`type` = 'BUY_SUB' OR `type` IN ('RENEW_ACCOUNT','RENEW_SCONFIG','INCREASE_VOLUME','INCREASE_DAY','INCREASE_TIME') OR `type` LIKE 'INCREASE_VOLUME_%' OR `type` LIKE 'INCREASE_DAY_%')";
     $segmentSql=v2seg_paymentSql();
     $stmt = @$connection->prepare(
-        "SELECT `id`, `user_id`, {$segmentSql} AS segment, `hash_id`, `price`, `type`, `state`, `payment_method`, `request_date`, `cancelled_date`,
+        "SELECT `id`, `user_id`, {$segmentSql} AS segment, `hash_id`, `price`, `type`, `state`, `payment_method`, COALESCE(NULLIF(`sent_date`,0), `request_date`) AS `request_date`, `cancelled_date`,
                 CASE
                     WHEN `state` IN ('declined','auto_cancelled','cancelled_by_user') AND COALESCE(`cancelled_date`,0) > 0 THEN `cancelled_date`
-                    ELSE `request_date`
+                    ELSE COALESCE(NULLIF(`sent_date`,0), `request_date`)
                 END AS `event_date`
          FROM `pays`
          WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
            AND (
                 (`state` IN ('declined','auto_cancelled','cancelled_by_user')
                  AND COALESCE(`sent_date`,0) > 0
-                 AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) >= ?
-                 AND COALESCE(NULLIF(`cancelled_date`,0), `request_date`) < ?)
+                 AND COALESCE(NULLIF(`cancelled_date`,0), COALESCE(NULLIF(`sent_date`,0), `request_date`)) >= ?
+                 AND COALESCE(NULLIF(`cancelled_date`,0), COALESCE(NULLIF(`sent_date`,0), `request_date`)) < ?)
                 OR
                 (`state` IN ('paid','approved','paid_with_wallet')
-                 AND `request_date` >= ? AND `request_date` < ?)
+                 AND COALESCE(NULLIF(`sent_date`,0), `request_date`) >= ? AND COALESCE(NULLIF(`sent_date`,0), `request_date`) < ?)
            )
          ORDER BY `event_date` ASC, `id` ASC"
     );
@@ -20418,19 +20408,19 @@ function v2raystore_reportPaymentRows($from, $until, $group = null){
     $segmentSql=v2seg_paymentSql();
     $rows = [];
     $stmt = @$connection->prepare(
-        "SELECT `id`, `user_id`, {$segmentSql} AS segment, `hash_id`, `price`, `type`, `state`, `payment_method`, `request_date`, `cancelled_date`
+        "SELECT `id`, `user_id`, {$segmentSql} AS segment, `hash_id`, `price`, `type`, `state`, `payment_method`, COALESCE(NULLIF(`sent_date`,0), `request_date`) AS `request_date`, `cancelled_date`
          FROM `pays`
          WHERE (`type` = 'INCREASE_WALLET' OR {$productTypeWhere})
            AND (
                 (`state` IN ('declined','auto_cancelled','cancelled_by_user')
                  AND COALESCE(`sent_date`,0) > 0
-                 AND ((`request_date` >= ? AND `request_date` < ?)
+                 AND ((COALESCE(NULLIF(`sent_date`,0), `request_date`) >= ? AND COALESCE(NULLIF(`sent_date`,0), `request_date`) < ?)
                       OR (COALESCE(`cancelled_date`,0) >= ? AND `cancelled_date` < ?)))
                 OR
                 (`state` IN ('paid','approved','paid_with_wallet')
-                 AND `request_date` >= ? AND `request_date` < ?)
+                 AND COALESCE(NULLIF(`sent_date`,0), `request_date`) >= ? AND COALESCE(NULLIF(`sent_date`,0), `request_date`) < ?)
            )
-         ORDER BY `request_date` ASC, `id` ASC"
+         ORDER BY COALESCE(NULLIF(`sent_date`,0), `request_date`) ASC, `id` ASC"
     );
     if(!$stmt) return [];
     $stmt->bind_param('iiiiii', $from, $until, $from, $until, $from, $until);
@@ -20510,7 +20500,7 @@ function v2raystore_reportAvailableJalaliYears(){
     $productWhere = function_exists('v2raystore_statsProductWhere')
         ? v2raystore_statsProductWhere()
         : "(`state` IN ('paid','approved'))";
-    $res = @($connection->query("SELECT MIN(`request_date`) AS `first_date` FROM `pays` WHERE {$productWhere}"));
+    $res = @($connection->query("SELECT MIN(COALESCE(NULLIF(`sent_date`,0), `request_date`)) AS `first_date` FROM `pays` WHERE {$productWhere}"));
     if($res){
         $row = $res->fetch_assoc();
         $firstTimestamp = intval($row['first_date'] ?? 0);
@@ -21361,14 +21351,17 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
     }
     $res = v2raystore_reportEvent('#سفارش_جدید', $body, $keyboard, 'payment_approved');
     if(is_object($res) && !empty($res->ok)) return true;
-    // Respect disabled reports. If the report group is absent/unavailable, notify the owner.
+    // The owner receives a diagnostic, never the report intended for the statistics group.
     if(v2raystore_reportIsEnabled(v2raystore_reportEventKey('payment_approved'), 'on')){
         $owner = $GLOBALS['admin'] ?? null;
-        if($owner && (string)$owner !== (string)v2raystore_getIncomeReportChatId()){
-            $res = sendMessage('#سفارش_جدید' . "\n\n" . $body, null, 'HTML', $owner);
-            if(is_object($res) && !empty($res->ok)) return true;
+        $destination = v2raystore_getIncomeReportChatId();
+        $reason = (string)($res->description ?? ($destination ? 'پاسخی از تلگرام دریافت نشد.' : 'گروه آمار تنظیم نشده است.'));
+        if($owner && (string)$owner !== (string)$destination){
+            $notice = "⚠️ ارسال گزارش به گروه آمار ناموفق بود.\n🔖 کد پرداخت: " . $hashId .
+                "\nمقصد: " . ($destination ?: 'تنظیم نشده') . "\nخطا: " . $reason .
+                "\nسفارش انجام شده است؛ دوباره آن را تأیید نکنید.\nدسترسی ارسال پیام ربات و تنظیمات تاپیک گزارش را بررسی کنید.";
+            bot('sendMessage', ['chat_id'=>$owner, 'text'=>$notice]);
         }
-        error_log('Payment report delivery failed');
     }
     return false;
 }
