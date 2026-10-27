@@ -6472,6 +6472,7 @@ function v2raystore_styleReplyMarkup($markup){
     if(!is_array($decoded)) return $markup;
 
     if(isset($decoded['inline_keyboard']) && is_array($decoded['inline_keyboard'])){
+        $decoded['inline_keyboard'] = v2seg_classicMenuRows($decoded['inline_keyboard']);
         $decoded['inline_keyboard'] = v2raystore_styleInlineKeyboard($decoded['inline_keyboard']);
     }
     if(isset($decoded['keyboard']) && is_array($decoded['keyboard'])){
@@ -12343,9 +12344,9 @@ function getPaymentCardsSettingsKeys(){
     global $admin;
     $p = v2raystore_getPaymentKeys();
     return json_encode(['inline_keyboard'=>[
-        [['text'=>(!empty($p['bankAccount'])?$p['bankAccount']:'—'),'callback_data'=>'changePaymentKeysbankAccount'], ['text'=>'کارت اول · مشتری قدیمی','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['bankAccount'])?$p['bankAccount']:'—'),'callback_data'=>'changePaymentKeysbankAccount'], ['text'=>(v2seg_adminGroupEnabled('new')?'کارت اول · مشتری قدیمی':'کارت اول'),'callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['holderName'])?$p['holderName']:'—'),'callback_data'=>'changePaymentKeysholderName'], ['text'=>'دارنده کارت اول','callback_data'=>'v2raystore']],
-        [['text'=>(!empty($p['secondBankAccount'])?$p['secondBankAccount']:(!empty($p['bankAccount2'])?$p['bankAccount2']:'—')),'callback_data'=>'changePaymentKeyssecondBankAccount'], ['text'=>'کارت دوم · مشتری قدیمی','callback_data'=>'v2raystore']],
+        [['text'=>(!empty($p['secondBankAccount'])?$p['secondBankAccount']:(!empty($p['bankAccount2'])?$p['bankAccount2']:'—')),'callback_data'=>'changePaymentKeyssecondBankAccount'], ['text'=>(v2seg_adminGroupEnabled('new')?'کارت دوم · مشتری قدیمی':'کارت دوم'),'callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['secondHolderName'])?$p['secondHolderName']:(!empty($p['holderName2'])?$p['holderName2']:'—')),'callback_data'=>'changePaymentKeyssecondHolderName'], ['text'=>'دارنده کارت دوم','callback_data'=>'v2raystore']],
         [['text'=>(!empty($p['cardContact'])?$p['cardContact']:(string)$admin),'callback_data'=>'changePaymentKeyscardContact'], ['text'=>'ادمین دریافت کارت','callback_data'=>'v2raystore']],
         [['text'=>'🔄 اعلام تغییر شماره کارت به کاربران','callback_data'=>'markCartToCartCardChanged']],
@@ -19164,7 +19165,7 @@ function v2raystore_formatUserLine($userId, $name = '', $username = '', $group =
     $name = trim((string)$name) !== '' ? trim((string)$name) : ('کاربر ' . $userId);
     $username = v2raystore_cleanTelegramUsernameValue($username);
     $username = $username !== '' ? '@' . $username : 'ندارد';
-    return (($group ?? v2seg_group($userId))==='new'?'🆕 جدید':'👤 قدیمی') . "\n👤 کاربر: <a href='tg://user?id={$userId}'>" . v2raystore_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . v2raystore_h($username);
+    return (v2seg_adminGroupEnabled('new') ? (($group ?? v2seg_group($userId))==='new'?'🆕 جدید':'👤 قدیمی') : '') . "\n👤 کاربر: <a href='tg://user?id={$userId}'>" . v2raystore_h($name) . "</a>\n🆔 آیدی عددی: <code>{$userId}</code>\n🔸 یوزرنیم: " . v2raystore_h($username);
 }
 
 
@@ -20168,10 +20169,10 @@ function v2raystore_reportCompactTransactionLine($row, $includePaymentCode = fal
 
     // شروع خط با متن فارسی و استفاده از اعداد فارسی، از به‌هم‌ریختگی RTL در تلگرام جلوگیری می‌کند.
     $parts = [
-        ($row['segment']??'legacy')==='new'?'🆕 جدید':'👤 قدیمی',
         'ساعت ' . v2raystore_reportFaDigits(v2raystore_reportClockText($eventDate)),
         v2raystore_reportFaDigits($price) . ' تومان'
     ];
+    if(v2seg_adminGroupEnabled('new'))array_unshift($parts,($row['segment']??'legacy')==='new'?'🆕 جدید':'👤 قدیمی');
     $label = trim((string)($row['label'] ?? ''));
     if(!empty($row['is_cancelled'])){
         $cancelLabel = 'لغو شده';
@@ -22245,7 +22246,7 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     }
 
     $lines = ["🧾 <b>رسید پرداخت کارت‌به‌کارت</b>"];
-    $lines[] = "👥 گروه مشتری: <b>" . v2seg_label(v2seg_paymentGroup($pay)) . "</b>";
+    if(v2seg_adminGroupEnabled('new')) $lines[] = "👥 گروه مشتری: <b>" . v2seg_label(v2seg_paymentGroup($pay)) . "</b>";
     $lines[] = "📌 نوع: <b>" . v2raystore_h($typeTitle) . "</b>";
     if($user) $lines[] = v2raystore_formatUserLine($uid, $user['name'] ?? '', $user['username'] ?? '', v2seg_paymentGroup($pay));
     else $lines[] = "🆔 کاربر: <code>{$uid}</code>";
