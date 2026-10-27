@@ -137,6 +137,12 @@ function v2raystore_adminMenuTree(){
         $tree['Agents'][2]=[['👥 فهرست نمایندگان','agentsList'],['➕ افزودن نماینده','addAgentManual'],['📋 درخواست‌های ردشده','rejectedAgentList']];
         $tree['Configs'][2]=[['🔎 جستجوی کانفیگ','searchUsersConfig'],['➕ ثبت کانفیگ کاربر','manualAttachConfig'],['📦 ساخت چند اکانت','createMultipleAccounts']];
     }
+    if(!v2seg_adminGroupEnabled('new')){
+        foreach($tree as &$entry){
+            $rows=[];foreach($entry[2] as [$t,$cb])$rows[]=[['text'=>$t,'callback_data'=>$cb]];
+            $entry[2]=[];foreach(v2seg_classicMenuRows($rows) as $row)foreach($row as $b)$entry[2][]=[$b['text'],$b['callback_data']];
+        }unset($entry);
+    }
     return $tree;
 }
 

@@ -233,6 +233,7 @@ function v2seg_guardSelection(){
 }
 function v2seg_menuKeys(){
     $s=v2seg_settings();
+    if(empty($s['enabled']))return json_encode(['inline_keyboard'=>[[['text'=>'🔴 تفکیک مشتریان: خاموش','callback_data'=>'cgToggle_enabled']],[['text'=>'⬅️ بازگشت','callback_data'=>'adminSettingsMenu']]]],JSON_UNESCAPED_UNICODE);
     $button=function($label,$cb){return ['text'=>$label,'callback_data'=>$cb];};
     $rows=[
         [$button((!empty($s['enabled'])?'🟢':'🔴').' بخش مستقل مشتریان جدید','cgToggle_enabled'),$button('💰 افزایش قیمت: '.$s['percent'].'٪','cgEdit_percent')],
@@ -246,6 +247,7 @@ function v2seg_menuKeys(){
     ];return json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE);
 }
 function v2seg_menuText(){
+    if(!v2seg_adminGroupEnabled('new'))return "👥 <b>تفکیک مشتریان</b>\n\nاین قابلیت خاموش است. منوها و آمار به‌صورت یکپارچه نمایش داده می‌شوند. برای استفاده از دو گروه با قیمت و کارت جدا، آن را فعال کنید.";
     $s=v2seg_settings(); $card=htmlspecialchars($s['card']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
     $holder=htmlspecialchars($s['holder']?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
     return "👥 <b>تنظیمات مشتریان جدید</b>\n\nخاموش: همه با منو، قیمت، کارت و قوانین دسترسی اصلی ربات کار می‌کنند؛ گروه‌بندی ذخیره‌شده تغییر نمی‌کند.\nروشن: تنظیمات مستقل زیر برای مشتریان جدید اعمال می‌شود.\n\nکارت مستقل: <code>$card</code>\nدارنده: $holder\n\nقیمت خرید، تمدید و افزایش حجم/زمان: +{$s['percent']}٪؛ گرد کردن رو به بالا تا ".number_format($s['round'])." تومان.\nدرصد صفر یعنی قیمت پایه بدون افزایش و گرد کردن. شارژ کیف پول افزایش قیمت ندارد.\n\nدر حالت روشن، کارت اول و دوم فقط برای گروه قدیمی است. مشتری جدید با خرید، قدیمی نمی‌شود.\nپلن تازه به‌صورت پیش‌فرض برای هر دو گروه فعال است. غیرفعال کردن پلن برای یک گروه، سرویس‌های قبلی را حذف نمی‌کند.\nگزینه‌های امکانات، تابع روشن بودن همان امکان در تنظیمات اصلی هم هستند.";
@@ -258,6 +260,9 @@ function v2seg_codeKeys(){return v2seg_contextKeys(json_encode(['inline_keyboard
 function v2seg_showCode(){
     global $message_id;
     $code=htmlspecialchars(v2raystore_getBuyersAccessCode()?:'تنظیم نشده',ENT_QUOTES,'UTF-8');
+    if(!v2seg_adminGroupEnabled('new')){
+        editText($message_id,"🎟 <b>کد ورود</b>\n\n<code>$code</code>\n\nکد را فقط به کاربران موردنظر بدهید. قوانین ورود مطابق تنظیمات دسترسی ربات اعمال می‌شود.",v2seg_codeKeys(),'HTML');return;
+    }
     editText($message_id,"🎟 <b>کد ورود به گروه مشتریان قدیمی</b>\n\n<code>$code</code>\n\nاین همان کد ورود خریداران قبلی است. مشتری جدید با ارسال آن وارد گروه قدیمی می‌شود؛ حتی وقتی پذیرش جدید خاموش است. تغییر یا حذف کد، گروه افراد منتقل‌شده را برنمی‌گرداند. کد را فقط به افراد موردنظر بدهید.",v2seg_codeKeys(),'HTML');
 }
 function v2seg_planMenu($offset){
@@ -389,7 +394,7 @@ function v2seg_admin(){
         else v2seg_save($k,$v);
         setUser();sendMessage($k==='lookup'?'بررسی انجام شد.':'✅ ذخیره شد.',$removeKeyboard);
         if($k==='code'){
-            sendMessage('🎟 کد ورود مشتریان قدیمی: <code>'.htmlspecialchars(v2raystore_getBuyersAccessCode(),ENT_QUOTES,'UTF-8').'</code>',v2seg_codeKeys(),'HTML');exit;
+            sendMessage((v2seg_adminGroupEnabled('new')?'🎟 کد ورود مشتریان قدیمی: <code>':'🎟 کد ورود: <code>').htmlspecialchars(v2raystore_getBuyersAccessCode(),ENT_QUOTES,'UTF-8').'</code>',v2seg_codeKeys(),'HTML');exit;
         }
         sendMessage(v2seg_menuText(),v2seg_menuKeys(),'HTML');exit;
     }
@@ -422,7 +427,38 @@ function v2seg_paymentGroup($pay){
 function v2seg_paymentSql(){
     return "COALESCE((SELECT pg.segment FROM v2_payment_groups pg WHERE pg.payment_id=pays.id),(SELECT g.segment FROM v2_customer_groups g WHERE g.userid=pays.user_id),'new')";
 }
-function v2seg_label($group){return $group==='new'?'🆕 مشتریان جدید':($group==='legacy'?'👤 مشتریان قدیمی':'👥 هر دو گروه');}
+// Only static controls are renamed; customer names and service names are untouched.
+function v2seg_classicMenuRows($rows){
+    if(v2seg_adminGroupEnabled('new'))return $rows;
+    $titles=[
+        'customerGroupsMenu'=>'👥 تفکیک مشتریان',
+        'cgLegacySettings'=>'⚙️ تنظیمات مشتریان',
+        'cgToggle_legacy_enabled'=>'⚙️ نمایش کامل امکانات',
+        'cgStats_legacy'=>'📊 آمار مشتریان', 'cgStats_new'=>'📊 آمار مشتریان',
+        'cgCustomers_legacy_0'=>'👥 فهرست کاربران',
+        'cgCode'=>'🎟 کد ورود',
+        'newMemberAccessMenu'=>'🔑 قوانین ورود کاربران',
+    ];
+    $out=[];
+    foreach($rows as $row){
+        $next=[];
+        foreach($row as $button){
+            $cb=preg_replace('/_(?:ucg|ctx)_(legacy|new)$/D','',(string)($button['callback_data']??''));
+            if(preg_match('/^(?:cgRemoveLegacy|cgTransferNewToLegacy|cgBuyers_.*|cgPlans_.*|cgPlan_.*|cgReportChoose_.*)$/D',$cb)
+                || preg_match('/^broadcastTarget(?:Message|Forward|Pin)_(?:legacy|new)(?:_|$)/',$cb))continue;
+            if(isset($titles[$cb]))$button['text']=($cb==='cgToggle_legacy_enabled' ? (v2seg_settings()['legacy_enabled']?'🟢 ':'🔴 ') : '').$titles[$cb];
+            // Fixed labels on legacy settings and group navigation only.
+            elseif(in_array($cb,['gateWays_Channels','paymentCardsSettings','adminAccessMenu','cgManage_legacy','cgManage_new'],true)){
+                $button['text']=str_replace(['مشتریان قدیمی','مشتریان جدید','قدیمی‌ها','جدیدها','قدیمی','جدید'],['مشتریان','مشتریان','مشتریان','مشتریان','',''],$button['text']);
+            }
+            $next[]=$button;
+        }
+        if($next)$out[]=$next;
+    }
+    return $out;
+}
+
+function v2seg_label($group){if(!v2seg_adminGroupEnabled('new'))return '👥 مشتریان';return $group==='new'?'🆕 مشتریان جدید':($group==='legacy'?'👤 مشتریان قدیمی':'👥 هر دو گروه');}
 function v2seg_contextKeys($json){
     $group=$GLOBALS['v2seg_menu_context']??null;if(!$group)return $json;
     $keys=json_decode($json,true);
@@ -433,6 +469,7 @@ function v2seg_contextKeys($json){
     unset($b,$row);return json_encode($keys,JSON_UNESCAPED_UNICODE);
 }
 function v2seg_reportFilter($group=null){
+    if(!v2seg_adminGroupEnabled('new'))return 'all';
     $group=$group??($GLOBALS['v2seg_report_group']??'all');
     return in_array($group,['legacy','new'],true)?$group:'all';
 }
@@ -440,10 +477,10 @@ function v2seg_reportKeys($json){
     $keys=json_decode($json,true);$group=v2seg_reportFilter();
     foreach($keys['inline_keyboard'] as &$row) foreach($row as &$b){
         if(isset($b['callback_data']) && preg_match('/^monthlyReport/',$b['callback_data'])) $b['callback_data'].='_cg_'.$group;
-        elseif(($b['callback_data']??'')==='reportChannelSettingsMenu')$b['callback_data']=$group==='all'?'cgReportChoose_'.($GLOBALS['v2seg_report_mode']??'day'):'cgManage_'.$group;
+        elseif(($b['callback_data']??'')==='reportChannelSettingsMenu')$b['callback_data']=!v2seg_adminGroupEnabled('new')?'adminReportsMenu':($group==='all'?'cgReportChoose_'.($GLOBALS['v2seg_report_mode']??'day'):'cgManage_'.$group);
     }
     unset($row,$b);
-    $keys['inline_keyboard'][]=[['text'=>'👥 تغییر گروه گزارش','callback_data'=>'cgReportChoose_'.(($GLOBALS['v2seg_report_mode']??'day')==='summary'?'summary':'day')]];
+    if(v2seg_adminGroupEnabled('new')) $keys['inline_keyboard'][]=[['text'=>'👥 تغییر گروه گزارش','callback_data'=>'cgReportChoose_'.(($GLOBALS['v2seg_report_mode']??'day')==='summary'?'summary':'day')]];
     return json_encode($keys,JSON_UNESCAPED_UNICODE);
 }
 function v2seg_reportRoute(){
@@ -451,17 +488,17 @@ function v2seg_reportRoute(){
     if(!v2seg_isAdmin()) return;
     v2raystore_normalizeAdminCallback();
     if(preg_match('/^(monthlyReport(?:Menu|Year|Month|MonthFormat|Day|DayFormat)_.+)_cg_(all|legacy|new)$/D',(string)$data,$m)){
-        $data=$m[1];$GLOBALS['v2seg_report_group']=$m[2];
+        $data=$m[1];$GLOBALS['v2seg_report_group']=v2seg_reportFilter($m[2]);
         $GLOBALS['v2seg_report_mode']=strpos($data,'summary')!==false?'summary':'day';
-        if(in_array($m[2],['legacy','new'],true) && preg_match('/^monthlyReportMonth_summary_(\d{4})_(\d{1,2})$/D',$data,$month)){
+        if((in_array($m[2],['legacy','new'],true) || !v2seg_adminGroupEnabled('new')) && preg_match('/^monthlyReportMonth_summary_(\d{4})_(\d{1,2})$/D',$data,$month)){
             $year=(int)$month[1];$number=(int)$month[2];
             if(!v2raystore_reportJalaliMonthBounds($year,$number))return;
-            editText($message_id,'گزارش '.v2raystore_reportMonthNames()[$number-1].' '.$year.' برای '.($m[2]==='legacy'?'مشتریان قدیمی':'مشتریان جدید').' چگونه ارسال شود؟',v2seg_reportKeys(json_encode(['inline_keyboard'=>[
+            editText($message_id,'گزارش '.v2raystore_reportMonthNames()[$number-1].' '.$year.' برای '.v2seg_label($m[2]).' چگونه ارسال شود؟',v2seg_reportKeys(json_encode(['inline_keyboard'=>[
                 [['text'=>'📊 کلی','callback_data'=>"monthlyReportMonthFormat_summary_{$year}_{$number}"],['text'=>'🧾 ریز تراکنش','callback_data'=>"monthlyReportMonthFormat_details_{$year}_{$number}"]],
                 [['text'=>'⬅️ ماه‌ها','callback_data'=>"monthlyReportYear_summary_{$year}"]]
             ]],JSON_UNESCAPED_UNICODE)),'HTML');exit;
         }
-        if(in_array($m[2],['legacy','new'],true) && preg_match('/^monthlyReportMonthFormat_(summary|details)_(\d{4})_(\d{1,2})$/D',$data,$format)){
+        if((in_array($m[2],['legacy','new'],true) || !v2seg_adminGroupEnabled('new')) && preg_match('/^monthlyReportMonthFormat_(summary|details)_(\d{4})_(\d{1,2})$/D',$data,$format)){
             $year=(int)$format[2];$month=(int)$format[3];$GLOBALS['v2seg_report_mode']='summary';
             if($format[1]==='summary'){$data="monthlyReportMonth_summary_{$year}_{$month}";return;}
             $sent=v2raystore_sendMonthlyPaymentDetails($year,$month,$m[2]);
@@ -473,6 +510,10 @@ function v2seg_reportRoute(){
     if(preg_match('/^(?:monthlyReportMenu_|cgReportChoose_)(summary|day)$/D',(string)$data,$m) || $data==='sendMonthlyTransactionsNow'){
         setUser();
         $mode=$m[1]??'summary';
+        if(!v2seg_adminGroupEnabled('new')){
+            $GLOBALS['v2seg_report_group']='all';$GLOBALS['v2seg_report_mode']=$mode;
+            $data='monthlyReportMenu_'.$mode;return;
+        }
         editText($message_id,'👥 گزارش کدام گروه ارسال شود؟',json_encode(['inline_keyboard'=>[
             [['text'=>v2seg_label('legacy'),'callback_data'=>'monthlyReportMenu_'.$mode.'_cg_legacy'],['text'=>v2seg_label('new'),'callback_data'=>'monthlyReportMenu_'.$mode.'_cg_new']],
             [['text'=>v2seg_label('all'),'callback_data'=>'monthlyReportMenu_'.$mode.'_cg_all']],
@@ -481,6 +522,7 @@ function v2seg_reportRoute(){
     }
 }
 function v2seg_totalsText($rows){
+    if(!v2seg_adminGroupEnabled('new'))return '';
     $totals=['legacy'=>0,'new'=>0];$seen=[];
     foreach($rows as $p){
         if(empty($p['counts_in_total']))continue;
@@ -506,13 +548,14 @@ function v2seg_reportChunks($text){
 }
 function v2seg_statsText($group='all'){
     $periods=v2raystore_statsPeriodStarts();$lines=[];$expr=v2seg_paymentSql();
-    foreach(['legacy','new'] as $g){
-        if($group!=='all' && $group!==$g)continue;
-        $count=v2seg_one("SELECT COUNT(*) n FROM users u WHERE ".($g==='legacy'?'EXISTS':'NOT EXISTS')."(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy')")['n'];
+    foreach(v2seg_adminGroupEnabled('new')?['legacy','new']:['all'] as $g){
+        if($g!=='all' && $group!=='all' && $group!==$g)continue;
+        $count=$g==='all'?v2seg_one('SELECT COUNT(*) n FROM users')['n']:v2seg_one("SELECT COUNT(*) n FROM users u WHERE ".($g==='legacy'?'EXISTS':'NOT EXISTS')."(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy')")['n'];
         $lines[]="\n<b>".v2seg_label($g)."</b> · ".number_format($count).' کاربر';
         foreach(['کل'=>0,'امروز'=>$periods['today'],'ماه'=>$periods['month']] as $label=>$since){
             $cash=v2raystore_statsCashWhere();$product=v2raystore_statsProductWhere();
-            $row=v2seg_one("SELECT COALESCE(SUM(IF($cash,price,0)),0) cash,COALESCE(SUM(IF($product,price,0)),0) sales FROM pays WHERE $expr=? AND request_date>=?",'si',[$g,(int)$since]);
+            $where=$g==='all'?'request_date>=?':"$expr=? AND request_date>=?";
+            $row=v2seg_one("SELECT COALESCE(SUM(IF($cash,price,0)),0) cash,COALESCE(SUM(IF($product,price,0)),0) sales FROM pays WHERE $where",$g==='all'?'i':'si',$g==='all'?[(int)$since]:[$g,(int)$since]);
             $lines[]=$label.' — پرداخت نقدی و شارژ: <b>'.number_format($row['cash']).'</b>؛ فروش: <b>'.number_format($row['sales']).' تومان</b>';
         }
     }
@@ -572,7 +615,7 @@ function v2seg_transferNewToLegacy($uid){
 function v2seg_managementAction($cb){
     global $message_id;
     if(preg_match('/^cgStats_(legacy|new)$/D',$cb,$m)){
-        editText($message_id,'📊 آمار گروه'.v2seg_statsText($m[1]),json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$m[1]]]]],JSON_UNESCAPED_UNICODE),'HTML');return true;
+        editText($message_id,(v2seg_adminGroupEnabled('new')?'📊 آمار گروه':'📊 آمار مشتریان').v2seg_statsText($m[1]),json_encode(['inline_keyboard'=>[[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$m[1]]]]],JSON_UNESCAPED_UNICODE),'HTML');return true;
     }
     if(preg_match('/^cgManage_(legacy|new)$/D',$cb,$m)){
         $g=$m[1];$GLOBALS['v2seg_shared_context']=$g;
@@ -601,13 +644,14 @@ function v2seg_managementAction($cb){
         if($kind==='Legacy')array_unshift($items,[(v2seg_settings()['legacy_enabled']?'🟢':'🔴').' نمایش کامل امکانات قدیمی','cgToggle_legacy_enabled']);
         $buttons=[];foreach($items as [$t,$d])$buttons[]=['text'=>$t,'callback_data'=>$d];$rows=array_chunk($buttons,2);
         $rows[]=[['text'=>'⬅️ بازگشت','callback_data'=>'cgManage_'.$g]];
-        editText($message_id,($kind==='Broadcast'?'📨 ارسال به '.v2seg_label($g):($kind==='Legacy'?'👤 تنظیمات مشتریان قدیمی؛ قیمت پایه و کارت اول و دوم برای قدیمی‌هاست.':'🔗 تنظیمات مشترک هر دو گروه؛ تغییر این گزینه‌ها روی هر دو گروه اثر دارد.')),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));return true;
+        editText($message_id,($kind==='Broadcast'?'📨 ارسال به '.v2seg_label($g):($kind==='Legacy'?(v2seg_adminGroupEnabled('new')?'👤 تنظیمات مشتریان قدیمی؛ قیمت پایه و کارت اول و دوم برای قدیمی‌هاست.':'⚙️ تنظیمات مشتریان'):'🔗 تنظیمات مشترک هر دو گروه؛ تغییر این گزینه‌ها روی هر دو گروه اثر دارد.')),json_encode(['inline_keyboard'=>$rows],JSON_UNESCAPED_UNICODE));return true;
     }
     if(preg_match('/^cgCustomers_(legacy|new)_(\d+)$/D',$cb,$m)){
         $g=$m[1];$offset=max(0,(int)$m[2]);$op=$g==='legacy'?'EXISTS':'NOT EXISTS';
-        $stmt=v2seg_query("SELECT u.userid,u.name FROM users u WHERE $op(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy') ORDER BY u.id DESC LIMIT 21 OFFSET $offset");
+        $where=v2seg_adminGroupEnabled('new')?"$op(SELECT 1 FROM v2_customer_groups g WHERE g.userid=u.userid AND g.segment='legacy')":'1=1';
+        $stmt=v2seg_query("SELECT u.userid,u.name FROM users u WHERE $where ORDER BY u.id DESC LIMIT 21 OFFSET $offset");
         $users=$stmt->get_result()->fetch_all(MYSQLI_ASSOC);$stmt->close();$lines=[];
-        foreach(array_slice($users,0,20) as $u)$lines[]=($g==='new'?'🆕':'👤').' '.htmlspecialchars($u['name'],ENT_QUOTES,'UTF-8').' · <code>'.(int)$u['userid'].'</code>';
+        foreach(array_slice($users,0,20) as $u)$lines[]=(v2seg_adminGroupEnabled('new') && $g==='new'?'🆕':'👤').' '.htmlspecialchars($u['name'],ENT_QUOTES,'UTF-8').' · <code>'.(int)$u['userid'].'</code>';
         $nav=[];if($offset>0)$nav[]=['text'=>'◀️ قبلی','callback_data'=>'cgCustomers_'.$g.'_'.max(0,$offset-20)];if(count($users)>20)$nav[]=['text'=>'بعدی ▶️','callback_data'=>'cgCustomers_'.$g.'_'.($offset+20)];
         $rows=$nav?[$nav]:[];
         if($g==='legacy')$rows[]=[['text'=>'🗑 حذف/انتقال به جدیدها','callback_data'=>'cgRemoveLegacy'],['text'=>'🔎 جستجوی کاربر','callback_data'=>'userReports']];
