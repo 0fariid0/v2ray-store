@@ -8236,7 +8236,7 @@ function v2raystore_warnDuplicateReceipt($duplicate, $messages = [], $currentHas
 function v2raystore_sendReceiptPhotoOnlyNotice($hashId = ''){
     $txt = "📸 <b>رسید پرداخت را ارسال کنید.</b>\n\n" .
            "✅ اگر عکس رسید کپشن/توضیح داشته باشد مشکلی نیست؛ ربات فقط خودِ عکس رسید را ثبت و برای ادمین ارسال می‌کند.\n" .
-           "عکس، فایل یا توضیحات رسید برای بررسی مدیر ارسال می‌شود.\n\n" .
+           "متن، فایل، ویدیو، ویس یا عکس ارسال‌شده به صورت فایل قابل قبول نیست؛ لطفاً عکس را از گالری ارسال کنید.\n\n" .
            "اگر منصرف شده‌اید، روی دکمه <b>لغو خرید</b> بزنید.";
     return sendMessage($txt, v2raystore_cartToCartReceiptKeyboard($hashId), 'HTML');
 }
@@ -8294,7 +8294,7 @@ function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = '
     $bank = trim((string)($account['bank'] ?? ''));
     $holder = trim((string)($account['holder'] ?? ''));
     $accountTitle = v2raystore_cartToCartAccountTitle($account);
-    $extra = "\n\n📸 <b>بعد از واریز، رسید را همینجا ارسال کنید.</b>\n" .
+    $extra = "\n\n📸 <b>بعد از واریز، فقط عکس رسید را همینجا ارسال کنید.</b>\n" .
              "اگر عکس کپشن داشته باشد مشکلی نیست؛ فقط خود عکس رسید برای ادمین ثبت می‌شود.\n" .
              "برای انصراف، دکمه <b>لغو خرید</b> را بزنید.";
     if($bank !== ''){
@@ -22425,37 +22425,10 @@ function v2raystore_receiptMessageKind($message, $buttons = []){
         foreach((array)$buttons as $label){
             if(is_string($label) && trim($label) !== '' && $text === trim($label)) return 'control';
         }
-        return 'receipt';
+        return 'other';
     }
-    foreach(['photo','document','video','animation','audio','voice'] as $field){
-        if(!empty($message->$field)) return 'receipt';
-    }
+    if(!empty($message->photo)) return 'receipt';
     return 'other';
-}
-
-// Preserve the original message for manual review, including documents and text.
-// Never bind an unverified message to a different customer's order.
-function v2raystore_forwardReceiptForReview($hashId, $reason = ''){
-    global $update, $from_id, $userInfo, $buttonValues;
-    if(v2raystore_receiptMessageKind($update->message ?? null, $buttonValues ?? []) !== 'receipt') return ['ok'=>false, 'ignored'=>true];
-    $sourceChat = (int)($update->message->chat->id ?? 0);
-    $sourceMessage = (int)($update->message->message_id ?? 0);
-    if(!$sourceChat || !$sourceMessage) return ['ok'=>false];
-    $sent = 0;
-    $text = "🧾 رسید برای بررسی دستی\n👤 فرستنده: " . v2raystore_h($userInfo['name'] ?? '') .
-        "\n🆔 آیدی: <code>" . (int)$from_id . "</code>\n📨 ثبت رسید: " . v2raystore_iranDateTimeText(time()) .
-        "\nکد مرحلهٔ پرداخت: <code>" . v2raystore_h($hashId) . "</code>" .
-        (trim((string)$reason) !== '' ? "\n⚠️ " . v2raystore_h($reason) : '') . "\nاصل پیام رسید در بالا آمده است؛ سفارش و واریز را بررسی کنید.";
-    foreach(v2raystore_getOrderAdminRecipients() as $chat){
-        try{
-            $copy = bot('copyMessage', ['chat_id'=>(int)$chat, 'from_chat_id'=>$sourceChat, 'message_id'=>$sourceMessage]);
-            if(empty($copy->ok)) continue;
-            $sent++;
-            // Metadata is separate so a caption limit cannot discard the receipt.
-            sendMessage($text, null, 'HTML', (int)$chat, (int)($copy->result->message_id ?? 0));
-        }catch(Throwable $e){ error_log('Receipt manual review delivery incomplete'); }
-    }
-    return ['ok'=>$sent>0, 'admin_ok'=>$sent>0, 'user_message'=>'✅ رسید شما برای بررسی ارسال شد.'];
 }
 
 function v2raystore_manualReceiptHandoff($hashId, $fileId, $reason){

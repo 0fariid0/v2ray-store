@@ -413,7 +413,9 @@ if(isset($update->message) && v2raystore_isCartToCartReceiptStep($userInfo['step
         $userInfo['step'] = 'none';
         $userInfo['temp'] = '';
     }elseif($storeReceiptKind === 'other'){
-        // Service events, contacts, locations and stickers are not receipts.
+        // Keep the receipt step; never forward non-photo content to admins.
+        if(!empty($update->message->text) || isset($update->message->document) || isset($update->message->video) || isset($update->message->voice) || isset($update->message->audio) || isset($update->message->sticker))
+            sendMessage('📸 لطفاً فقط عکس رسید را از گالری ارسال کنید؛ متن و فایل به‌عنوان رسید ثبت نمی‌شود.');
         exit();
     }
 }
@@ -432,11 +434,11 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
         if($storeReceiptFileId !== ''){
             $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId);
         }else{
-            $storeReceiptResult = v2raystore_forwardReceiptForReview($storeReceiptHashId);
+            exit(); // No photo: never forward a raw message as a receipt.
         }
     }catch(Throwable $e){
         error_log('Receipt processing interrupted; preserving original for admin review');
-        $storeReceiptResult = v2raystore_forwardReceiptForReview($storeReceiptHashId, 'پردازش سفارش کامل نشد؛ اصل پیام جهت بررسی ارسال شد.');
+        $storeReceiptResult = v2raystore_manualReceiptHandoff($storeReceiptHashId, $storeReceiptFileId, 'پردازش سفارش کامل نشد؛ عکس برای بررسی ارسال شد.');
     }
     if(!empty($storeReceiptResult['ok'])){
         setUser();
