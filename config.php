@@ -22413,10 +22413,31 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     return implode("\n", $lines);
 }
 
+// Commands/navigation are never payment evidence, even with a stale receipt step.
+function v2raystore_receiptMessageKind($message, $buttons = []){
+    if(!is_object($message)) return 'other';
+    $text = trim((string)($message->text ?? ''));
+    if($text !== ''){
+        if(preg_match('~^/[^\s]+~u', $text)) return 'control';
+        foreach((array)($message->entities ?? []) as $entity){
+            if(($entity->type ?? '') === 'bot_command' && (int)($entity->offset ?? -1) === 0) return 'control';
+        }
+        foreach((array)$buttons as $label){
+            if(is_string($label) && trim($label) !== '' && $text === trim($label)) return 'control';
+        }
+        return 'receipt';
+    }
+    foreach(['photo','document','video','animation','audio','voice'] as $field){
+        if(!empty($message->$field)) return 'receipt';
+    }
+    return 'other';
+}
+
 // Preserve the original message for manual review, including documents and text.
 // Never bind an unverified message to a different customer's order.
 function v2raystore_forwardReceiptForReview($hashId, $reason = ''){
-    global $update, $from_id, $userInfo;
+    global $update, $from_id, $userInfo, $buttonValues;
+    if(v2raystore_receiptMessageKind($update->message ?? null, $buttonValues ?? []) !== 'receipt') return ['ok'=>false, 'ignored'=>true];
     $sourceChat = (int)($update->message->chat->id ?? 0);
     $sourceMessage = (int)($update->message->message_id ?? 0);
     if(!$sourceChat || !$sourceMessage) return ['ok'=>false];
@@ -22424,7 +22445,7 @@ function v2raystore_forwardReceiptForReview($hashId, $reason = ''){
     $text = "🧾 رسید برای بررسی دستی\n👤 فرستنده: " . v2raystore_h($userInfo['name'] ?? '') .
         "\n🆔 آیدی: <code>" . (int)$from_id . "</code>\n📨 ثبت رسید: " . v2raystore_iranDateTimeText(time()) .
         "\nکد مرحلهٔ پرداخت: <code>" . v2raystore_h($hashId) . "</code>" .
-        "\n⚠️ " . v2raystore_h($reason) . "\nمحتوای ارسالی رد نشده است؛ سفارش و واریز را دستی بررسی کنید.";
+        (trim((string)$reason) !== '' ? "\n⚠️ " . v2raystore_h($reason) : '') . "\nاصل پیام رسید در بالا آمده است؛ سفارش و واریز را بررسی کنید.";
     foreach(v2raystore_getOrderAdminRecipients() as $chat){
         try{
             $copy = bot('copyMessage', ['chat_id'=>(int)$chat, 'from_chat_id'=>$sourceChat, 'message_id'=>$sourceMessage]);

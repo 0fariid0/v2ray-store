@@ -403,6 +403,21 @@ if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $storeCancelPayMatch)){
     exit();
 }
 
+// Leave receipt-entry mode before the normal command/menu handlers run.
+// Do not cancel or modify the pending payment itself.
+if(isset($update->message) && v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $storeReceiptControlMatch)){
+    $storeReceiptKind = v2raystore_receiptMessageKind($update->message, $buttonValues ?? []);
+    if($storeReceiptKind === 'control'){
+        setUser();
+        setUser('', 'temp');
+        $userInfo['step'] = 'none';
+        $userInfo['temp'] = '';
+    }elseif($storeReceiptKind === 'other'){
+        // Service events, contacts, locations and stickers are not receipts.
+        exit();
+    }
+}
+
 // هندلر مرکزی و مقاوم دریافت رسید کارت‌به‌کارت
 // این بخش قبل از هندلرهای قدیمی اجرا می‌شود تا عکس رسید با کپشن/بدون کپشن گم نشود
 // و پیام ادمین همیشه همراه دکمه‌های تأیید/رد ارسال شود.
@@ -417,7 +432,7 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
         if($storeReceiptFileId !== ''){
             $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId);
         }else{
-            $storeReceiptResult = v2raystore_forwardReceiptForReview($storeReceiptHashId, 'رسید به‌صورت فایل یا پیام ارسال شده؛ بررسی دستی لازم است.');
+            $storeReceiptResult = v2raystore_forwardReceiptForReview($storeReceiptHashId);
         }
     }catch(Throwable $e){
         error_log('Receipt processing interrupted; preserving original for admin review');
