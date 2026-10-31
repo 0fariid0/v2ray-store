@@ -206,6 +206,8 @@ function v2seg_gate(){
 function v2seg_guardSelection(){
     global $data,$userInfo,$from_id,$update,$text,$buttonValues;
     if(v2seg_isAdmin()) return;
+    // Receipt input is validated by the central photo handler, not as a purchase callback.
+    if(isset($update->message) && function_exists('v2raystore_isCartToCartReceiptStep') && v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $receiptMatch)) return;
     if(isset($update->message->text) && ($text??'')===($buttonValues['cancel']??'لغو')) return;
     $input=isset($update->callback_query)?(string)($data??''):(string)($userInfo['step']??'');
     if(preg_match('/^(?:selectPlan|selectCustomePlan|selectCustomPlanGB|selectCustomPlanDay|enterCustomPlanName|enterAccountName|sConfigRenewPlan|freeTrial|freeCustomTrial)(\d+)/',$input,$m)){
