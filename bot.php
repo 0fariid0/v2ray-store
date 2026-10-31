@@ -410,35 +410,31 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
     $storeReceiptHashId = $storeReceiptStepMatch[2] ?? '';
     $storeReceiptStepPrefix = $storeReceiptStepMatch[1] ?? '';
     $storeReceiptPhotoInfo = function_exists('v2raystore_getBestPhotoInfo') ? v2raystore_getBestPhotoInfo($update) : [];
-    $storeReceiptFileId = ($storeReceiptPhotoInfo['file_id'] ?? '') !== '' ? $storeReceiptPhotoInfo['file_id'] : ($fileid ?? '');
+    $storeReceiptFileId = trim((string)($storeReceiptPhotoInfo['file_id'] ?? ''));
     $storeReceiptFileUniqueId = trim((string)($storeReceiptPhotoInfo['file_unique_id'] ?? ''));
-
-    if($storeReceiptFileId === ''){
-        if(function_exists('v2raystore_sendReceiptPhotoOnlyNotice')) v2raystore_sendReceiptPhotoOnlyNotice($storeReceiptHashId);
-        else sendMessage($mainValues['please_send_only_image'] ?? 'لطفاً فقط عکس رسید پرداخت را ارسال کنید.');
-        exit();
-    }
-
-    // هش محتوای عکس یک درخواست کوتاه به Telegram دارد؛ پاسخ وبهوک را قبل از
-    // آن می‌بندیم تا این بررسی هرگز باعث retry یا اختلال در ثبت سفارش نشود.
     if(function_exists('farid_finishWebhookResponse')) farid_finishWebhookResponse();
-    // Fingerprints are computed centrally after ownership/state validation.
-    $storeReceiptContentHash = ''; $storeReceiptVisualHash = '';
-
-    if(function_exists('v2raystore_processCartToCartReceiptUpload')){
-        $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId, $storeReceiptContentHash, $storeReceiptVisualHash);
-        if(!empty($storeReceiptResult['ok'])){
-            setUser();
-            setUser('', 'temp');
-            sendMessage($storeReceiptResult['user_message'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.', $removeKeyboard, 'HTML');
-            sendMessage($mainValues['reached_main_menu'], getMainKeys());
+    try{
+        if($storeReceiptFileId !== ''){
+            $storeReceiptResult = v2raystore_processCartToCartReceiptUpload($storeReceiptHashId, $storeReceiptStepPrefix, $storeReceiptFileId, $storeReceiptFileUniqueId);
         }else{
-            // Keep the receipt step for retry; never accuse the customer or expose diagnostics.
-            sendMessage('لطفاً تصویر رسید را دوباره بفرستید یا با پشتیبانی تماس بگیرید.', null, 'HTML');
+            $storeReceiptResult = v2raystore_forwardReceiptForReview($storeReceiptHashId, 'رسید به‌صورت فایل یا پیام ارسال شده؛ بررسی دستی لازم است.');
         }
-        exit();
+    }catch(Throwable $e){
+        error_log('Receipt processing interrupted; preserving original for admin review');
+        $storeReceiptResult = v2raystore_forwardReceiptForReview($storeReceiptHashId, 'پردازش سفارش کامل نشد؛ اصل پیام جهت بررسی ارسال شد.');
     }
+    if(!empty($storeReceiptResult['ok'])){
+        setUser();
+        setUser('', 'temp');
+        sendMessage($storeReceiptResult['user_message'] ?? '✅ رسید شما برای بررسی ارسال شد.', $removeKeyboard, 'HTML');
+        sendMessage($mainValues['reached_main_menu'], getMainKeys());
+    }else{
+        // Transport failure is not a receipt rejection. Preserve the step for retry.
+        sendMessage('لطفاً رسید را دوباره ارسال کنید یا با پشتیبانی تماس بگیرید.', null, 'HTML');
+    }
+    exit();
 }
+
 if(function_exists('v2raystore_processAutoApproveOrders')){
     v2raystore_processAutoApproveOrders(false, 2);
 }
