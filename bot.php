@@ -432,15 +432,9 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
             setUser('', 'temp');
             sendMessage($storeReceiptResult['user_message'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.', $removeKeyboard, 'HTML');
             sendMessage($mainValues['reached_main_menu'], getMainKeys());
-            if(empty($storeReceiptResult['admin_ok'])){
-                $adminErr = trim((string)($storeReceiptResult['admin_message'] ?? ''));
-                $warn = "⚠️ رسید شما ثبت شد، اما ارسال پیام به ادمین ناموفق بود. لطفاً به پشتیبانی اطلاع دهید.";
-                if($adminErr !== '') $warn .= "\nعلت: <code>" . v2raystore_h($adminErr) . "</code>";
-                sendMessage($warn, null, 'HTML');
-            }
         }else{
-            $err = trim((string)($storeReceiptResult['message'] ?? 'ثبت رسید انجام نشد.'));
-            sendMessage("⚠️ " . $err, function_exists('v2raystore_cartToCartReceiptKeyboard') ? v2raystore_cartToCartReceiptKeyboard($storeReceiptHashId) : null, 'HTML');
+            // Keep the receipt step for retry; never accuse the customer or expose diagnostics.
+            sendMessage('لطفاً تصویر رسید را دوباره بفرستید یا با پشتیبانی تماس بگیرید.', null, 'HTML');
         }
         exit();
     }
@@ -2183,7 +2177,7 @@ if(($data ?? '') === 'receiptDuplicateSettings' && ($from_id == $admin || (!empt
 }
 if(($data ?? '') === 'toggleReceiptDuplicateCheck' && ($from_id == $admin || (!empty($userInfo) && $userInfo['isAdmin'] == true))){
     $s = v2raystore_receiptCheckSettings();
-    setSettings('receiptDuplicateCheckState', $s['enabled'] ? 'off' : 'on');
+    setSettings('receiptExactCheckState', $s['enabled'] ? 'off' : 'on');
     editText($message_id, v2raystore_receiptCheckMenuText(), v2raystore_receiptCheckMenuKeys(), 'HTML');
     exit();
 }

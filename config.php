@@ -7848,11 +7848,12 @@ function v2raystore_isReceiptPhotoMessage($updateObj = null){
 // ساخت اثرانگشت محتوای رسید برای حالتی که یک عکس از دو حساب جداگانه آپلود
 // می‌شود و Telegram برای هر آپلود file_unique_id متفاوت برمی‌گرداند. فایل فقط
 // در یک فایل موقت ساخته و بلافاصله حذف می‌شود؛ خود عکس در سرور نگهداری نمی‌شود.
-function v2raystore_getReceiptFingerprints($fileId = ''){
+function v2raystore_getReceiptFingerprints($fileId = '', $includeVisual = true){
     global $botToken;
     $fileId = trim((string)$fileId);
     static $cache = [];
-    if(isset($cache[$fileId])) return $cache[$fileId];
+    $cacheKey = $fileId . ($includeVisual ? ':visual' : ':exact');
+    if(isset($cache[$cacheKey])) return $cache[$cacheKey];
     $empty = ['sha256'=>'', 'visual'=>'', 'visual_version'=>3, 'signature'=>[], 'issues'=>[]];
     $failed = function($issue) use ($empty){ $empty['issues']=[$issue]; return $empty; };
     if($fileId === '') return $failed('file_missing');
@@ -7887,6 +7888,10 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
     @fclose($fp);
     $size = @filesize($tmp);
     $hash = ($ok && $size !== false && $size > 0 && $size <= (15 * 1024 * 1024)) ? (string)@hash_file('sha256', $tmp) : '';
+    if(!$includeVisual){
+        @unlink($tmp);
+        return $cache[$cacheKey] = ['sha256'=>$hash, 'visual'=>'', 'signature'=>[], 'issues'=>$hash === '' ? ['download_failed'] : []];
+    }
     $visual = ''; $signature = []; $issues = [];
     if($hash === '') $issues[] = $downloaded > 15*1024*1024 ? 'download_too_large' : 'download_failed';
     elseif(!function_exists('imagecreatefromstring') || !function_exists('imagecreatetruecolor')) $issues[] = 'gd_missing';
@@ -7933,7 +7938,7 @@ function v2raystore_getReceiptFingerprints($fileId = ''){
     }
     }catch(Throwable $e){ $visual=''; $signature=[]; $issues[]='image_processing_failed'; error_log('Receipt image processing incomplete'); }
     finally{ @unlink($tmp); }
-    return $cache[$fileId] = [
+    return $cache[$cacheKey] = [
         'signature'=>$signature,
         'sha256'=>preg_match('/^[a-f0-9]{64}$/i', $hash) ? strtolower($hash) : '',
         'visual'=>preg_match('/^[a-f0-9]{64}$/i', $visual) ? strtolower($visual) : '',
@@ -7956,7 +7961,8 @@ function v2raystore_getReceiptVisualHash($fileId = ''){
    می‌کند و هیچ اثری روی ثبت سفارش یا ارسال رسید برای ادمین ندارد. */
 function v2raystore_receiptCheckSettings(){
     global $botState;
-    $enabled = (($botState['receiptDuplicateCheckState'] ?? 'on') !== 'off');
+    // New opt-in key: previous visual-check settings must not enable this policy.
+    $enabled = (($botState['receiptExactCheckState'] ?? 'off') === 'on');
     $days = 90; // One rolling window for all accounts; independent of cleanup timing.
     $reminders = (($botState['duplicateReceiptReminderState'] ?? 'off') === 'on');
     return ['enabled'=>$enabled, 'days'=>$days, 'reminders'=>$reminders];
@@ -7967,10 +7973,10 @@ function v2raystore_receiptCheckMenuText(){
     return "🧾 <b>بررسی فیش‌های تکراری</b>\n\n" .
         "وضعیت بررسی: <b>" . ($s['enabled'] ? '🟢 روشن' : '🔴 خاموش') . "</b>\n" .
         "مدت نگهداری سوابق: <b>" . intval($s['days']) . " روز</b>\n" .
-        "پردازش تصویر (GD): <b>" . (function_exists('imagecreatefromstring') ? '✅ آماده' : '❌ روی PHP فعال نیست') . "</b>\n\n" .
+        "روش بررسی: <b>تطبیق فایل کامل رسید، بدون مقایسهٔ قالب</b>\n\n" .
         "یادآوری بررسی فیش: <b>" . ($s['reminders'] ? '🟢 روشن' : '🔴 خاموش') . "</b>\n\n" .
         "در حالت خاموش، رسید و سفارش بدون اختلال ثبت می‌شوند و فقط هشدار فیش تکراری ارسال نمی‌شود.\n" .
-        "بررسی بین همهٔ حساب‌ها، در ۹۰ روز اخیر انجام می‌شود. سوابق قدیمی‌تر از بررسی خارج و به‌تدریج پاک می‌شوند.\nنسخه‌های مشابه/برش‌خورده فقط برای بررسی دستی هشدار داده می‌شوند؛ این هشدار تأیید بانکی نیست.";
+        "بررسی بین همهٔ حساب‌ها، در ۹۰ روز اخیر انجام می‌شود. سوابق قدیمی‌تر از بررسی خارج و به‌تدریج پاک می‌شوند.\nشباهت قالب، لوگو و چیدمان ملاک تکراری بودن نیست. فقط فایل یکسان به مدیر گزارش می‌شود؛ کاربر هشدار نمی‌گیرد. کد پیگیری خوانده یا با بانک تأیید نمی‌شود و تصویر برش‌خورده ممکن است شناسایی نشود.";
 }
 
 function v2raystore_receiptCheckMenuKeys(){
@@ -8089,13 +8095,13 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
         $locked=!empty($stmt->get_result()->fetch_assoc()['locked']);$stmt->close();
         if(!$locked){$incomplete=true;$issues[]='check_lock_timeout';}
         // No user_id/cohort condition: reuse across accounts is exactly what we seek.
-        foreach(['file_unique_id'=>$fileUniqueId,'content_hash'=>$contentHash,'visual_hash'=>$visualHash] as $column=>$value){
+        foreach(['file_unique_id'=>$fileUniqueId,'content_hash'=>$contentHash] as $column=>$value){
             if($value==='')continue;
-            $version=$column==='visual_hash'?' AND visual_version=3':'';
+            $version='';
             $stmt=$connection->prepare("SELECT pay_hash,user_id,created_at FROM receipt_fingerprints WHERE `$column`=? AND pay_hash<>? AND created_at>=? AND created_at<=?$version ORDER BY created_at DESC,id DESC LIMIT 50");
             $stmt->bind_param('ssii',$value,$payHash,$cutoff,$now);$stmt->execute();$res=$stmt->get_result();
             while($row=$res->fetch_assoc()){
-                $row['match_type']=$column==='visual_hash'?'similar':'exact';
+                $row['match_type']='exact';
                 if(!isset($matches[$row['pay_hash']]))$matches[$row['pay_hash']]=$row;
             }
             $stmt->close();
@@ -8103,13 +8109,7 @@ function v2raystore_registerReceiptFingerprint($payHash, $userId, $fileUniqueId 
         // Always store exact fingerprints, even if GD or visual migration fails.
         $stmt=$connection->prepare("INSERT INTO receipt_fingerprints(pay_hash,user_id,file_unique_id,content_hash,visual_hash,visual_version,created_at) VALUES(?,?,?,?,?,3,?)");
         $stmt->bind_param('sisssi',$payHash,$userId,$fileUniqueId,$contentHash,$visualHash,$now);$stmt->execute();$stmt->close();
-        if(!empty($signature)){
-            try{
-                if(!v2receipt_ensureVisualTables())throw new RuntimeException('Visual schema unavailable');
-                $matches+=v2receipt_findVisualMatches($signature,$payHash,$cutoff,$now);
-                v2receipt_storeVisual($signature,$payHash,$userId,$now);
-            }catch(Throwable $e){$incomplete=true;$issues[]='visual_database_failed';error_log('Receipt visual check incomplete');}
-        }
+
     }catch(Throwable $e){$incomplete=true;$issues[]='database_failed';error_log('Receipt duplicate check incomplete');}
     finally{
         if($locked){try{$stmt=$connection->prepare('SELECT RELEASE_LOCK(?)');$stmt->bind_param('s',$lockName);$stmt->execute();$stmt->close();}catch(Throwable $e){}}
@@ -8181,7 +8181,7 @@ function v2raystore_warnDuplicateReceipt($duplicate, $messages = [], $currentHas
     $hasMatches = !empty($matches);
     if(!$hasMatches && empty($duplicate['incomplete'])) return;
     $header = $hasMatches
-        ? "⚠️ <b>هشدار فیش تکراری یا مشابه</b>\nدر سوابق ۹۰ روز اخیر، رسید یکسان یا مشابه برای پرداخت‌های زیر پیدا شد:\n"
+        ? "⚠️ <b>فایل رسید یکسان</b>\nدر سوابق ۹۰ روز اخیر، همین فایل برای پرداخت‌های زیر نیز ثبت شده است (این تطبیق به‌تنهایی نشانهٔ تخلف نیست):\n"
         : "⚠️ <b>بررسی رسید ناقص است</b>\nکد پرداخت مشابهی از این بررسی به دست نیامد؛ یکتا بودن رسید تأیید نشده است.\n";
     if($currentHash !== '') $header .= "\n🧾 کد پرداخت فعلی: <code>".v2raystore_h($currentHash)."</code>\n";
     $suffix = !empty($duplicate['incomplete']) ? v2raystore_receiptIncompleteText($duplicate['issues']??[]) : '';
@@ -22413,6 +22413,21 @@ function v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix = ''){
     return implode("\n", $lines);
 }
 
+function v2raystore_manualReceiptHandoff($hashId, $fileId, $reason){
+    global $from_id, $userInfo;
+    $uid = (int)($from_id ?? 0);
+    if($uid <= 0 || trim((string)$fileId) === '') return ['ok'=>false];
+    $caption = "🧾 رسید برای بررسی دستی\n👤 فرستنده: " . v2raystore_h($userInfo['name'] ?? '') .
+        "\n🆔 آیدی: <code>" . $uid . "</code>\n📨 ثبت رسید: " . v2raystore_iranDateTimeText(time()) .
+        "\nکد موجود در مرحلهٔ کاربر: <code>" . v2raystore_h($hashId) . "</code>" .
+        "\nعلت ارجاع: " . v2raystore_h($reason) .
+        "\nاین تصویر به هیچ سفارش دیگری متصل نشده است. پیش از هر تأیید، سفارش و پرداخت فرستنده را دستی بررسی کنید.";
+    try{ $sent = v2raystore_sendAdminPaymentPhoto('', $fileId, $caption, null, 'HTML', $uid); }
+    catch(Throwable $e){ error_log('Manual receipt handoff deferred'); $sent = []; }
+    return ['ok'=>!empty($sent['ok']), 'admin_ok'=>!empty($sent['ok']),
+        'user_message'=>'✅ تصویر رسید شما برای بررسی دستی ارسال شد.'];
+}
+
 function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId, $fileUniqueId = '', $contentHash = '', $visualHash = ''){
     global $from_id, $mainValues;
     $hashId = trim((string)$hashId);
@@ -22425,28 +22440,26 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
         $photoInfo = v2raystore_getBestPhotoInfo();
         $fileUniqueId = trim((string)($photoInfo['file_unique_id'] ?? ''));
     }
-    $receiptSettings = function_exists('v2raystore_receiptCheckSettings') ? v2raystore_receiptCheckSettings() : ['enabled'=>true,'days'=>90];
+    $receiptSettings = function_exists('v2raystore_receiptCheckSettings') ? v2raystore_receiptCheckSettings() : ['enabled'=>false,'days'=>90];
     $fingerprints = [];
-    if($hashId === '') return ['ok'=>false, 'message'=>'کد پرداخت نامعتبر است.'];
+    if($hashId === '') return v2raystore_manualReceiptHandoff($hashId, $fileId, 'مرحلهٔ پرداخت فاقد کد است');
     if($fileId === '') return ['ok'=>false, 'message'=>'لطفاً رسید را فقط به صورت عکس ارسال کنید.'];
 
-    $pay = v2raystore_getPayByHash($hashId);
-    if(!$pay) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد یا منقضی شده است.'];
+    try{ $pay = v2raystore_getPayByHash($hashId); }
+    catch(Throwable $e){ return v2raystore_manualReceiptHandoff($hashId, $fileId, 'خواندن سفارش نیازمند بررسی است'); }
+    if(!$pay) return v2raystore_manualReceiptHandoff($hashId, $fileId, 'سفارش مرحلهٔ کاربر پیدا نشد');
     $uid = intval($pay['user_id'] ?? 0);
-    if($uid > 0 && intval($from_id ?? 0) > 0 && $uid !== intval($from_id)) return ['ok'=>false, 'message'=>'این پرداخت متعلق به حساب شما نیست.'];
+    if($uid <= 0 || intval($from_id ?? 0) <= 0 || $uid !== intval($from_id)) return v2raystore_manualReceiptHandoff($hashId, $fileId, 'اتصال مرحلهٔ پرداخت به فرستنده نیازمند بررسی است');
 
     $state = (string)($pay['state'] ?? '');
-    if(in_array($state, ['approved', 'paid_with_wallet'], true)) return ['ok'=>false, 'message'=>'این سفارش قبلاً تأیید شده است.'];
-    if(in_array($state, ['declined', 'auto_cancelled'], true)) return ['ok'=>false, 'message'=>'این سفارش قبلاً رد یا لغو شده است.'];
+    if(!in_array($state, ['pending','sent'], true)) return v2raystore_manualReceiptHandoff($hashId, $fileId, 'سفارش در انتظار دریافت رسید نیست');
 
-    if(!empty($receiptSettings['enabled'])){
-        try{$fingerprints=v2raystore_getReceiptFingerprints($fileId);}catch(Throwable $e){$fingerprints=['issues'=>['check_incomplete']];error_log('Receipt download incomplete');}
-        if($contentHash==='')$contentHash=(string)($fingerprints['sha256']??'');
-        if($visualHash==='')$visualHash=(string)($fingerprints['visual']??'');
-    }
-    if(!v2raystore_markPayReceiptSent($hashId, $fileId)) return ['ok'=>false, 'message'=>'ثبت رسید در دیتابیس انجام نشد. لطفاً دوباره تلاش کنید.'];
+    try{ $receiptSaved = v2raystore_markPayReceiptSent($hashId, $fileId); }
+    catch(Throwable $e){ $receiptSaved = false; }
+    if(!$receiptSaved) return v2raystore_manualReceiptHandoff($hashId, $fileId, 'ذخیرهٔ رسید روی سفارش انجام نشد');
     $pay['state'] = 'sent';
     $pay['receipt_file_id'] = $fileId;
+    $pay['sent_date'] = time();
 
     $msg = v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix);
     $keyboard = v2raystore_adminReceiptKeyboardByPay($pay, $stepPrefix);
@@ -22455,22 +22468,29 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
     if((string)($pay['type'] ?? '') === 'INCREASE_WALLET' && function_exists('v2raystore_adminPendingWalletKeyboard')){
         $keyboard = v2raystore_adminPendingWalletKeyboard($hashId, $uid);
     }
-    $adminSend = v2raystore_sendAdminPaymentPhoto($hashId, $fileId, $msg, $keyboard, 'HTML', $uid);
+    try{ $adminSend = v2raystore_sendAdminPaymentPhoto($hashId, $fileId, $msg, $keyboard, 'HTML', $uid); }
+    catch(Throwable $e){ error_log('Saved receipt admin delivery deferred'); $adminSend = ['ok'=>false]; }
 
     // تشخیص فقط برای هشدار است و هیچ‌وقت نتیجهٔ ثبت رسید/سفارش را تغییر نمی‌دهد.
+    $duplicate = [];
     if(!empty($receiptSettings['enabled'])){
-        $duplicate = v2raystore_registerReceiptFingerprint($hashId, $uid, $fileUniqueId, $contentHash, $visualHash, $fingerprints['signature'] ?? []);
-        $duplicate['issues']=array_values(array_unique(array_merge($duplicate['issues']??[], $fingerprints['issues']??[])));
-        $duplicate['incomplete']=!empty($duplicate['incomplete']) || $contentHash==='' || empty($fingerprints['signature']) || !empty($duplicate['issues']);
-        try{v2receipt_markHistory($hashId,$fileId,time(),empty($duplicate['incomplete']));}catch(Throwable $e){}
-        // One report contains both actual matches and any incomplete checks.
-        if(!empty($duplicate['duplicate']) || !empty($duplicate['incomplete'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? [], $hashId);
+        try{
+            $fingerprints = v2raystore_getReceiptFingerprints($fileId, false);
+            $contentHash = (string)($fingerprints['sha256'] ?? '');
+            $duplicate = v2raystore_registerReceiptFingerprint($hashId, $uid, $fileUniqueId, $contentHash);
+            $duplicate['issues'] = array_values(array_unique(array_merge($duplicate['issues'] ?? [], $fingerprints['issues'] ?? [])));
+            $duplicate['incomplete'] = !empty($duplicate['incomplete']) || !empty($duplicate['issues']);
+            v2receipt_markHistory($hashId, $fileId, $pay['sent_date'], $contentHash !== '');
+            if(!empty($duplicate['duplicate']) || !empty($duplicate['incomplete'])) v2raystore_warnDuplicateReceipt($duplicate, $adminSend['messages'] ?? [], $hashId);
+        }catch(Throwable $e){ error_log('Optional receipt check deferred; receipt already saved'); }
     }
 
     $type = (string)($pay['type'] ?? '');
     if($type === 'INCREASE_WALLET') $userMessage = $mainValues['order_increase_sent'] ?? '✅ رسید شارژ کیف پول شما ثبت شد و برای ادمین ارسال شد.';
     elseif($type === 'RENEW_ACCOUNT' || preg_match('/^INCREASE_(DAY|VOLUME)_/', $type)) $userMessage = $mainValues['renew_order_sent'] ?? '✅ رسید شما ثبت شد و برای ادمین ارسال شد.';
     else $userMessage = $mainValues['order_buy_sent'] ?? '✅ رسید خرید شما ثبت شد و برای ادمین ارسال شد.';
+
+    if(empty($adminSend['ok'])) $userMessage = '✅ تصویر رسید شما ثبت شد و در انتظار بررسی است.';
 
     return [
         'ok'=>true,
