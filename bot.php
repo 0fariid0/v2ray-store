@@ -408,14 +408,15 @@ if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $storeCancelPayMatch)){
 if(isset($update->message) && v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $storeReceiptControlMatch)){
     $storeReceiptKind = v2raystore_receiptMessageKind($update->message, $buttonValues ?? []);
     if($storeReceiptKind === 'control'){
+        if(preg_match('~^/start(?:@[A-Za-z0-9_]+)?(?:\s|$)~i', trim((string)($update->message->text ?? '')))){
+            v2raystore_cancelPendingPayByUser($storeReceiptControlMatch[2] ?? '', $from_id);
+        }
         setUser();
         setUser('', 'temp');
         $userInfo['step'] = 'none';
         $userInfo['temp'] = '';
     }elseif($storeReceiptKind === 'other'){
-        // Keep the receipt step; never forward non-photo content to admins.
-        if(!empty($update->message->text) || isset($update->message->document) || isset($update->message->video) || isset($update->message->voice) || isset($update->message->audio) || isset($update->message->sticker))
-            sendMessage('📸 لطفاً فقط عکس رسید را از گالری ارسال کنید؛ متن و فایل به‌عنوان رسید ثبت نمی‌شود.');
+        v2raystore_sendReceiptPhotoOnlyNotice($storeReceiptControlMatch[2] ?? '');
         exit();
     }
 }
@@ -447,7 +448,7 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && isset($update->messa
         sendMessage($mainValues['reached_main_menu'], getMainKeys());
     }else{
         // Transport failure is not a receipt rejection. Preserve the step for retry.
-        sendMessage('لطفاً رسید را دوباره ارسال کنید یا با پشتیبانی تماس بگیرید.', null, 'HTML');
+        sendMessage('لطفاً عکس رسید را دوباره ارسال کنید یا با پشتیبانی تماس بگیرید.', v2raystore_cartToCartReceiptKeyboard($storeReceiptHashId), 'HTML');
     }
     exit();
 }
