@@ -152,7 +152,7 @@ function v2receipt_markHistory($payHash,$fileId,$sentAt,$ok){
 }
 function v2receipt_backfill($limit=3){
     global $connection,$dbName;
-    if(PHP_SAPI!=='cli' || empty(v2raystore_receiptCheckSettings()['enabled']) || !function_exists('imagecreatefromstring'))return 0;
+    if(PHP_SAPI!=='cli' || empty(v2raystore_receiptCheckSettings()['enabled']))return 0;
     $locked=false;$done=0;$lockName='v2receipt-history:'.substr(hash('sha256',(string)($dbName??'')),0,24);
     try{
         if(!v2receipt_ensureVisualTables() || !v2raystore_ensureReceiptFingerprintsTable())return 0;
@@ -162,13 +162,13 @@ function v2receipt_backfill($limit=3){
         $stmt=$connection->prepare("SELECT p.hash_id,p.user_id,p.receipt_file_id,COALESCE(NULLIF(p.sent_date,0),p.request_date) AS sent_at FROM pays p LEFT JOIN receipt_history_v4 h ON h.pay_hash=p.hash_id AND h.file_hash=SHA2(p.receipt_file_id,256) WHERE COALESCE(NULLIF(p.sent_date,0),p.request_date)>=? AND COALESCE(NULLIF(p.sent_date,0),p.request_date)<=? AND p.receipt_file_id IS NOT NULL AND p.receipt_file_id<>'' AND (h.pay_hash IS NULL OR h.next_attempt<=?) ORDER BY p.id DESC LIMIT $limit");
         $stmt->bind_param('iii',$cutoff,$now,$now);$stmt->execute();$rows=$stmt->get_result()->fetch_all(MYSQLI_ASSOC);$stmt->close();
         foreach($rows as $row){
-            try{$fp=v2raystore_getReceiptFingerprints($row['receipt_file_id']);}catch(Throwable $e){$fp=[];}
-            $ok=!empty($fp['signature']);
+            try{$fp=v2raystore_getReceiptFingerprints($row['receipt_file_id'], false);}catch(Throwable $e){$fp=[];}
+            $ok=!empty($fp['sha256']);
             if(!empty($fp['sha256'])){
                 $s=$connection->prepare("INSERT INTO receipt_fingerprints(pay_hash,user_id,file_unique_id,content_hash,visual_hash,visual_version,created_at) SELECT ?,?,'',?,?,3,? WHERE NOT EXISTS(SELECT 1 FROM receipt_fingerprints WHERE pay_hash=? AND content_hash=?)");
                 $s->bind_param('sississ',$row['hash_id'],$row['user_id'],$fp['sha256'],$fp['visual'],$row['sent_at'],$row['hash_id'],$fp['sha256']);$s->execute();$s->close();
             }
-            if($ok)v2receipt_storeVisual($fp['signature'],$row['hash_id'],(int)$row['user_id'],(int)$row['sent_at']);
+
             v2receipt_markHistory($row['hash_id'],$row['receipt_file_id'],(int)$row['sent_at'],$ok);$done++;
         }
         v2raystore_cleanupReceiptFingerprints($now);
