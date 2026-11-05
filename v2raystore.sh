@@ -779,16 +779,24 @@ update_crons_for_domain() {
 }
 
 set_bot_webhook() {
-    local token="$1" bot_url="$2" webhook_url response secret
+    local token="$1" bot_url="$2" webhook_url response secret target_ip="${3:-}"
     webhook_url="${bot_url%/}/bot.php"
     [ -z "$token" ] || [ -z "$bot_url" ] && return 1
     ensure_webhook_secret || return 1
     secret=$(php_var webhookSecret)
-    response=$(curl -fsS -X POST "https://api.telegram.org/bot${token}/setWebhook" \
+    response=$(curl -sS --connect-timeout 10 --max-time 30 -X POST "https://api.telegram.org/bot${token}/setWebhook" \
         --data-urlencode "url=${webhook_url}" \
         --data-urlencode "secret_token=${secret}" \
+        --data-urlencode "ip_address=${target_ip}" \
         -d "drop_pending_updates=false" 2>/dev/null || true)
-    echo "$response" | grep -q '"ok":true'
+    if printf '%s' "$response" | php -r '$j=json_decode(stream_get_contents(STDIN),true); exit(!empty($j["ok"])?0:1);'; then
+        return 0
+    fi
+    local detail
+    detail=$(printf '%s' "$response" | php -r '$j=json_decode(stream_get_contents(STDIN),true); echo $j["description"] ?? "No valid Telegram response (network/timeout).";')
+    detail="${detail//$token/[token]}"
+    error "Telegram: $detail"
+    return 1
 }
 
 ensure_webhook_secret() {
@@ -1731,6 +1739,30 @@ SQL
     return 1
 }
 
+refresh_webhook_ip() {
+    local token url host target_ip probe
+    token=$(php_var botToken)
+    url=$(php_var botUrl)
+    [ -n "$token" ] && [ -n "$url" ] || { error "Bot configuration missing."; return 1; }
+    host=$(php -r 'echo parse_url($argv[1], PHP_URL_HOST) ?: "";' "$url")
+    [[ "$url" == https://* ]] && [ -n "$host" ] || { error "A valid HTTPS bot URL is required."; return 1; }
+    echo "Enter the NEW public IPv4 of this bot server. DNS must also point to this server."
+    echo "This pins Telegram delivery directly to that IP; HTTPS/domain stay unchanged."
+    read -r -p "New public IPv4 (blank = cancel): " target_ip
+    [ -n "$target_ip" ] || return 0
+    php -r 'exit(filter_var($argv[1], FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 | FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)?0:1);' "$target_ip" || { error "Invalid public IPv4."; return 1; }
+    # Validate domain TLS on the selected IP without executing bot.php or an update.
+    probe=$(curl --noproxy '*' -sS -I --connect-timeout 8 --max-time 15 --resolve "$host:443:$target_ip" "https://$host/" -o /dev/null -w '%{http_code}' 2>/dev/null) || {
+        error "HTTPS/TLS on the new IP failed. Check port 443, certificate and virtual host. Webhook unchanged."
+        return 1
+    }
+    confirm "Set Telegram webhook to $target_ip (pending updates will be kept)?" || return 0
+    set_bot_webhook "$token" "$url" "$target_ip" || return 1
+    success "Webhook IP updated. Pending updates were preserved. Send /start to test delivery."
+    warning "After another IP change, run this option again. Repair webhook returns to DNS mode."
+    warning "HTTP 500 requires checking PHP/Apache logs; setting a webhook cannot fix application errors."
+}
+
 repair_webhook() {
     local token url
     token=$(php_var botToken)
@@ -1834,7 +1866,7 @@ show_status() {
             err=$(json_value "$info" "result.last_error_message")
             if [ "$ok" = "true" ] && [ -n "$url" ]; then
                 kv "Webhook" "$(dot ok) ${GREEN}set${NC} ${DIM}(${pending:-0} pending)${NC}"
-                [ -n "$err" ] && kv "Webhook error" "$(dot bad) ${RED}${err}${NC}"
+                [ -n "$err" ] && kv "Last webhook error (may be historical)" "$(dot bad) ${RED}${err}${NC}"
             else
                 kv "Webhook" "$(dot bad) ${RED}not set / unreachable${NC}"
             fi
@@ -1995,6 +2027,7 @@ main_menu() {
             "Optimize PHP/upload settings"
             "Install local command"
             "Delete"
+            "Refresh webhook after IP change"
             "Exit"
         )
         PS3="Please select action: "
@@ -2015,6 +2048,7 @@ main_menu() {
                 "SSL tools") ssl_menu; break ;;
                 "Optimize PHP/upload settings") configure_php_performance; pause_screen; break ;;
                 "Install local command") install_local_command; pause_screen; break ;;
+                "Refresh webhook after IP change") refresh_webhook_ip; pause_screen; break ;;
                 "Delete") run_delete; pause_screen; break ;;
                 "Exit") exit 0 ;;
                 *) error "Invalid option." ;;
@@ -2043,6 +2077,7 @@ case "${1:-menu}" in
     cloudflare-ddns) cloudflare_ddns_worker ;;
     password|panel-password) change_panel_password ;;
     webhook) repair_webhook ;;
+    webhook-ip) refresh_webhook_ip ;;
     ssl) ssl_menu ;;
     php|php-tune|optimize) configure_php_performance ;;
     delete|remove) run_delete ;;
