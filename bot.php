@@ -22,6 +22,7 @@ if(PHP_SAPI !== 'cli'){
         exit;
     }
 }
+define('V2RAYSTORE_ORDER_WEBHOOK', true);
 include_once __DIR__ . '/config.php';
 check();
 $robotState = $botState['botState']??"on";
@@ -380,6 +381,15 @@ if(!function_exists('v2raystore_appendServerPlanToChannelReport')){
         return rtrim($msg) . "
 " . implode("
 ", $lines);
+    }
+}
+
+// Validate old payment buttons before any legacy handler changes the user step.
+if(v2raystore_isCartToCartReceiptStep($data ?? '', $paymentEntryMatch)){
+    $entryPay = v2raystore_getPayByHash($paymentEntryMatch[2]);
+    if(!v2raystore_receiptEntryAllowed($entryPay, $from_id, $paymentEntryMatch[1])){
+        alert('این درخواست پرداخت دیگر قابل استفاده نیست؛ از منوی اصلی سفارش را انتخاب کنید.', true);
+        exit();
     }
 }
 
@@ -3528,16 +3538,13 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
     }
     sendMessage("🪄 لطفاً صبور باشید ...",$removeKeyboard);
     $hash_id = RandomString();
-    $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'INCREASE_WALLET' AND `state` = 'pending'");
-    $stmt->bind_param("i", $from_id);
-    $stmt->execute();
-    $stmt->close();
+    // Keep earlier pending payments: their buttons and bank transfers remain valid.
     
     $time = time();
     $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`)
                                 VALUES (?, ?, 'INCREASE_WALLET', '0', '0', '0', ?, ?, 'pending')");
     $stmt->bind_param("siii", $hash_id, $from_id, $text, $time);
-    $stmt->execute();
+    v2raystore_executePayInsert($stmt);
     $stmt->close();
     v2seg_snapshotPayHash($hash_id);
     
@@ -6761,16 +6768,13 @@ if((preg_match('/^discountCustomPlanDay(\d+)/',$userInfo['step'], $match) || pre
         
         $price = v2seg_price(($volume * $gbPrice) + ($days * $dayPrice));
         $hash_id = RandomString();
-        $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'BUY_SUB' AND `state` = 'pending'");
-        $stmt->bind_param("i", $from_id);
-        $stmt->execute();
-        $stmt->close();
+        // Keep earlier pending payments: their buttons and bank transfers remain valid.
         
         $time = time();
         $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `description`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`, `agent_bought`)
                                     VALUES (?, ?, ?, 'BUY_SUB', ?, ?, ?, ?, ?, 'pending', ?)");
         $stmt->bind_param("ssiiiiiii", $hash_id, $text, $from_id, $id, $volume, $days, $price, $time, $agentBought);
-        $stmt->execute();
+        v2raystore_executePayInsert($stmt);
         $rowId = $stmt->insert_id;
         $stmt->close();
         v2seg_snapshotPayHash($hash_id);
@@ -6992,15 +6996,12 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
             exit();
         }
         $hash_id = RandomString();
-        $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'RENEW_ACCOUNT' AND `state` = 'pending'");
-        $stmt->bind_param("i", $from_id);
-        $stmt->execute();
-        $stmt->close();
+        // Keep earlier pending payments: their buttons and bank transfers remain valid.
         $time = time();
         $renewDesc = json_encode(['order_id'=>$renewOrderId, 'renew_plan_id'=>intval($id)], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `description`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`) VALUES (?, ?, ?, 'RENEW_ACCOUNT', ?, '0', '0', ?, ?, 'pending')");
         $stmt->bind_param("ssiiii", $hash_id, $renewDesc, $from_id, $renewOrderId, $price, $time);
-        $stmt->execute();
+        v2raystore_executePayInsert($stmt);
         $stmt->close();
         v2seg_snapshotPayHash($hash_id);
         if(function_exists('v2raystore_notifyPurchaseStarted')) v2raystore_notifyPurchaseStarted($hash_id, 'انتخاب پلن تمدید');
@@ -7037,10 +7038,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
         
         if(!preg_match('/^discountSelectPlan/', $userInfo['step'])){
             $hash_id = RandomString();
-            $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'BUY_SUB' AND `state` = 'pending'");
-            $stmt->bind_param("i", $from_id);
-            $stmt->execute();
-            $stmt->close();
+            // Keep earlier pending payments: their buttons and bank transfers remain valid.
             
             $time = time();
             if(isset($accountCount)){
@@ -7052,7 +7050,7 @@ if((preg_match('/^discountSelectPlan(\d+)_(\d+)_(\d+)/',$userInfo['step'],$match
                                             VALUES (?, ?, ?, 'BUY_SUB', ?, '0', '0', ?, ?, 'pending', ?)");
                 $stmt->bind_param("ssiiiii", $hash_id, $remark, $from_id, $id, $price, $time, $agentBought);
             }
-            $stmt->execute();
+            v2raystore_executePayInsert($stmt);
             $rowId = $stmt->insert_id;
             $stmt->close();
             v2seg_snapshotPayHash($hash_id);
@@ -10788,10 +10786,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
     $token = base64_encode("{$from_id}.{$id}");
     
     $hash_id = RandomString();
-    $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'RENEW_SCONFIG' AND `state` = 'pending'");
-    $stmt->bind_param("i", $from_id);
-    $stmt->execute();
-    $stmt->close();
+    // Keep earlier pending payments: their buttons and bank transfers remain valid.
 
     setUser('', 'temp');
     $description = json_encode(["uuid"=>$uuid, "remark"=>$remark, 'marzban' => isset($configInfo['marzban'])],488);
@@ -10799,7 +10794,7 @@ if(preg_match('/sConfigRenewPlan(\d+)_(\d+)/',$data, $match) && ($botState['sell
     $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `description`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`)
                                 VALUES (?, ?, ?, 'RENEW_SCONFIG', ?, ?, '0', ?, ?, 'pending')");
     $stmt->bind_param("ssiiiii", $hash_id, $description, $from_id, $id, $inbound_id, $price, $time);
-    $stmt->execute();
+    v2raystore_executePayInsert($stmt);
     $rowId = $stmt->insert_id;
     $stmt->close();
     v2seg_snapshotPayHash($hash_id);
@@ -13473,16 +13468,13 @@ if(preg_match('/^discountRenew(\d+)_(\d+)/',$userInfo['step'], $match) || preg_m
     if(!v2seg_planAllowed($fid)){alert('این پلن برای گروه شما فعال نیست.',true);exit;}
     if(!preg_match('/^discountRenew/', $userInfo['step'])){
         $hash_id = RandomString();
-        $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` = 'RENEW_ACCOUNT' AND `state` = 'pending'");
-        $stmt->bind_param("i", $from_id);
-        $stmt->execute();
-        $stmt->close();
+        // Keep earlier pending payments: their buttons and bank transfers remain valid.
         
         $time = time();
         $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`)
                                     VALUES (?, ?, 'RENEW_ACCOUNT', ?, '0', '0', ?, ?, 'pending')");
         $stmt->bind_param("siiii", $hash_id, $from_id, $oid, $price, $time);
-        $stmt->execute();
+        v2raystore_executePayInsert($stmt);
         $rowId = $stmt->insert_id;
         $stmt->close();
         v2seg_snapshotPayHash($hash_id);
@@ -14436,17 +14428,14 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     
     $planprice = v2seg_price($planprice);
     $hash_id = RandomString();
-    $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` LIKE '%INCREASE_DAY%' AND `state` = 'pending'");
-    $stmt->bind_param("i", $from_id);
-    $stmt->execute();
-    $stmt->close();
+    // Keep earlier pending payments: their buttons and bank transfers remain valid.
     
     $time = time();
     $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`)
                                 VALUES (?, ?, ?, '0', '0', '0', ?, ?, 'pending')");
     $type = "INCREASE_DAY_$data";
     $stmt->bind_param("sisii", $hash_id, $from_id,$type, $planprice, $time);
-    $stmt->execute();
+    v2raystore_executePayInsert($stmt);
     $stmt->close();
     v2seg_snapshotPayHash($hash_id);
 
@@ -14753,17 +14742,14 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
 
     $planprice = v2seg_price($planprice);
     $hash_id = RandomString();
-    $stmt = $connection->prepare("DELETE FROM `pays` WHERE `user_id` = ? AND `type` LIKE '%INCREASE_VOLUME%' AND `state` = 'pending'");
-    $stmt->bind_param("i", $from_id);
-    $stmt->execute();
-    $stmt->close();
+    // Keep earlier pending payments: their buttons and bank transfers remain valid.
     
     $time = time();
     $stmt = $connection->prepare("INSERT INTO `pays` (`hash_id`, `user_id`, `type`, `plan_id`, `volume`, `day`, `price`, `request_date`, `state`)
                                 VALUES (?, ?, ?, '0', '0', '0', ?, ?, 'pending')");
     $type = "INCREASE_VOLUME_$data";
     $stmt->bind_param("sisii", $hash_id, $from_id,$type, $planprice, $time);
-    $stmt->execute();
+    v2raystore_executePayInsert($stmt);
     $stmt->close();
     v2seg_snapshotPayHash($hash_id);
     

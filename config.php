@@ -11,6 +11,7 @@ require_once __DIR__ . '/settings/receiptSimilarity.php';
 require_once __DIR__ . '/settings/configPower.php';
 require_once __DIR__ . '/settings/clientIdentity.php';
 require_once __DIR__ . '/settings/configHistory.php';
+require_once __DIR__ . '/settings/orderIntegrity.php';
 
 $connection = new mysqli('localhost',$dbUserName,$dbPassword,$dbName);
 if($connection->connect_error){
@@ -8286,7 +8287,10 @@ function v2raystore_cartToCartNoCardText($alreadyReceived = false, $paymentKeys 
 function v2raystore_sendCartToCartInstructions($hashId, $templateKey, $parse = 'HTML'){
     global $mainValues, $userInfo;
     $pay = v2raystore_getPayByHash($hashId);
-    if(!$pay || (int)$pay['user_id'] !== (int)($userInfo['userid'] ?? 0)){sendMessage('پرداخت متعلق به شما نیست.');return;}
+    if(!$pay || (int)$pay['user_id'] !== (int)($userInfo['userid'] ?? 0) || !in_array($pay['state'] ?? '', ['pending','sent'], true)){
+        sendMessage('لطفاً سفارش را دوباره از منوی اصلی انتخاب کنید.', getMainKeys());
+        return;
+    }
     if(v2seg_runtimeGroup($userInfo['userid']) === 'new' && trim(v2seg_settings()['card']) === ''){sendMessage('اطلاعات پرداخت هنوز تنظیم نشده است.');return;}
     $proPayLine = function_exists('v2raystore_pro_prepare_cart_to_cart_pay') ? v2raystore_pro_prepare_cart_to_cart_pay($hashId) : '';
     $paymentKeys = v2raystore_getPaymentKeys();
@@ -11250,6 +11254,10 @@ if(isset($update->callback_query)){
     $markup = json_decode(json_encode($update->callback_query->message->reply_markup->inline_keyboard),true);
 }
 if($from_id < 0) exit();
+// Serialize webhook state changes BEFORE loading the user's conversation state.
+if(defined('V2RAYSTORE_ORDER_WEBHOOK') && (int)($from_id ?? 0) > 0){
+    v2raystore_lockOrderConversation($connection, $dbName, $from_id);
+}
 $stmt = $connection->prepare("SELECT * FROM `users` WHERE `userid`=?");
 $stmt->bind_param("i", $from_id);
 $stmt->execute();
@@ -14192,8 +14200,17 @@ function setUser($value = 'none', $field = 'step'){
     elseif($field == "spam_info") $stmt = $connection->prepare("UPDATE `users` SET `spam_info` = ? WHERE `userid` = ?");
     
     $stmt->bind_param("si", $value, $from_id);
-    $stmt->execute();
+    $saved = $stmt->execute();
     $stmt->close();
+    if($field === 'step' && v2raystore_isCartToCartReceiptStep($value, $receiptStep)){
+        if(!$saved) throw new RuntimeException('Receipt step write failed');
+        $verify = $connection->prepare("SELECT `step` FROM `users` WHERE `userid` = ? LIMIT 1");
+        $verify->bind_param('i', $from_id);
+        $verify->execute();
+        $stored = $verify->get_result()->fetch_assoc();
+        $verify->close();
+        if(($stored['step'] ?? '') !== $value) throw new RuntimeException('Receipt step verification failed');
+    }
 }
 function generateRandomString($length, $protocol) {
     return ($protocol == 'trojan') ? substr(md5(time()),5,15) : generateUID();
@@ -21824,7 +21841,13 @@ function v2raystore_markPayReceiptSent($hashId, $receiptFileId = null){
         $stmt->bind_param('is', $now, $hashId);
     }
     $ok = $stmt->execute();
+    $affected = $stmt->affected_rows;
     $stmt->close();
+    if($ok && $affected === 0){
+        $stored = v2raystore_getPayByHash($hashId);
+        $ok = $stored && ($stored['state'] ?? '') === 'sent'
+            && ($receiptFileId === '' || ($stored['receipt_file_id'] ?? '') === $receiptFileId);
+    }
     if($ok && function_exists('v2raystore_scheduleAutoApproveWakeup')){
         v2raystore_scheduleAutoApproveWakeup($hashId);
     }
