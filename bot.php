@@ -384,6 +384,18 @@ if(!function_exists('v2raystore_appendServerPlanToChannelReport')){
     }
 }
 
+// One balance reservation and fulfillment path for all wallet products.
+if(preg_match('/^(payCustomWithWallet|payWithWallet|payRenewWithWallet|payIncraseDayWithWallet|payIncraseWithWallet)(.*)$/D', $data ?? '', $walletMatch)){
+    $walletResult = v2raystore_runWalletPayment($walletMatch[2], $walletMatch[1], (int)$from_id);
+    if(empty($walletResult['ok'])){
+        alert($walletResult['message'], true);
+    }else{
+        alert('پرداخت با کیف پول ثبت شد.');
+        editText($message_id, '✅ پرداخت با کیف پول انجام شد.');
+    }
+    exit();
+}
+
 // Validate old payment buttons before any legacy handler changes the user step.
 if(v2raystore_isCartToCartReceiptStep($data ?? '', $paymentEntryMatch)){
     $entryPay = v2raystore_getPayByHash($paymentEntryMatch[2]);
@@ -405,6 +417,10 @@ if(function_exists('v2raystore_isCartToCartReceiptStep') && v2raystore_isCartToC
 }
 if(preg_match('/^cancelPendingPay(.+)$/', $data ?? '', $storeCancelPayMatch)){
     $cancelResult = function_exists('v2raystore_cancelPendingPayByUser') ? v2raystore_cancelPendingPayByUser($storeCancelPayMatch[1], $from_id) : ['ok'=>false, 'message'=>'امکان لغو پرداخت در دسترس نیست.'];
+    if(v2raystore_isCartToCartReceiptStep($userInfo['step'] ?? '', $cancelStep) && $cancelStep[2] !== $storeCancelPayMatch[1]){
+        alert($cancelResult['message'], true);
+        exit();
+    }
     setUser();
     setUser('', 'temp');
     if(isset($message_id)) delMessage();
@@ -3528,12 +3544,9 @@ if($userInfo['step'] == "increaseMyWallet" && $text != $buttonValues['cancel']){
         sendMessage("کیف پول در حال حاضر برای حساب شما غیرفعال است.", $removeKeyboard);
         exit();
     }
-    if(!is_numeric($text)){
-        sendMessage($mainValues['send_only_number']);
-        exit();
-    }
-    elseif($text < 5000){
-        sendMessage("لطفاً مقداری بیشتر از 5000 وارد کن");
+    $text = v2raystore_parseWalletTopUp($text ?? '');
+    if($text === null){
+        sendMessage('مبلغ را به صورت عدد کامل و حداقل ۵٬۰۰۰ تومان وارد کنید.', $cancelKey);
         exit();
     }
     sendMessage("🪄 لطفاً صبور باشید ...",$removeKeyboard);
@@ -14412,6 +14425,10 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     $stmt->execute();
     $res = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$res){
+        alert('این پلن دیگر در دسترس نیست.', true);
+        exit();
+    }
     $planprice = $res['price'];
     
     $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
@@ -14419,6 +14436,11 @@ if(preg_match('/selectPlanDayIncrease(?<orderId>.+)_(?<dayId>.+)/',$data,$match)
     $stmt->execute();
     $orderInfo = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$res || !$orderInfo || (int)($orderInfo['status'] ?? 0) !== 1
+        || ((int)$orderInfo['userid'] !== (int)$from_id && (int)$from_id !== (int)$admin && empty($userInfo['isAdmin']))){
+        alert('سرویس یا پلن فعال پیدا نشد.', true);
+        exit();
+    }
     $agentBought = $orderInfo['agent_bought'];
     
     if($agentBought == true){
@@ -14726,6 +14748,10 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
     $stmt->execute();
     $res = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$res){
+        alert('این پلن دیگر در دسترس نیست.', true);
+        exit();
+    }
     $planprice = $res['price'];
     $plangb = $res['volume'];
     
@@ -14734,6 +14760,11 @@ if(preg_match('/increaseVolumePlan(?<orderId>.+)_(?<volumeId>.+)/',$data,$match)
     $stmt->execute();
     $orderInfo = $stmt->get_result()->fetch_assoc();
     $stmt->close();
+    if(!$res || !$orderInfo || (int)($orderInfo['status'] ?? 0) !== 1
+        || ((int)$orderInfo['userid'] !== (int)$from_id && (int)$from_id !== (int)$admin && empty($userInfo['isAdmin']))){
+        alert('سرویس یا پلن فعال پیدا نشد.', true);
+        exit();
+    }
     $agentBought = $orderInfo['agent_bought'];
  
     if($agentBought == true){

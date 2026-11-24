@@ -8248,7 +8248,7 @@ function v2raystore_cancelPendingPayByUser($hashId, $userId){
     $userId = intval($userId);
     if($hashId === '' || $userId <= 0) return ['ok'=>false, 'message'=>'اطلاعات پرداخت نامعتبر است.'];
 
-    $stmt = $connection->prepare("SELECT `state`, `user_id` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
+    $stmt = $connection->prepare("SELECT `state`, `user_id`, `payid` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
     if(!$stmt) return ['ok'=>false, 'message'=>'خطای دیتابیس هنگام بررسی پرداخت.'];
     $stmt->bind_param('s', $hashId);
     $stmt->execute();
@@ -8258,13 +8258,14 @@ function v2raystore_cancelPendingPayByUser($hashId, $userId){
     if(!$pay) return ['ok'=>false, 'message'=>'پرداخت پیدا نشد یا قبلاً حذف شده است.'];
     if(intval($pay['user_id'] ?? 0) !== $userId) return ['ok'=>false, 'message'=>'این پرداخت متعلق به شما نیست.'];
 
+    if(trim((string)($pay['payid'] ?? '')) !== '') return ['ok'=>false, 'message'=>'درگاه این سفارش باز شده است؛ وضعیت پرداخت را در همان صفحه بررسی کنید.'];
     $state = (string)($pay['state'] ?? '');
     if(!in_array($state, ['pending', 'sent'], true)){
         return ['ok'=>false, 'message'=>'این پرداخت دیگر قابل لغو نیست.'];
     }
 
     $now = time();
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'cancelled_by_user', `approval_error` = NULL, `approval_error_date` = ?, `cancelled_date` = ? WHERE `hash_id` = ? AND `user_id` = ? AND `state` IN ('pending','sent')");
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'cancelled_by_user', `approval_error` = NULL, `approval_error_date` = ?, `cancelled_date` = ? WHERE `hash_id` = ? AND `user_id` = ? AND `state` IN ('pending','sent') AND COALESCE(`payid`,'') = ''");
     if(!$stmt) return ['ok'=>false, 'message'=>'خطای دیتابیس هنگام لغو پرداخت.'];
     $stmt->bind_param('iisi', $now, $now, $hashId, $userId);
     $stmt->execute();
@@ -17979,15 +17980,19 @@ function editMarzbanConfig($server_id,$info){
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    $panel_url = $server_info['panel_url'];
+    if(!$server_info) return (object)['success'=>false, 'msg'=>'سرور مرزبان پیدا نشد.'];
+    $panel_url = rtrim($server_info['panel_url'], '/');
     $serverName = $server_info['username'];
     $serverPass = $server_info['password'];
 
     $token = getMarzbanToken($server_id);
-    if(isset($token->detail)){return (object) ['success'=>false, 'msg'=>$token->error];}
+    if(empty($token->access_token)) return (object)['success'=>false, 'msg'=>'ورود به پنل مرزبان ناموفق بود.'];
 
     $remark = $info['remark'];
     $configInfo = getMarzbanUser($server_id, $remark, $token);
+    if(!is_object($configInfo) || empty($configInfo->username) || !isset($configInfo->status)){
+        return (object)['success'=>false, 'msg'=>'اطلاعات فعلی سرویس از مرزبان دریافت نشد.'];
+    }
     
     
     $expireTime = $configInfo->expire;
@@ -18008,7 +18013,7 @@ function editMarzbanConfig($server_id,$info){
         $volume = $info['volume'] * 1073741824;
         $response = resetMarzbanTraffic($server_id, $remark, $token);
         
-        if(!$response->success) return $response;
+        if(empty($response->success)) return $response;
     }
     
     $postFields = array(
@@ -18016,13 +18021,13 @@ function editMarzbanConfig($server_id,$info){
         "proxies" => $configInfo->proxies,
         "expire" => $expireTime,
         "data_limit" => $volume,
-        "username" => urlencode($remark),
+        "username" => $remark,
         "note" => $configInfo->note,
         "data_limit_reset_strategy"=> $configInfo->data_limit_reset_strategy,
         "status" => $configState
     );
     
-    $panel_url .=  '/api/user/'. $remark;
+    $panel_url .=  '/api/user/'. rawurlencode((string)$remark);
     $curl = curl_init();
     v2raystore_applyCurlTimeouts($curl, 5, 15);
     curl_setopt($curl, CURLOPT_URL, $panel_url);
@@ -18036,12 +18041,9 @@ function editMarzbanConfig($server_id,$info){
         ));
     
     $response = curl_exec($curl);
+    $httpStatus = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
-    if(isset($response->detail)){
-		$detail = $response->detail;
-        return (object) ['success'=>false, 'msg' => is_object($detail)?implode("-", (array) $detail):$detail];
-    }
-    return (object) ['success'=>true];
+    return v2raystore_marzbanWriteResult($response, $httpStatus);
 }
 function resetMarzbanTraffic($server_id, $remark, $token){
     global $connection;
@@ -18052,14 +18054,15 @@ function resetMarzbanTraffic($server_id, $remark, $token){
     $server_info = $stmt->get_result()->fetch_assoc();
     $stmt->close();
 
-    $panel_url = $server_info['panel_url'];
+    if(!$server_info) return (object)['success'=>false, 'msg'=>'سرور مرزبان پیدا نشد.'];
+    $panel_url = rtrim($server_info['panel_url'], '/');
     $serverName = $server_info['username'];
     $serverPass = $server_info['password'];
 
     if($token == null) $token = getMarzbanToken($server_id);
-    if(isset($token->detail)){return (object) ['success'=>false, 'msg'=>$token->detail];}
+    if(empty($token->access_token)) return (object)['success'=>false, 'msg'=>'ورود به پنل مرزبان ناموفق بود.'];
 
-    $panel_url .=  '/api/user/' . $remark .'/reset';
+    $panel_url .=  '/api/user/' . rawurlencode((string)$remark) .'/reset';
 
     $curl = curl_init();
     v2raystore_applyCurlTimeouts($curl, 5, 15);
@@ -18072,12 +18075,9 @@ function resetMarzbanTraffic($server_id, $remark, $token){
     ));
 
     $response = curl_exec($curl);
+    $httpStatus = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
     curl_close($curl);
-    if(isset($response->detail)){
-		$detail = $response->detail;
-        return (object) ['success'=>false, 'msg' => is_object($detail)?implode("-", (array) $detail):$detail];
-    }
-    return (object) ['success'=>true];
+    return v2raystore_marzbanWriteResult($response, $httpStatus);
 }
 function renewMarzbanUUID($server_id,$remark){
     global $connection;
@@ -21202,9 +21202,13 @@ function v2raystore_notifyWalletCustomer($hashId, $result){
         if(!$pay || ($pay['state'] ?? '') !== 'approved') return false;
         $uid = (int)($pay['user_id'] ?? 0);
         if($uid <= 0 || $uid !== (int)($result['user_id'] ?? 0)) return false;
-        $renew = strpos((string)($result['type'] ?? ''), 'RENEW') === 0;
+        $resultType = (string)($result['type'] ?? '');
+        $renew = strpos($resultType, 'RENEW') === 0;
+        $extension = strpos($resultType, 'INCREASE_') === 0;
+        $title = $renew ? '✅ تمدید سرویس با کیف پول انجام شد' :
+            ($extension ? '✅ افزایش حجم یا زمان سرویس با کیف پول انجام شد' : '✅ خرید سرویس با کیف پول انجام شد');
         $lines = [
-            $renew ? '✅ تمدید سرویس با کیف پول انجام شد' : '✅ خرید سرویس با کیف پول انجام شد',
+            $title,
             '🔖 کد پرداخت: ' . $hashId,
             '💰 مبلغ پرداخت: ' . number_format((int)$pay['price']) . ' تومان',
             '👛 موجودی کیف پول: ' . number_format((int)$pay['wallet']) . ' تومان',
@@ -21219,6 +21223,9 @@ function v2raystore_notifyWalletCustomer($hashId, $result){
             if($renew){
                 if(isset($result['renew_volume'])) $lines[] = '🔋 حجم پس از تمدید: ' . $result['renew_volume'] . ' گیگ';
                 if(isset($result['renew_days'])) $lines[] = '⏳ روزهای باقی‌مانده پس از تمدید: ' . $result['renew_days'];
+            }elseif($extension){
+                if(isset($result['increase_volume'])) $lines[] = '🔋 حجم اضافه‌شده: ' . $result['increase_volume'] . ' گیگ';
+                if(isset($result['increase_day'])) $lines[] = '⏳ روز اضافه‌شده: ' . $result['increase_day'];
             }else{
                 $volume = (float)($pay['volume'] ?? 0) > 0 ? $pay['volume'] : ($order['plan_volume'] ?? null);
                 $days = (int)($pay['day'] ?? 0) > 0 ? $pay['day'] : ($order['plan_days'] ?? null);
@@ -21262,11 +21269,7 @@ function v2raystore_notifyPaymentCompletedFullReport($hashId, $result = [], $aut
     $payType = (string)($pay['type'] ?? ($result['type'] ?? ''));
     $stateBefore = (string)($result['pay_state_before'] ?? '');
     $walletNow = intval($pay['wallet'] ?? 0);
-    // در پرداخت‌های کیف پولی، گزارش قبل از کم‌شدن موجودی از دیتابیس ساخته می‌شود؛ برای نمایش درست، مبلغ را محاسبه‌ای کم می‌کنیم.
     $walletAfter = $walletNow;
-    if($price > 0 && in_array($stateBefore, ['pending','0','paid_with_wallet'], true) && $payType !== 'INCREASE_WALLET'){
-        $walletAfter = max(0, $walletNow - $price);
-    }
     if($payType === 'INCREASE_WALLET' && $price > 0 && in_array($stateBefore, ['sent','pending','0','auto_processing','processing'], true)){
         // تابع شارژ کیف پول قبل از ساخت گزارش دیتابیس کاربر را افزایش داده است، پس مقدار فعلی همان موجودی جدید است.
         $walletAfter = $walletNow;
@@ -21832,11 +21835,11 @@ function v2raystore_markPayReceiptSent($hashId, $receiptFileId = null){
     $now = time();
     $receiptFileId = trim((string)$receiptFileId);
     if($receiptFileId !== ''){
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `sent_date` = ?, `receipt_file_id` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent')");
+        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `sent_date` = ?, `receipt_file_id` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent') AND COALESCE(`payid`,'') = ''");
         if(!$stmt) return false;
         $stmt->bind_param('iss', $now, $receiptFileId, $hashId);
     }else{
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `sent_date` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent')");
+        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `sent_date` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent') AND COALESCE(`payid`,'') = ''");
         if(!$stmt) return false;
         $stmt->bind_param('is', $now, $hashId);
     }
@@ -22502,7 +22505,19 @@ function v2raystore_processCartToCartReceiptUpload($hashId, $stepPrefix, $fileId
     $pay['receipt_file_id'] = $fileId;
     $pay['sent_date'] = time();
 
-    $msg = v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix);
+    try{
+        $msg = v2raystore_buildCartToCartReceiptAdminMessage($pay, $stepPrefix);
+    }catch(Throwable $e){
+        // A failed plan lookup shouldn't turn a saved, linked receipt into an
+        // unlinked manual handoff or remove its approval buttons.
+        $msg = "🧾 رسید پرداخت کارت‌به‌کارت
+کد پرداخت: <code>" . v2raystore_h($hashId)
+            . "</code>
+کاربر: <code>" . $uid . "</code>
+مبلغ: " . number_format((int)($pay['price'] ?? 0))
+            . " تومان
+ثبت رسید: " . v2raystore_iranDateTimeText($pay['sent_date']);
+    }
     $keyboard = v2raystore_adminReceiptKeyboardByPay($pay, $stepPrefix);
     // رسید شارژ کیف پول هم باید مثل رسید خرید، مستقیماً برای ادمین با دکمه‌های
     // تأیید/عدم‌تأیید ارسال شود؛ وابسته به نام مرحلهٔ کاربر نباشد.
@@ -23004,6 +23019,8 @@ function v2raystore_lockPayForApproval($hashId, $auto = false){
     $hashId = trim((string)$hashId);
     if($hashId === '') return ['ok'=>false, 'message'=>'کد پرداخت نامعتبر است.'];
 
+    if(!$auto && v2raystore_walletApprovalOwns($hashId)) return ['ok'=>true, 'message'=>'locked'];
+
     if($auto){
         $stmt = $connection->prepare("SELECT `state`, `approval_error` FROM `pays` WHERE `hash_id` = ? LIMIT 1");
         if(!$stmt) return ['ok'=>false, 'message'=>'دسترسی به وضعیت پرداخت ممکن نیست.'];
@@ -23017,7 +23034,7 @@ function v2raystore_lockPayForApproval($hashId, $auto = false){
         return ['ok'=>false, 'message'=>'این سفارش دیگر در وضعیت قابل تأیید خودکار نیست.'];
     }
 
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'processing' WHERE `hash_id` = ? AND `state` IN ('sent','pending')");
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'processing', `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND (`state` = 'sent' OR (`state` = 'pending' AND COALESCE(`payid`,'') = ''))");
     if(!$stmt) return ['ok'=>false, 'message'=>'قفل‌گذاری سفارش ممکن نیست.'];
     $stmt->bind_param('s', $hashId);
     $stmt->execute();
@@ -23034,10 +23051,6 @@ function v2raystore_lockPayForApproval($hashId, $auto = false){
         $state = $row['state'] ?? '';
         if($state === 'approved') return ['ok'=>false, 'message'=>'این سفارش قبلاً تأیید شده است.'];
         if($state === 'processing' || $state === 'auto_processing'){
-            if(trim((string)($row['approval_error'] ?? '')) !== '' || (function_exists('v2raystore_payLinkedOrderIds') && count(v2raystore_payLinkedOrderIds($hashId)) == 0)){
-                v2raystore_restorePayApprovalState($hashId);
-                return v2raystore_lockPayForApproval($hashId, $auto);
-            }
             return ['ok'=>false, 'message'=>'این سفارش در حال پردازش است؛ چند بار روی تأیید نزنید.'];
         }
         if($state === 'declined' || $state === 'auto_cancelled') return ['ok'=>false, 'message'=>'این سفارش قبلاً رد یا لغو شده است.'];
@@ -23048,8 +23061,8 @@ function v2raystore_lockPayForApproval($hashId, $auto = false){
 function v2raystore_restorePayApprovalState($hashId){
     global $connection;
     $hashId = trim((string)$hashId);
-    if($hashId === '') return false;
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent' WHERE `hash_id` = ? AND `state` IN ('processing','auto_processing')");
+    if($hashId === '' || v2raystore_walletApprovalOwns($hashId)) return false;
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = IF(COALESCE(`sent_date`,0)>0 OR COALESCE(`receipt_file_id`,'')<>'', 'sent', 'pending') WHERE `hash_id` = ? AND `state` IN ('processing','auto_processing')");
     if(!$stmt) return false;
     $stmt->bind_param('s', $hashId);
     $ok = $stmt->execute();
@@ -23162,7 +23175,7 @@ function v2raystore_declinePayByHash($hashId, $reason = ''){
 
     $reason = trim((string)$reason);
     $cancelledDate = time();
-    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined', `cancel_reason` = ?, `cancelled_date` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent','processing','auto_processing','approved','0','paid_with_wallet')");
+    $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'declined', `cancel_reason` = ?, `cancelled_date` = ?, `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` IN ('pending','sent','approved','0','paid_with_wallet')");
     if(!$stmt) return ['ok'=>false, 'message'=>'ثبت رد سفارش ناموفق بود.'];
     $stmt->bind_param('sis', $reason, $cancelledDate, $hashId);
     $stmt->execute();
@@ -23507,10 +23520,10 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
     $allowed = ['pending','sent','paid_with_wallet','0'];
     if($auto) $allowed[] = 'auto_processing';
     $placeholders = "'" . implode("','", array_map(function($v){ return str_replace("'", "", $v); }, $allowed)) . "'";
-    if($auto && $previousState === 'auto_processing'){
+    if(($auto && $previousState === 'auto_processing') || ($previousState === 'wallet_processing' && v2raystore_walletApprovalOwns($hashId))){
         $approvalLocked = true;
     }else{
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'processing' WHERE `hash_id` = ? AND `state` IN ($placeholders)");
+        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'processing' WHERE `hash_id` = ? AND `state` IN ($placeholders) AND (`state` <> 'pending' OR COALESCE(`payid`,'') = '')");
         if(!$stmt) return $fail('قفل‌گذاری تمدید ناموفق بود.');
         $stmt->bind_param('s', $hashId);
         $stmt->execute();
@@ -23525,10 +23538,6 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
                 $stmt->close();
                 $state = $row['state'] ?? '';
                 if(in_array($state, ['processing','auto_processing'], true)){
-                    if(trim((string)($row['approval_error'] ?? '')) !== ''){
-                        v2raystore_restorePayApprovalStateTo($hashId, $previousState ?: 'sent');
-                        return v2raystore_approveRenewAccountPayByHash($hashId, $auto);
-                    }
                     return ['ok'=>false, 'message'=>'این تمدید در حال پردازش است؛ چند بار روی تأیید نزنید.'];
                 }
                 if($state === 'approved') return ['ok'=>true, 'message'=>'این تمدید قبلاً تأیید شده است.', 'already'=>true, 'type'=>'RENEW_ACCOUNT'];
@@ -23649,6 +23658,7 @@ function v2raystore_approveRenewAccountPayByHash($hashId, $auto = false){
         return $fail('ثبت اطلاعات لازم برای لغو امن تمدید ناموفق بود؛ تمدید انجام نشد.');
     }
 
+    v2raystore_walletApprovalMutating($hashId);
     if($serverType == 'marzban'){
         if($resetMode) $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume'=>$volume, 'force_active'=>true]);
         else $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$appliedDays, 'plus_volume'=>$volume, 'force_active'=>true]);
@@ -23838,14 +23848,10 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     if(($payInfo['state'] ?? '') == 'approved'){
         $existingOrders = json_decode($payInfo['auto_approved_orders'] ?? '[]', true) ?: [];
         if(count($existingOrders) == 0) $existingOrders = v2raystore_payLinkedOrderIds($hashId);
-        // اگر نسخه قدیمی سفارش را قبل از ساخت کانفیگ approved کرده باشد و هیچ سفارش لینک‌شده‌ای وجود نداشته باشد، امکان تلاش دوباره بده.
-        if(count($existingOrders) == 0){
-            $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'sent', `approval_error` = NULL, `approval_error_date` = 0 WHERE `hash_id` = ? AND `state` = 'approved'");
-            if($stmt){ $stmt->bind_param('s', $hashId); $stmt->execute(); $stmt->close(); }
-            $payInfo['state'] = 'sent';
-        }else{
-            return ['ok'=>true, 'message'=>'این سفارش قبلاً تأیید شده است.', 'order_ids'=>$existingOrders, 'user_id'=>intval($payInfo['user_id'] ?? 0), 'price'=>intval($payInfo['price'] ?? 0), 'already'=>true];
+        if(!$existingOrders && ($payInfo['type'] ?? '') === 'BUY_SUB'){
+            return $fail('این پرداخت قبلاً تأیید شده ولی سرویس ثبت‌شده پیدا نشد؛ وضعیت پنل را دستی بررسی کنید.');
         }
+        return ['ok'=>true, 'message'=>'این سفارش قبلاً تأیید شده است.', 'order_ids'=>$existingOrders, 'user_id'=>intval($payInfo['user_id'] ?? 0), 'price'=>intval($payInfo['price'] ?? 0), 'already'=>true];
     }
     if(in_array(($payInfo['state'] ?? ''), ['declined','auto_cancelled'], true)) return $fail('این سفارش قبلاً رد یا لغو شده است.');
 
@@ -23871,7 +23877,8 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     $days = $file_detail['days'];
     $volume = $file_detail['volume'];
     if(intval($payInfo['day'] ?? 0) > 0) $days = $payInfo['day'];
-    if(floatval($payInfo['volume'] ?? 0) > 0) $volume = $payInfo['volume'];
+    // Legacy renewals store the inbound ID in volume, not the requested quota.
+    if(($payInfo['type'] ?? '') !== 'RENEW_SCONFIG' && floatval($payInfo['volume'] ?? 0) > 0) $volume = $payInfo['volume'];
     $protocol = $file_detail['protocol'];
     $server_id = intval($file_detail['server_id']);
     $netType = $file_detail['type'];
@@ -23893,9 +23900,10 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         $remark = $configInfo['remark'] ?? '';
         $isMarzban = !empty($configInfo['marzban']);
         $renewInbound = intval($payInfo['volume']);
+        v2raystore_walletApprovalMutating($hashId);
         if($isMarzban) $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'days'=>$days, 'volume'=>$volume]);
         else $response = ($renewInbound > 0) ? editClientTraffic($server_id, $renewInbound, $uuid, $volume, $days, 'renew') : editInboundTraffic($server_id, $uuid, $volume, $days, 'renew');
-        if(is_null($response)) return $fail('اتصال به سرور برقرار نشد.');
+        if(!v2raystore_panelActionSucceeded($response)) return $fail('پنل تمدید سرویس را تأیید نکرد.');
         $stmt = $connection->prepare("INSERT INTO `increase_order` VALUES (NULL, ?, ?, ?, ?, ?, ?);");
         if($stmt){
             $stmt->bind_param('iiisii', $uid, $server_id, $renewInbound, $remark, $price, $now);
@@ -23965,14 +23973,14 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
     if($accountCount <= 0) $accountCount = 1;
     $eachPrice = $accountCount > 0 ? (int)floor($price / $accountCount) : $price;
 
-    if($acount == 0 && $inbound_id != 0) return $fail($mainValues['out_of_connection_capacity'] ?? 'ظرفیت پلن تمام شده است.');
+    if($acount < $accountCount && $inbound_id != 0) return $fail($mainValues['out_of_connection_capacity'] ?? 'ظرفیت پلن تمام شده است.');
     if($inbound_id == 0){
         $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `id`=? LIMIT 1");
         $stmt->bind_param('i', $server_id);
         $stmt->execute();
         $serverInfo = $stmt->get_result()->fetch_assoc();
         $stmt->close();
-        if(!$serverInfo || intval($serverInfo['ucount']) <= 0) return $fail($mainValues['out_of_server_capacity'] ?? 'ظرفیت سرور تمام شده است.');
+        if(!$serverInfo || intval($serverInfo['ucount']) < $accountCount) return $fail($mainValues['out_of_server_capacity'] ?? 'ظرفیت سرور تمام شده است.');
     }else{
         $stmt = $connection->prepare("SELECT * FROM `server_info` WHERE `id`=? LIMIT 1");
         $stmt->bind_param('i', $server_id);
@@ -24022,6 +24030,7 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
         if($portType == 'auto') @file_put_contents('settings/temp.txt', $port . '-' . $last_num);
         else $port = rand(1111,65000);
 
+        v2raystore_walletApprovalMutating($hashId);
         if($inbound_id == 0){
             if($serverType == 'marzban'){
                 $response = addMarzbanUser($server_id, $remark, $volume, $days, $fid);
@@ -24045,7 +24054,15 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
             }
         }
 
-        if(is_null($response)) return $fail('اتصال به سرور برقرار نیست.');
+        if(is_null($response)){
+            $approvalLocked = false;
+            v2raystore_holdApprovalForReview($hashId);
+            return $fail('پاسخ ساخت سرویس از پنل دریافت نشد؛ وضعیت سرویس پیش از تلاش مجدد بررسی شود.');
+        }
+        if($orderIds && (!is_object($response) || empty($response->success))){
+            v2raystore_holdApprovalForReview($hashId);
+            return $fail('بخشی از خرید گروهی انجام شد؛ سفارش قبل از تلاش مجدد باید دستی بررسی شود.');
+        }
         if($response === 'inbound not Found') return $fail('سطر inbound در سرور پیدا نشد. سفارش به حالت قابل تأیید برگشت؛ بعد از اصلاح inbound دوباره روی تأیید بزنید.');
         if(!is_object($response) || empty($response->success)) return $fail('خطای ساخت کانفیگ: ' . (function_exists('v2raystore_translateTechnicalError') ? v2raystore_translateTechnicalError(is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response) : (is_object($response) ? ($response->msg ?? 'نامشخص') : (string)$response)));
 
@@ -24065,6 +24082,25 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
                 : getConnectionLink($server_id, $uniqid, $protocol, $remark, $port, $netType, $inbound_id, $rahgozar, $customPath, $customPort, $customSni, $customDomain);
             $vray_link = json_encode($vraylink, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         }
+        $status = 1;
+        $notif = 0;
+        $autoFlag = $auto ? 1 : 0;
+        $stmt = $connection->prepare("INSERT INTO `orders_list` (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`, `auto_approved`, `auto_pay_hash`) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $approvalLocked = false;
+        if(!$stmt){
+            v2raystore_holdApprovalForReview($hashId);
+            return $fail('سرویس در پنل ساخته شد ولی ثبت محلی نیاز به بررسی دارد.');
+        }
+        $stmt->bind_param('ssiiisssisiiiiiiis', $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $eachPrice, $status, $now, $notif, $rahgozar, $agentBought, $autoFlag, $hashId);
+        $saved = $stmt->execute() && $stmt->affected_rows === 1;
+        $newOrderId = (int)$stmt->insert_id;
+        $stmt->close();
+        if(!$saved || $newOrderId <= 0){
+            v2raystore_holdApprovalForReview($hashId);
+            return $fail('سرویس در پنل ساخته شد ولی ثبت محلی نیاز به بررسی دارد.');
+        }
+        $orderIds[] = $newOrderId;
+        $remarks[] = $remark;
         $sendOk = v2raystore_sendConfigLinksToUser($uid, $remark, $protocol, $volume, $days, $vraylink, $subLink, $serverType, $linkOptions);
         if(!$sendOk){
             @usleep(300000);
@@ -24074,17 +24110,6 @@ function v2raystore_approveSentOrderByHash($hashId, $auto = false){
             $deliveryFailed = true;
             $deliveryFailedRemarks[] = $remark;
         }
-
-        $status = 1;
-        $notif = 0;
-        $autoFlag = $auto ? 1 : 0;
-        $stmt = $connection->prepare("INSERT INTO `orders_list` (`userid`, `token`, `transid`, `fileid`, `server_id`, `inbound_id`, `remark`, `uuid`, `protocol`, `expire_date`, `link`, `amount`, `status`, `date`, `notif`, `rahgozar`, `agent_bought`, `auto_approved`, `auto_pay_hash`) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        if(!$stmt) return $fail('ثبت سفارش در دیتابیس ناموفق بود.');
-        $stmt->bind_param('ssiiisssisiiiiiiis', $uid, $token, $fid, $server_id, $inbound_id, $remark, $uniqid, $protocol, $expire_date, $vray_link, $eachPrice, $status, $now, $notif, $rahgozar, $agentBought, $autoFlag, $hashId);
-        $stmt->execute();
-        $orderIds[] = intval($connection->insert_id);
-        $remarks[] = $remark;
-        $stmt->close();
     }
 
     if($inbound_id == 0){
@@ -24228,6 +24253,7 @@ function v2raystore_approveIncreaseVolumePayByHash($hashId, $auto = false){
     $serverType = $serverInfo['type'] ?? '';
 
     $historyBefore=v2hist_snapshot($orderInfo);
+    v2raystore_walletApprovalMutating($hashId);
     if($serverType == 'marzban'){
         $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_volume'=>$volume]);
     }else{
@@ -24402,6 +24428,7 @@ function v2raystore_approveIncreaseDayPayByHash($hashId, $auto = false){
     $serverType = $serverInfo['type'] ?? '';
 
     $historyBefore=v2hist_snapshot($orderInfo);
+    v2raystore_walletApprovalMutating($hashId);
     if($serverType == 'marzban'){
         $response = editMarzbanConfig($server_id, ['remark'=>$remark, 'plus_day'=>$days]);
     }else{
@@ -24452,10 +24479,10 @@ function v2raystore_approveIncreaseDayPayByHash($hashId, $auto = false){
 
 function v2raystore_recoverStuckAutoProcessingOrders($olderThanSeconds = 300){
     global $connection;
-    $olderThanSeconds = max(120, intval($olderThanSeconds));
+    $olderThanSeconds = max(1800, intval($olderThanSeconds));
     $recentProcessingCutoff = time() - $olderThanSeconds;
     $legacyStuckCutoff = time() - max(900, $olderThanSeconds * 3);
-    $stmt = @$connection->prepare("UPDATE `pays` SET `state` = 'sent', `approval_error` = NULL, `approval_error_date` = 0 WHERE `state` = 'auto_processing' AND COALESCE(`auto_approved`,0) = 0 AND ((COALESCE(`approval_error_date`,0) > 0 AND `approval_error_date` <= ?) OR (COALESCE(`approval_error_date`,0) = 0 AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) <= ?))");
+    $stmt = @$connection->prepare("UPDATE `pays` SET `state` = 'approval_review', `approval_error` = 'تأیید خودکار ناتمام مانده؛ وضعیت پنل را بررسی کنید.', `approval_error_date` = UNIX_TIMESTAMP() WHERE `state` = 'auto_processing' AND COALESCE(`auto_approved`,0) = 0 AND ((COALESCE(`approval_error_date`,0) > 0 AND `approval_error_date` <= ?) OR (COALESCE(`approval_error_date`,0) = 0 AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) <= ?))");
     if(!$stmt) return 0;
     $stmt->bind_param('ii', $recentProcessingCutoff, $legacyStuckCutoff);
     $stmt->execute();
@@ -24487,7 +24514,7 @@ function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
     }
     $typeSql = function_exists('v2raystore_getAutoApproveEnabledSqlCondition') ? v2raystore_getAutoApproveEnabledSqlCondition() : "(`type` IN ('BUY_SUB','RENEW_SCONFIG') OR `type` LIKE 'INCREASE_VOLUME_%')";
     if(trim((string)$typeSql) === '') return ['processed'=>0, 'messages'=>['هیچ موردی برای تأیید خودکار روشن نیست.']];
-    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND {$typeSql}{$blockedSql}{$newOnlySql} AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) > 0 AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) <= ? ORDER BY COALESCE(NULLIF(`sent_date`,0), `request_date`) ASC LIMIT $limit");
+    $stmt = $connection->prepare("SELECT * FROM `pays` WHERE `state` = 'sent' AND {$typeSql}{$blockedSql}{$newOnlySql} AND (COALESCE(`approval_error_date`,0) <= UNIX_TIMESTAMP() - 300 OR COALESCE(`approval_error`,'') = '') AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) > 0 AND COALESCE(NULLIF(`sent_date`,0), `request_date`, 0) <= ? ORDER BY COALESCE(NULLIF(`sent_date`,0), `request_date`) ASC LIMIT $limit");
     if(!$stmt) return ['processed'=>0, 'messages'=>['خطا در دریافت سفارش‌های در انتظار.']];
     $stmt->bind_param('i', $cutoff);
     $stmt->execute();
@@ -24513,14 +24540,20 @@ function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
             if($stmt){ $stmt->bind_param('s', $hash); $stmt->execute(); $stmt->close(); }
             continue;
         }
-        if($payType === 'INCREASE_WALLET' && function_exists('v2raystore_approveIncreaseWalletPayByHash')){
-            $result = v2raystore_approveIncreaseWalletPayByHash($hash, true);
-        }elseif(preg_match('/^INCREASE_DAY_/', $payType) && function_exists('v2raystore_approveIncreaseDayPayByHash')){
-            $result = v2raystore_approveIncreaseDayPayByHash($hash, true);
-        }elseif(preg_match('/^INCREASE_VOLUME_/', $payType) && function_exists('v2raystore_approveIncreaseVolumePayByHash')){
-            $result = v2raystore_approveIncreaseVolumePayByHash($hash, true);
-        }else{
-            $result = v2raystore_approveSentOrderByHash($hash, true);
+        try{
+            if($payType === 'INCREASE_WALLET' && function_exists('v2raystore_approveIncreaseWalletPayByHash')){
+                $result = v2raystore_approveIncreaseWalletPayByHash($hash, true);
+            }elseif(preg_match('/^INCREASE_DAY_/', $payType) && function_exists('v2raystore_approveIncreaseDayPayByHash')){
+                $result = v2raystore_approveIncreaseDayPayByHash($hash, true);
+            }elseif(preg_match('/^INCREASE_VOLUME_/', $payType) && function_exists('v2raystore_approveIncreaseVolumePayByHash')){
+                $result = v2raystore_approveIncreaseVolumePayByHash($hash, true);
+            }else{
+                $result = v2raystore_approveSentOrderByHash($hash, true);
+            }
+        }catch(Throwable $e){
+            v2raystore_holdApprovalForReview($hash);
+            v2raystore_setPayApprovalError($hash, 'پردازش قطع شد؛ وضعیت پنل باید دستی بررسی شود.');
+            $result = ['ok'=>false, 'message'=>'پردازش قطع شد؛ وضعیت پنل باید دستی بررسی شود.'];
         }
         if($result['ok']){
             $processed++;
@@ -24591,7 +24624,10 @@ function v2raystore_processAutoApproveOrders($force = false, $limit = 3){
             }
             // کد پرداخت در گزارش خطای کانال نمایش داده نمی‌شود.
             $lines[] = "📝 خطا: <b>" . v2raystore_h($result['message']) . "</b>";
-            $lines[] = "بعد از اصلاح مشکل، همان دکمه تأیید سفارش دوباره قابل استفاده است.";
+            $currentPay = v2raystore_getPayByHash($hash);
+            $lines[] = ($currentPay['state'] ?? '') === 'approval_review'
+                ? "سفارش نیاز به بررسی دستی دارد؛ برای جلوگیری از تکرار، تأیید مجدد خودکار غیرفعال است."
+                : "بعد از اصلاح مشکل، همان دکمه تأیید سفارش دوباره قابل استفاده است.";
             v2raystore_reportEvent('⚠️ خطای تأیید خودکار', implode("\n", $lines) . v2raystore_reportTimeLine(), v2raystore_reportPrivateKeyboard($uid), 'approval_failed');
             $messages[] = "❌ $hash: " . $result['message'];
         }
