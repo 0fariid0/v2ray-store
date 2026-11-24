@@ -18,7 +18,11 @@ $stmt->close();
 
 if(isset($_GET['nowpayment'])){
 if(isset($_GET['NP_id'])){
-    $hash_id = $_GET['NP_id'];
+    $hash_id = is_string($_GET['NP_id']) ? trim($_GET['NP_id']) : '';
+    if(!preg_match('/^[0-9]{1,32}$/D', $hash_id)){
+        showForm('شناسهٔ پرداخت معتبر نیست.', 'خطا');
+        exit();
+    }
     $base_url = 'https://api.nowpayments.io/v1/payment/' . $hash_id;
 
     $ch = curl_init();
@@ -69,18 +73,8 @@ if(isset($_GET['NP_id'])){
             doAction($rowId, "nowpayment");
         } else {
             if($res->payment_status == 'partially_paid'){
-                $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'low_payment' WHERE `payid` =?");
-                $stmt->bind_param("s", $hash_id);
-                $stmt->execute();
-                $stmt->close();
-                
                 showForm("#$hash_id - شما هزینه کمتری واریز کردید، لطفا به پشتیبانی مراجعه کنید",$payDescription);
             }else{
-                $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `payid` =?");
-                $stmt->bind_param("s", $hash_id);
-                $stmt->execute();
-                $stmt->close();
-
                 showForm("پرداخت انجام نشد",$payDescription);
             }
         }
@@ -118,6 +112,15 @@ if(mysqli_num_rows($payInfo)==0){
         showForm("شناسه درگاه ناقص است", "درگاه زرین پال");
         exit();
     }
+    $storedReference = (string)($payParam['payid'] ?? '');
+    if(!hash_equals($storedReference, 'zarin:' . $Authority)){
+        showForm('شناسهٔ درگاه با سفارش تطبیق ندارد. اگر پرداخت انجام شده است، کد سفارش را به پشتیبانی بدهید.', 'درگاه زرین‌پال');
+        exit();
+    }
+    if($gatewayStatus !== 'OK'){
+        showForm('پرداخت هنوز تأیید نشده است.', 'درگاه زرین‌پال');
+        exit();
+    }
     //==============================================================
     try{
         $client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', ['encoding' => 'UTF-8']);
@@ -131,14 +134,9 @@ if(mysqli_num_rows($payInfo)==0){
         exit();
     }
     //==============================================================
-    if ($gatewayStatus === 'OK' && is_object($result) && isset($result->Status) && intval($result->Status) === 100){
+    if ($gatewayStatus === 'OK' && is_object($result) && isset($result->Status) && in_array((int)$result->Status, [100, 101], true)){
         doAction($rowId, "zarinpal");
     }else{
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $hash_id);
-        $stmt->execute();
-        $stmt->close();
-        
         showForm("پرداخت شما انجام نشد!","درگاه زرین پال");
     }
 }
@@ -164,6 +162,10 @@ if(mysqli_num_rows($payInfo)==0){
     $user_id = $payParam['user_id'];
     $payType = $payParam['type'];
     $payid = $payParam['payid'];
+    if(isset($_GET['hash_id']) && (!is_string($_GET['hash_id']) || !hash_equals((string)$payParam['hash_id'], $_GET['hash_id']))){
+        showForm('شناسهٔ درگاه با سفارش تطبیق ندارد.', 'خطا');
+        exit();
+    }
     
     
     $curl = curl_init();
@@ -187,11 +189,6 @@ if(mysqli_num_rows($payInfo)==0){
     if (is_object($response) && isset($response->code) && (string)$response->code === '0') {
         doAction($rowId, "nextpay");   
     }else{
-        $stmt = $connection->prepare("UPDATE `pays` SET `state` = 'canceled' WHERE `hash_id` = ?");
-        $stmt->bind_param("s", $hash_id);
-        $stmt->execute();
-        $stmt->close();
-        
         showForm("پرداخت شما انجام نشد!","درگاه نکست پی");
     }
 }
@@ -235,33 +232,39 @@ elseif($payType == "INCREASE_WALLET") $payDescription ="شارژ کیف پول";
 elseif(preg_match('/^INCREASE_DAY_(\d+)_(\d+)/',$payType)) $payDescription = "افزایش زمان اکانت";
 elseif(preg_match('/^INCREASE_VOLUME_(\d+)_(\d+)/',$payType)) $payDescription = "افزایش حجم اکانت";    
 
-if($gateType == "zarinpal" || $gateType == "nextpay") $payDescription = "خرید اشتراک";
+
 
 $GLOBALS['payParam'] = $payParam;
 
-// Claim the payment atomically. Concurrent/repeated gateway callbacks must not
-// create a second service or credit the wallet twice.
-$stmt = $connection->prepare("UPDATE `pays` SET `state` = 'paid' WHERE `id` = ? AND (`state` = 'pending' OR `state` = 'send')");
+$salesBlockReason = v2raystore_salesBlockReasonForPayType($payType);
+if($payType === 'INCREASE_WALLET' || $salesBlockReason !== ''){
+    $stmt = $connection->prepare("UPDATE `pays` p JOIN `users` u ON u.`userid` = p.`user_id`
+        SET p.`state` = 'paid', u.`wallet` = u.`wallet` + p.`price`
+        WHERE p.`id` = ? AND p.`state` IN ('pending','send') AND p.`price` > 0");
+    $stmt->bind_param('i', $payRowId);
+    $credited = $stmt->execute() && $stmt->affected_rows > 0;
+    $stmt->close();
+    if(!$credited){
+        showForm('موجودی برای این درخواست دوباره تغییر نکرد. وضعیت پرداخت را بررسی کنید.', $payDescription);
+        exit();
+    }
+    $walletText = "مبلغ " . number_format($amount) . " تومان به کیف پول شما اضافه شد.";
+    if($salesBlockReason !== ''){
+        $walletText = "پرداخت تأیید شد؛ چون فروش بسته بود، " . $walletText;
+    }
+    sendMessage('✅ ' . $walletText, null, null, $user_id);
+    showForm($walletText, $payDescription, true);
+    exit();
+}
+
+// Claim once before a gateway fulfillment. Repeated callbacks cannot reapply it.
+$stmt = $connection->prepare("UPDATE `pays` SET `state` = 'paid' WHERE `id` = ? AND `state` IN ('pending','send')");
 $stmt->bind_param("i", $payRowId);
 $stmt->execute();
-$claimed = ($stmt->affected_rows === 1);
+$claimed = $stmt->affected_rows === 1;
 $stmt->close();
 if(!$claimed){
     showForm('این پرداخت قبلاً پردازش شده است.', $payDescription, true);
-    exit;
-}
-
-$salesBlockReason = function_exists('v2raystore_salesBlockReasonForPayType') ? v2raystore_salesBlockReasonForPayType($payType) : '';
-if($salesBlockReason !== ''){
-    // The gateway already confirmed the transfer. Compensate the user if sales
-    // were closed after checkout started instead of silently cancelling it.
-    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
-    $stmt->bind_param("ii", $amount, $user_id);
-    $stmt->execute();
-    $stmt->close();
-    sendMessage("✅ پرداخت تأیید شد؛ چون فروش در این فاصله بسته شده بود، مبلغ " . number_format($amount) . " تومان به کیف پول شما برگشت.", null, null, $user_id);
-    sendMessage("⚠️ پرداخت در زمان بسته بودن فروش تأیید شد و مبلغ " . number_format($amount) . " تومان به کیف پول کاربر $user_id منتقل شد.", null, null, $admin);
-    showForm('پرداخت تأیید شد؛ فروش بسته بود و کل مبلغ به کیف پول شما منتقل شد.', $payDescription, true);
     exit();
 }
 
@@ -586,15 +589,7 @@ sendMessage("
 ⁮⁮ 
 ",$keys,"html", $admin);
 }
-elseif($payType == "INCREASE_WALLET"){
-    $stmt = $connection->prepare("UPDATE `users` SET `wallet` = `wallet` + ? WHERE `userid` = ?");
-    $stmt->bind_param("ii", $amount, $user_id);
-    $stmt->execute(); 
-    $stmt->close(); 
-    showForm("پرداخت شما با موفقیت انجام شد، مبلغ ". number_format($amount) . " تومان به کیف پول شما اضافه شد",$payDescription, true);
-    sendMessage("✅ مبلغ " . number_format($amount). " تومان به حساب شما اضافه شد",null,null,$user_id);
-    sendMessage("✅ مبلغ " . number_format($amount) . " تومان به کیف پول کاربر $user_id توسط درگاه اضافه شد",null,null,$admin);                
-}
+
 elseif($payType == "RENEW_ACCOUNT"){
     $oid = $plan_id;
     $stmt = $connection->prepare("SELECT * FROM `orders_list` WHERE `id` = ?");
@@ -944,7 +939,7 @@ function showForm($msg, $type = "", $state = false){
         f.parentNode.insertBefore(j,f);
       })(window,document,'script','dataLayer','GTM-MSN6P6G');</script>
       <meta charset="utf-8"><meta name="viewport" content="width=device-width">
-		<title><?php echo $type;?></title>
+		<title><?php echo htmlspecialchars((string)$type, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');?></title>
         <meta name="next-head-count" content="4">
         <link rel="stylesheet" href="../assets/20bb620751bbea45.css">
         <noscript data-n-css=""></noscript>
@@ -961,7 +956,7 @@ function showForm($msg, $type = "", $state = false){
                                     <path d="M15.3 8.7l-6.6 6.6M8.7 8.7l6.6 6.6"></path>
                                 </svg>
                                 <?php }?>
-                                <div class="py-2"><?php echo $msg;?></div>
+                                <div class="py-2"><?php echo nl2br(htmlspecialchars((string)$msg, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'));?></div>
                             </div>
                         </div>
                     </div>

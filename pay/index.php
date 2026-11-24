@@ -1,7 +1,7 @@
 <?php 
 //==================================================
-include '../baseInfo.php';
-include '../config.php';
+require_once __DIR__ . '/../baseInfo.php';
+require_once __DIR__ . '/../config.php';
 
 //====================//  Get  //==============================
 $hash_id = isset($_GET['hash_id']) ? trim((string)$_GET['hash_id']) : '';
@@ -32,14 +32,23 @@ if(mysqli_num_rows($payInfo)==0){
     $file_detail = $stmt->get_result()->fetch_assoc();
     $stmt->close();
     
-    $server_id = $file_detail['server_id'];
-    $acount = $file_detail['acount'];
-    $inbound_id = $file_detail['inbound_id'];
+    $server_id = (int)($file_detail['server_id'] ?? 0);
+    $acount = (int)($file_detail['acount'] ?? 0);
+    $inbound_id = (int)($file_detail['inbound_id'] ?? 0);
     
     
-    $orderId= $payParam['id'];
+    $orderId = (int)$payParam['id'];
+    if(trim((string)($payParam['payid'] ?? '')) !== ''){
+        showForm('برای این سفارش قبلاً درگاه باز شده است. وضعیت پرداخت را از صفحه قبلی دنبال کنید یا اگر پرداخت نکردید سفارش تازه بسازید.');
+        exit();
+    }
     $amount = $payParam['price'];
     $payType = $payParam['type'];
+    if($amount <= 0 || ($payType === 'BUY_SUB' && !$file_detail)){
+        showForm('این سفارش مبلغ یا پلن معتبر برای پرداخت آنلاین ندارد.');
+        exit();
+    }
+    $accountCount = max(1, (int)($payParam['agent_count'] ?? 0));
     //========================== // config // ==============================
     
     
@@ -54,12 +63,12 @@ if(mysqli_num_rows($payInfo)==0){
         $server_info = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        if($server_info['ucount'] == 0) {
+        if((int)($server_info['ucount'] ?? 0) < $accountCount) {
             showForm('ظرفیت این سرور پر شده است');
             exit;
         }
     }elseif($payType == "BUY_SUB"){
-        if($acount != 0 && $acount < $text){
+        if($acount < $accountCount){
             showForm("روی این پلن فقط $acount اکانت میشه ساخت");
             exit();
         }
@@ -136,25 +145,34 @@ if(mysqli_num_rows($payInfo)==0){
         }
         $payid = $res->id;
         
-        $stmt = $connection->prepare("UPDATE `pays` SET `payid` = ? WHERE `hash_id` = ?");
-        $stmt->bind_param("is", $payid, $hash_id);
-        $stmt->execute();
-        $stmt->close();
+        if(!v2raystore_storeGatewayReference($orderId, (string)$payid)){
+            showForm('وضعیت سفارش عوض شد؛ پیش از پرداخت سفارش را بررسی کنید.');
+            exit();
+        }
         header('Location: '.$res->invoice_url);
     }
     elseif(isset($_GET['zarinpal'])){
         $CallbackURL = $botUrl . "pay/back.php?zarinpal&hash_id=$hash_id";
-        $client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', ['encoding' => 'UTF-8']);
-        $result = $client->PaymentRequest([
-        'MerchantID' => $paymentKeys['zarinpal'],
-        'Amount' => $amount,
-        'Description' => "خرید اکانت",
-        'Email' => $Email,
-        'Mobile' => $Mobile,
-        'CallbackURL' => $CallbackURL,
-        ]);
-        //==============================================================
-        Header('Location: https://www.zarinpal.com/pg/StartPay/'.$result->Authority.'/ZarinGate');
+        try{
+            $client = new SoapClient('https://www.zarinpal.com/pg/services/WebGate/wsdl', ['encoding'=>'UTF-8', 'connection_timeout'=>5]);
+            $result = $client->PaymentRequest([
+                'MerchantID'=>$paymentKeys['zarinpal'], 'Amount'=>$amount,
+                'Description'=>$type, 'Email'=>'', 'Mobile'=>'', 'CallbackURL'=>$CallbackURL,
+            ]);
+        }catch(Throwable $e){
+            showForm('ارتباط با زرین‌پال برقرار نشد؛ کمی بعد دوباره تلاش کنید.');
+            exit();
+        }
+        $authority = (string)($result->Authority ?? '');
+        if((int)($result->Status ?? 0) !== 100 || !preg_match('/^[A-Za-z0-9]+$/D', $authority)){
+            showForm('زرین‌پال درخواست پرداخت را ایجاد نکرد.');
+            exit();
+        }
+        if(!v2raystore_storeGatewayReference($orderId, 'zarin:' . $authority)){
+            showForm('وضعیت سفارش عوض شد؛ پیش از پرداخت سفارش را بررسی کنید.');
+            exit();
+        }
+        header('Location: https://www.zarinpal.com/pg/StartPay/' . $authority . '/ZarinGate');
     }
     elseif(isset($_GET['nextpay'])){        
         $Description = "خرید اشتراک";
@@ -176,13 +194,13 @@ if(mysqli_num_rows($payInfo)==0){
         $response = curl_exec($curl);
         curl_close($curl);
         $response = json_decode($response);
-        if ($response->code == '-1'){
+        if (is_object($response) && (string)($response->code ?? '') === '-1' && !empty($response->trans_id)){
             $startGateWayUrl = "https://nextpay.org/nx/gateway/payment/".$response->trans_id;
             $transId = $response->trans_id;            
-            $stmt = $connection->prepare("UPDATE `pays` SET `payid` = ? WHERE `hash_id` = ?");
-            $stmt->bind_param("ss", $transId, $hash_id);
-            $stmt->execute();
-            $stmt->close();
+            if(!v2raystore_storeGatewayReference($orderId, (string)$transId)){
+                showForm('وضعیت سفارش عوض شد؛ پیش از پرداخت سفارش را بررسی کنید.');
+                exit();
+            }
             header('location: '.$startGateWayUrl);
         } else {
             showForm("تراکنش با خطا مواجه شده است");
@@ -205,7 +223,7 @@ function showForm($msg){
             f.parentNode.insertBefore(j,f);
           })(window,document,'script','dataLayer','GTM-MSN6P6G');</script>
           <meta charset="utf-8"><meta name="viewport" content="width=device-width">
-    		<title><?php echo $msg;?></title>
+        <title><?php echo htmlspecialchars((string)$msg, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');?></title>
             <meta name="next-head-count" content="4">
             <link rel="stylesheet" href="../assets/20bb620751bbea45.css">
             <noscript data-n-css=""></noscript>
@@ -223,7 +241,7 @@ function showForm($msg){
                                         <circle cx="12" cy="12" r="11"></circle>
                                         <path d="M15.3 8.7l-6.6 6.6M8.7 8.7l6.6 6.6"></path>
                                     </svg>
-                                    <div class="py-2"><?php echo $msg; ?></div>
+                                    <div class="py-2"><?php echo htmlspecialchars((string)$msg, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></div>
                                 </div>
                             </div>
                         </div>
